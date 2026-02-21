@@ -6,26 +6,17 @@ const leaderboardRoutes = require('./routes/leaderboard');
 
 const app = express();
 
-// ✅ ПРАВИЛЬНЫЙ CORS - разреши все домены
-app.use(cors());  // Простейший вариант - разреши все
-
+app.use(cors());
 app.use(express.json());
 
-// Подключаем БД
 connectDB();
 
-// Routes
 app.use('/api/leaderboard', leaderboardRoutes);
 
-// Health check
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    timestamp: new Date()
-  });
+  res.json({ status: 'OK', timestamp: new Date() });
 });
 
-// Error handling
 app.use((err, req, res, next) => {
   console.error('❌ Error:', err);
   res.status(500).json({ error: err.message });
