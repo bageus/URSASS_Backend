@@ -9,11 +9,10 @@ const playerSchema = new mongoose.Schema({
     index: true
   },
   
-  //累计статистика
   totalScore: {
     type: Number,
     default: 0,
-    index: true  // Индекс для быстрой сортировки
+    index: true
   },
   
   totalDistance: {
@@ -36,7 +35,6 @@ const playerSchema = new mongoose.Schema({
     default: 0
   },
   
-  // История заездов
   gameHistory: [
     {
       score: Number,
@@ -50,7 +48,6 @@ const playerSchema = new mongoose.Schema({
     }
   ],
   
-  // Общая статистика
   createdAt: {
     type: Date,
     default: Date.now
