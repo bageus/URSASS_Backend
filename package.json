@@ -1,5 +1,5 @@
 {
-  "name": "bear-tube-runner-backend",
+  "name": "URSASS_Backend",
   "version": "1.0.0",
   "description": "Bear Tube Runner Leaderboard API",
   "main": "server.js",
@@ -14,3 +14,4 @@
     "dotenv": "^16.0.3"
   }
 }
+
