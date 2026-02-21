@@ -6,13 +6,8 @@ const leaderboardRoutes = require('./routes/leaderboard');
 
 const app = express();
 
-// ✅ CORS для Vercel
-app.use(cors({
-  origin: "*",
-  credentials: false,
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type']
-}));
+// ✅ ПРАВИЛЬНЫЙ CORS - разреши все домены
+app.use(cors());  // Простейший вариант - разреши все
 
 app.use(express.json());
 
@@ -26,9 +21,7 @@ app.use('/api/leaderboard', leaderboardRoutes);
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'OK', 
-    timestamp: new Date(),
-    backend: 'ursass-backend',
-    mongodb: 'connected'
+    timestamp: new Date()
   });
 });
 
@@ -41,6 +34,4 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Сервер запущен на порту ${PORT}`);
-  console.log(`✅ MongoDB подключена`);
-  console.log(`🌐 CORS enabled for all origins`);
 });
