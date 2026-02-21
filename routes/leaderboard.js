@@ -2,23 +2,20 @@ const express = require('express');
 const router = express.Router();
 const Player = require('../models/Player');
 
-// ✅ GET: Топ 10 игроков + позиция текущего пользователя
+// ✅ GET: Топ 10 игроков
 router.get('/top', async (req, res) => {
   try {
     const wallet = req.query.wallet?.toLowerCase();
     
-    // Получаем топ 10
     const topPlayers = await Player.find()
       .sort({ totalScore: -1 })
       .limit(10)
       .select('wallet totalScore totalDistance totalGoldCoins totalSilverCoins gamesPlayed');
     
-    // Если передан кошелёк - получаем его позицию
     let playerPosition = null;
     if(wallet) {
       const playerData = await Player.findOne({ wallet });
       if(playerData) {
-        // Считаем сколько игроков впереди
         const position = await Player.countDocuments({
           totalScore: { $gt: playerData.totalScore }
         });
@@ -57,7 +54,7 @@ router.get('/top', async (req, res) => {
 // ✅ POST: Сохранить результат игры
 router.post('/save', async (req, res) => {
   try {
-    const { wallet, score, distance, goldCoins, silverCoins, signature } = req.body;
+    const { wallet, score, distance, goldCoins, silverCoins } = req.body;
     
     if(!wallet || score === undefined || distance === undefined) {
       return res.status(400).json({ error: 'Missing required fields' });
@@ -65,7 +62,6 @@ router.post('/save', async (req, res) => {
     
     const walletLower = wallet.toLowerCase();
     
-    // Ищем или создаём игрока
     let player = await Player.findOne({ wallet: walletLower });
     
     if(!player) {
@@ -86,14 +82,12 @@ router.post('/save', async (req, res) => {
         ]
       });
     } else {
-      // Обновляем累计статистику
       player.totalScore += score;
       player.totalDistance += distance;
       player.totalGoldCoins += goldCoins || 0;
       player.totalSilverCoins += silverCoins || 0;
       player.gamesPlayed += 1;
       
-      // Добавляем в историю
       player.gameHistory.push({
         score,
         distance,
@@ -101,7 +95,6 @@ router.post('/save', async (req, res) => {
         silverCoins: silverCoins || 0
       });
       
-      // Ограничиваем историю последними 100 игр
       if(player.gameHistory.length > 100) {
         player.gameHistory.shift();
       }
@@ -136,7 +129,6 @@ router.get('/player/:wallet', async (req, res) => {
       return res.status(404).json({ error: 'Player not found' });
     }
     
-    // Получаем позицию
     const position = await Player.countDocuments({
       totalScore: { $gt: player.totalScore }
     });
