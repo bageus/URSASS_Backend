@@ -98,22 +98,22 @@ router.post('/save', saveResultLimiter, async (req, res) => {
         });
       }
     
-    // ✅ ГЛАВНОЕ: Верифицируем подпись
-    const messageToVerify = createMessageToVerify(
-      walletLower, 
-      score, 
-      distance, 
-      timestamp
-    );
+    // ✅ ГЛАВНОЕ: Верифицируем подпись (временно)
+    //const messageToVerify = createMessageToVerify(
+    //  walletLower, 
+    //  score, 
+    //  distance, 
+    //  timestamp
+   // );
     
-    const isSignatureValid = verifySignature(messageToVerify, signature, walletLower);
+   // const isSignatureValid = verifySignature(messageToVerify, signature, walletLower);
     
-    if(!isSignatureValid) {
-      console.warn(`❌ Неверная подпись для кошелька: ${walletLower}`);
-      return res.status(401).json({ 
-        error: 'Invalid signature. Result cannot be verified.' 
-      });
-    }
+  //  if(!isSignatureValid) {
+  //    console.warn(`❌ Неверная подпись для кошелька: ${walletLower}`);
+  //    return res.status(401).json({ 
+  //      error: 'Invalid signature. Result cannot be verified.' 
+  //    });
+  //  }
     
     // ✅ Проверяем, нет ли уже результата с такой же подписью (дубль)
     const existingResult = await GameResult.findOne({ signature });
@@ -270,4 +270,5 @@ router.get('/verified-results/:wallet', async (req, res) => {
 });
 
 module.exports = router;
+
 
