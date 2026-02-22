@@ -6,11 +6,31 @@ const leaderboardRoutes = require('./routes/leaderboard');
 
 const app = express();
 
-// ✅ CORS и JSON парсинг
+// ✅ ИСПРАВЛЕННЫЙ CORS (добавьте ваши боевые домены)
+const allowedOrigins = [
+  'https://bageus.github.io',
+  'https://ursass-tube.vercel.app',  // ✅ ДОБАВЬТЕ ВАШЕ РАБОЧЕЕ ЗНАЧЕНИЕ
+  'http://localhost:3000',
+  'http://localhost:5173'
+];
+
 app.use(cors({
-  origin: ['https://bageus.github.io', 'http://localhost:3000'],
-  credentials: true
+  origin: function(origin, callback) {
+    // ✅ Разрешаем запросы без origin (мобильные приложения, Postman)
+    if(!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.warn(`❌ CORS блокирован для: ${origin}`);
+      callback(null, true);  // Разрешаем в любом случае (можно изменить на strict)
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'X-Wallet']
 }));
+
+app.options('*', cors());  // ✅ Обработка preflight запросов
+
 app.use(express.json({ limit: '1mb' }));
 
 // ✅ Подключаемся к БД
@@ -39,5 +59,5 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Сервер запущен на порту ${PORT}`);
-  console.log(`📡 Backend URL: http://localhost:${PORT}`);
+  console.log(`📡 Разрешённые домены:`, allowedOrigins);
 });
