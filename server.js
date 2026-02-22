@@ -6,22 +6,24 @@ const leaderboardRoutes = require('./routes/leaderboard');
 
 const app = express();
 
-// ✅ ИСПРАВЛЕННЫЙ CORS (добавьте ваши боевые домены)
+// ✅ ДОБАВЬТЕ ЭТОТ БЛОК (для Railway и других прокси)
+app.set('trust proxy', 1);
+
+// ✅ CORS и JSON парсинг
 const allowedOrigins = [
   'https://bageus.github.io',
-  'https://ursass-tube.vercel.app',  // ✅ ДОБАВЬТЕ ВАШЕ РАБОЧЕЕ ЗНАЧЕНИЕ
+  'https://ursass-tube.vercel.app',
   'http://localhost:3000',
   'http://localhost:5173'
 ];
 
 app.use(cors({
   origin: function(origin, callback) {
-    // ✅ Разрешаем запросы без origin (мобильные приложения, Postman)
     if(!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
       console.warn(`❌ CORS блокирован для: ${origin}`);
-      callback(null, true);  // Разрешаем в любом случае (можно изменить на strict)
+      callback(null, true);
     }
   },
   credentials: true,
@@ -29,7 +31,7 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'X-Wallet']
 }));
 
-app.options('*', cors());  // ✅ Обработка preflight запросов
+app.options('*', cors());
 
 app.use(express.json({ limit: '1mb' }));
 
