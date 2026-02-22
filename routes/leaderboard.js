@@ -83,6 +83,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     };
     
     // ✅ НОВОЕ (10 минут + учитываем асинхронность)
+      const now = Date.now();
       const timeDiff = now - timestamp;
       const MAX_TIME_DIFF = 10 * 60 * 1000;  // 10 минут
       
@@ -270,5 +271,6 @@ router.get('/verified-results/:wallet', async (req, res) => {
 });
 
 module.exports = router;
+
 
 
