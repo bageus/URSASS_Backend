@@ -82,14 +82,21 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       silver: Math.max(0, Math.min(9999, silverCoins || 0))
     };
     
-    // ✅ Защита о�� старых результатов (не старше 5 минут)
-    const now = Date.now();
-    const timeDiff = now - timestamp;
-    if(timeDiff < 0 || timeDiff > 5 * 60 * 1000) {
-      return res.status(400).json({ 
-        error: 'Invalid timestamp. Result must be submitted within 5 minutes.' 
-      });
-    }
+    // ✅ НОВОЕ (10 минут + учитываем асинхронность)
+      const timeDiff = now - timestamp;
+      const MAX_TIME_DIFF = 10 * 60 * 1000;  // 10 минут
+      
+      console.log(`⏰ Текущее время сервера (мс): ${now}`);
+      console.log(`⏰ Timestamp клиента (мс): ${timestamp}`);
+      console.log(`⏰ Разница (мс): ${timeDiff}`);
+      console.log(`⏰ Максимум допустимой разницы: ${MAX_TIME_DIFF}мс (10 минут)`);
+      
+      if(timeDiff < 0 || timeDiff > MAX_TIME_DIFF) {
+        console.warn(`❌ Timestamp слишком старый/новый: ${timeDiff}мс`);
+        return res.status(400).json({ 
+          error: `Invalid timestamp. Difference: ${timeDiff}ms. Must be within ${MAX_TIME_DIFF}ms.`
+        });
+      }
     
     // ✅ ГЛАВНОЕ: Верифицируем подпись
     const messageToVerify = createMessageToVerify(
@@ -263,3 +270,4 @@ router.get('/verified-results/:wallet', async (req, res) => {
 });
 
 module.exports = router;
+
