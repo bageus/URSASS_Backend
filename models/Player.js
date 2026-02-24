@@ -1,4 +1,3 @@
-// URSASS_Backend/models/Player.js — заменить весь файл
 
 const mongoose = require('mongoose');
 
@@ -66,3 +65,4 @@ const playerSchema = new mongoose.Schema({
 });
 
 module.exports = mongoose.model('Player', playerSchema);
+
