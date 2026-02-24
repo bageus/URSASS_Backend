@@ -82,41 +82,47 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       silver: Math.max(0, Math.min(9999, silverCoins || 0))
     };
     
-    // ✅ НОВОЕ (10 минут + учитываем асинхронность)
-      const now = Date.now();
-      const timeDiff = now - timestamp;
-      const MAX_TIME_DIFF = 10 * 60 * 1000;  // 10 минут
-      
-      console.log(`⏰ Текущее время сервера (мс): ${now}`);
-      console.log(`⏰ Timestamp клиента (мс): ${timestamp}`);
-      console.log(`⏰ Разница (мс): ${timeDiff}`);
-      console.log(`⏰ Максимум допустимой разницы: ${MAX_TIME_DIFF}мс (10 минут)`);
-      
-      if(timeDiff < 0 || timeDiff > MAX_TIME_DIFF) {
-        console.warn(`❌ Timestamp слишком старый/новый: ${timeDiff}мс`);
-        return res.status(400).json({ 
-          error: `Invalid timestamp. Difference: ${timeDiff}ms. Must be within ${MAX_TIME_DIFF}ms.`
-        });
-      }
+    // ✅ Проверка timestamp (не старше 10 минут)
+    const now = Date.now();
+    const timeDiff = now - timestamp;
+    const MAX_TIME_DIFF = 10 * 60 * 1000;
     
-    // ✅ ГЛАВНОЕ: Верифицируем подпись (временно)
-    //const messageToVerify = createMessageToVerify(
-    //  walletLower, 
-    //  score, 
-    //  distance, 
-    //  timestamp
-   // );
+    console.log(`⏰ Текущее время (мс): ${now}`);
+    console.log(`⏰ Timestamp клиента (мс): ${timestamp}`);
+    console.log(`⏰ Разница (мс): ${timeDiff}`);
     
-   // const isSignatureValid = verifySignature(messageToVerify, signature, walletLower);
+    if(timeDiff < 0 || timeDiff > MAX_TIME_DIFF) {
+      console.warn(`❌ Timestamp невалиден: ${timeDiff}мс`);
+      return res.status(400).json({ 
+        error: `Invalid timestamp. Difference: ${timeDiff}ms. Must be within ${MAX_TIME_DIFF}ms.`
+      });
+    }
     
-  //  if(!isSignatureValid) {
-  //    console.warn(`❌ Неверная подпись для кошелька: ${walletLower}`);
-  //    return res.status(401).json({ 
-  //      error: 'Invalid signature. Result cannot be verified.' 
-  //    });
-  //  }
+    // ✅ ========== ГЛАВНОЕ: ВЕРИФИЦИРУЕМ ПОДПИСЬ ==========
+    const messageToVerify = createMessageToVerify(
+      walletLower, 
+      score, 
+      distance, 
+      timestamp
+    );
     
-    // ✅ Проверяем, нет ли уже результата с такой же подписью (дубль)
+    console.log(`📝 Сообщение для верификации:\n${messageToVerify}`);
+    console.log(`✍️ Подпись: ${signature.substring(0, 20)}...`);
+    
+    const isSignatureValid = verifySignature(messageToVerify, signature, walletLower);
+    
+    if(!isSignatureValid) {
+      console.warn(`❌ ❌ ❌ НЕВЕРНАЯ ПОДПИСЬ для ${walletLower}`);
+      return res.status(401).json({ 
+        error: 'Invalid signature. Result cannot be verified.',
+        details: 'Your wallet signature does not match the submitted data.'
+      });
+    }
+    
+    console.log(`✅ ✅ ✅ Подпись верна для ${walletLower}`);
+    // ✅ ========== КОНЕЦ ВЕРИФИКАЦИИ ==========
+    
+    // ✅ Проверяем дубли по подписи
     const existingResult = await GameResult.findOne({ signature });
     if(existingResult) {
       return res.status(400).json({ 
@@ -124,7 +130,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       });
     }
     
-    // ✅ Сохраняем результат игры в отдельную коллекцию (для аудита)
+    // ✅ Сохраняем результат (теперь верифицирован!)
     const gameResult = new GameResult({
       wallet: walletLower,
       score: Math.floor(score),
@@ -134,7 +140,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       signature,
       timestamp,
       ipAddress: req.ip,
-      verified: true
+      verified: true  // ✅ Верифицирован!
     });
     
     await gameResult.save();
@@ -184,7 +190,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     player.updatedAt = new Date();
     await player.save();
     
-    console.log(`✅ Верифицированный результат сохранён: ${walletLower} | Score: ${score} | Signature: ${signature.substring(0, 10)}...`);
+    console.log(`✅ Результат сохранён (ВЕРИФИЦИРОВАН): ${walletLower} | Score: ${score}`);
     
     res.json({
       success: true,
@@ -271,6 +277,7 @@ router.get('/verified-results/:wallet', async (req, res) => {
 });
 
 module.exports = router;
+
 
 
 
