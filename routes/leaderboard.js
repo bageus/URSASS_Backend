@@ -55,11 +55,12 @@ router.get('/top', leaderboardLimiter, async (req, res) => {
 });
 
 // ✅ POST: Сохранить результат игры С ВАЛИДАЦИЕЙ ПОДПИСИ
+// URSASS_Backend/routes/leaderboard.js — обновить router.post('/save', ...)
+
 router.post('/save', saveResultLimiter, async (req, res) => {
   try {
     const { wallet, score, distance, goldCoins, silverCoins, signature, timestamp } = req.body;
     
-    // ✅ Проверяем обязательные поля
     if(!wallet || score === undefined || distance === undefined || !signature || !timestamp) {
       return res.status(400).json({ 
         error: 'Missing required fields: wallet, score, distance, signature, timestamp' 
@@ -68,7 +69,6 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     
     const walletLower = wallet.toLowerCase();
     
-    // ✅ Валидация значений
     if(typeof score !== 'number' || score < 0 || score > 999999999) {
       return res.status(400).json({ error: 'Invalid score value' });
     }
@@ -82,7 +82,6 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       silver: Math.max(0, Math.min(9999, silverCoins || 0))
     };
     
-    // ✅ Проверка timestamp (не старше 10 минут)
     const now = Date.now();
     const timeDiff = now - timestamp;
     const MAX_TIME_DIFF = 10 * 60 * 1000;
@@ -98,7 +97,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       });
     }
     
-    // ✅ ========== ГЛАВНОЕ: ВЕРИФИЦИРУЕМ ПОДПИСЬ ==========
+    // ✅ ВЕРИФИКАЦИЯ ПОДПИСИ
     const messageToVerify = createMessageToVerify(
       walletLower, 
       score, 
@@ -107,8 +106,6 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     );
     
     console.log(`📝 Сообщение для верификации:\n${messageToVerify}`);
-    console.log(`✍️ Подпись: ${signature.substring(0, 20)}...`);
-    
     const isSignatureValid = verifySignature(messageToVerify, signature, walletLower);
     
     if(!isSignatureValid) {
@@ -120,9 +117,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     }
     
     console.log(`✅ ✅ ✅ Подпись верна для ${walletLower}`);
-    // ✅ ========== КОНЕЦ ВЕРИФИКАЦИИ ==========
     
-    // ✅ Проверяем дубли по подписи
     const existingResult = await GameResult.findOne({ signature });
     if(existingResult) {
       return res.status(400).json({ 
@@ -130,7 +125,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       });
     }
     
-    // ✅ Сохраняем результат (теперь верифицирован!)
+    // ✅ Сохраняем результат игры в отдельную коллекцию (для аудита)
     const gameResult = new GameResult({
       wallet: walletLower,
       score: Math.floor(score),
@@ -140,21 +135,22 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       signature,
       timestamp,
       ipAddress: req.ip,
-      verified: true  // ✅ Верифицирован!
+      verified: true
     });
     
     await gameResult.save();
     
-    // ✅ Обновляем статистику игрока
+    // ✅ ОБНОВЛЯЕМ СТАТИСТИКУ ИГРОКА (НОВАЯ ЛОГИКА)
     let player = await Player.findOne({ wallet: walletLower });
-
+    
     if(!player) {
+      // ✅ Новый игрок
       player = new Player({
         wallet: walletLower,
-        totalScore: score,
-        totalDistance: distance,
-        totalGoldCoins: coins.gold,
-        totalSilverCoins: coins.silver,
+        bestScore: Math.floor(score),        // ✅ Лучший результат
+        bestDistance: Math.floor(distance),  // ✅ Лучшая дистанция
+        totalGoldCoins: coins.gold,          // ✅ Сумма золотых
+        totalSilverCoins: coins.silver,      // ✅ Сумма серебрянных
         gamesPlayed: 1,
         gameHistory: [
           {
@@ -167,12 +163,23 @@ router.post('/save', saveResultLimiter, async (req, res) => {
         ]
       });
     } else {
-      player.totalScore += Math.floor(score);
-      player.totalDistance += Math.floor(distance);
+      // ✅ Существующий игрок - обновляем ТОЛЬКО если лучше
+      if(Math.floor(score) > player.bestScore) {
+        console.log(`📈 Новый лучший результат: ${Math.floor(score)} (было ${player.bestScore})`);
+        player.bestScore = Math.floor(score);
+      }
+      
+      if(Math.floor(distance) > player.bestDistance) {
+        console.log(`📈 Новая лучшая дистанция: ${Math.floor(distance)} (было ${player.bestDistance})`);
+        player.bestDistance = Math.floor(distance);
+      }
+      
+      // ✅ ВСЕГДА суммируем монеты
       player.totalGoldCoins += coins.gold;
       player.totalSilverCoins += coins.silver;
       player.gamesPlayed += 1;
       
+      // ✅ Добавляем в историю
       player.gameHistory.push({
         score: Math.floor(score),
         distance: Math.floor(distance),
@@ -181,33 +188,28 @@ router.post('/save', saveResultLimiter, async (req, res) => {
         timestamp: new Date()
       });
       
-      // ✅ УЛУЧШЕНО: явный лимит + логирование
-      const MAX_GAME_HISTORY = 100;
-      const MAX_HISTORY_SIZE_KB = 500;  // ✅ Макс размер истории
-      
-      if(player.gameHistory.length > MAX_GAME_HISTORY) {
-        console.warn(`⚠️ gameHistory превышает лимит (${player.gameHistory.length}), удаляю старые`);
-        player.gameHistory = player.gameHistory.slice(-MAX_GAME_HISTORY);
-      }
-      
-      // ✅ Дополнительная проверка размера (примерная)
-      const historySizeKB = JSON.stringify(player.gameHistory).length / 1024;
-      if(historySizeKB > MAX_HISTORY_SIZE_KB) {
-        console.warn(`⚠️ gameHistory слишком тяжелая (${historySizeKB}KB), удаляю старые`);
-        player.gameHistory = player.gameHistory.slice(-50);
+      // ✅ Храним только последние 100 игр
+      if(player.gameHistory.length > 100) {
+        player.gameHistory.shift();
       }
     }
     
     player.updatedAt = new Date();
     await player.save();
     
-    console.log(`✅ Результат сохранён (ВЕРИФИЦИРОВАН): ${walletLower} | Score: ${score} | History size: ${(JSON.stringify(player.gameHistory).length / 1024).toFixed(2)}KB`);
-        
+    console.log(`✅ Результат сохранён (ВЕРИФИЦИРОВАН): ${walletLower}`);
+    console.log(`   Лучший score: ${player.bestScore}`);
+    console.log(`   Лучшая distance: ${player.bestDistance}`);
+    console.log(`   Сумма Gold: ${player.totalGoldCoins}`);
+    console.log(`   Сумма Silver: ${player.totalSilverCoins}`);
+    
     res.json({
       success: true,
       message: 'Result saved successfully with valid signature',
-      totalScore: player.totalScore,
-      totalDistance: player.totalDistance,
+      bestScore: player.bestScore,
+      bestDistance: player.bestDistance,
+      totalGoldCoins: player.totalGoldCoins,
+      totalSilverCoins: player.totalSilverCoins,
       gamesPlayed: player.gamesPlayed
     });
     
@@ -218,49 +220,52 @@ router.post('/save', saveResultLimiter, async (req, res) => {
 });
 
 // ✅ GET: Статистика конкретного игрока (или пустая для новых)
-router.get('/player/:wallet', leaderboardLimiter, async (req, res) => {
+router.get('/top', leaderboardLimiter, async (req, res) => {
   try {
-    const wallet = req.params.wallet.toLowerCase();
+    const wallet = req.query.wallet?.toLowerCase();
     
-    // ✅ Валидация адреса (примерно проверяем формат)
-    if(!wallet.match(/^0x[a-f0-9]{40}$/i)) {
-      return res.status(400).json({ error: 'Invalid wallet address format' });
+    // ✅ Сортируем по ЛУЧШЕМУ результату (bestScore), не сумме
+    const topPlayers = await Player.find()
+      .sort({ bestScore: -1 })
+      .limit(10)
+      .select('wallet bestScore bestDistance totalGoldCoins totalSilverCoins gamesPlayed');
+    
+    let playerPosition = null;
+    if(wallet) {
+      const playerData = await Player.findOne({ wallet });
+      if(playerData) {
+        // ✅ Ищем позицию по лучшему результату
+        const position = await Player.countDocuments({
+          bestScore: { $gt: playerData.bestScore }
+        });
+        
+        playerPosition = {
+          position: position + 1,
+          wallet: playerData.wallet,
+          bestScore: playerData.bestScore,
+          bestDistance: playerData.bestDistance,
+          totalGoldCoins: playerData.totalGoldCoins,
+          totalSilverCoins: playerData.totalSilverCoins,
+          gamesPlayed: playerData.gamesPlayed
+        };
+      }
     }
-    
-    const player = await Player.findOne({ wallet });
-    
-    // ✅ Возвращаем 200 даже если игрок новый (не 404)
-    if(!player) {
-      return res.status(200).json({ 
-        wallet: wallet,
-        position: null,
-        totalScore: 0,
-        totalDistance: 0,
-        totalGoldCoins: 0,
-        totalSilverCoins: 0,
-        gamesPlayed: 0,
-        gameHistory: [],
-        message: 'New player - no previous results'
-      });
-    }
-    
-    const position = await Player.countDocuments({
-      totalScore: { $gt: player.totalScore }
-    });
     
     res.json({
-      wallet: player.wallet,
-      position: position + 1,
-      totalScore: player.totalScore,
-      totalDistance: player.totalDistance,
-      totalGoldCoins: player.totalGoldCoins,
-      totalSilverCoins: player.totalSilverCoins,
-      gamesPlayed: player.gamesPlayed,
-      gameHistory: player.gameHistory.slice(-10).reverse()
+      leaderboard: topPlayers.map((player, index) => ({
+        position: index + 1,
+        wallet: player.wallet,
+        bestScore: player.bestScore,
+        bestDistance: player.bestDistance,
+        totalGoldCoins: player.totalGoldCoins,
+        totalSilverCoins: player.totalSilverCoins,
+        gamesPlayed: player.gamesPlayed
+      })),
+      playerPosition
     });
     
   } catch(error) {
-    console.error('❌ Ошибка GET /player:', error);
+    console.error('❌ Ошибка GET /top:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -287,7 +292,54 @@ router.get('/verified-results/:wallet', async (req, res) => {
   }
 });
 
+router.get('/player/:wallet', leaderboardLimiter, async (req, res) => {
+  try {
+    const wallet = req.params.wallet.toLowerCase();
+    
+    if(!wallet.match(/^0x[a-f0-9]{40}$/i)) {
+      return res.status(400).json({ error: 'Invalid wallet address format' });
+    }
+    
+    const player = await Player.findOne({ wallet });
+    
+    if(!player) {
+      return res.status(200).json({ 
+        wallet: wallet,
+        position: null,
+        bestScore: 0,
+        bestDistance: 0,
+        totalGoldCoins: 0,
+        totalSilverCoins: 0,
+        gamesPlayed: 0,
+        gameHistory: [],
+        message: 'New player - no previous results'
+      });
+    }
+    
+    // ✅ Позиция по ЛУЧШЕМУ результату
+    const position = await Player.countDocuments({
+      bestScore: { $gt: player.bestScore }
+    });
+    
+    res.json({
+      wallet: player.wallet,
+      position: position + 1,
+      bestScore: player.bestScore,
+      bestDistance: player.bestDistance,
+      totalGoldCoins: player.totalGoldCoins,
+      totalSilverCoins: player.totalSilverCoins,
+      gamesPlayed: player.gamesPlayed,
+      gameHistory: player.gameHistory.slice(-10).reverse()
+    });
+    
+  } catch(error) {
+    console.error('❌ Ошибка GET /player:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 module.exports = router;
+
 
 
 
