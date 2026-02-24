@@ -10,24 +10,28 @@ router.get('/top', leaderboardLimiter, async (req, res) => {
   try {
     const wallet = req.query.wallet?.toLowerCase();
     
+    // ✅ ИСПРАВЛЕНО: добавляем select() для bestScore и bestDistance
     const topPlayers = await Player.find()
-      .sort({ totalScore: -1 })
+      .sort({ bestScore: -1 })
       .limit(10)
-      .select('wallet totalScore totalDistance totalGoldCoins totalSilverCoins gamesPlayed');
+      .select('wallet bestScore bestDistance totalGoldCoins totalSilverCoins gamesPlayed');  // ✅ ДОБАВИЛИ bestScore и bestDistance
+    
+    console.log("📊 TOP 10 Запрос выполнен");
+    console.log("📋 Результаты:", topPlayers);
     
     let playerPosition = null;
     if(wallet) {
       const playerData = await Player.findOne({ wallet });
       if(playerData) {
         const position = await Player.countDocuments({
-          totalScore: { $gt: playerData.totalScore }
+          bestScore: { $gt: playerData.bestScore }
         });
         
         playerPosition = {
           position: position + 1,
           wallet: playerData.wallet,
-          totalScore: playerData.totalScore,
-          totalDistance: playerData.totalDistance,
+          bestScore: playerData.bestScore,
+          bestDistance: playerData.bestDistance,
           totalGoldCoins: playerData.totalGoldCoins,
           totalSilverCoins: playerData.totalSilverCoins,
           gamesPlayed: playerData.gamesPlayed
@@ -39,8 +43,8 @@ router.get('/top', leaderboardLimiter, async (req, res) => {
       leaderboard: topPlayers.map((player, index) => ({
         position: index + 1,
         wallet: player.wallet,
-        totalScore: player.totalScore,
-        totalDistance: player.totalDistance,
+        bestScore: player.bestScore,      // ✅ БЫЛО undefined
+        bestDistance: player.bestDistance,  // ✅ БЫЛО undefined
         totalGoldCoins: player.totalGoldCoins,
         totalSilverCoins: player.totalSilverCoins,
         gamesPlayed: player.gamesPlayed
@@ -54,8 +58,7 @@ router.get('/top', leaderboardLimiter, async (req, res) => {
   }
 });
 
-// ✅ POST: Сохранить результат игры С ВАЛИДАЦИЕЙ ПОДПИСИ
-// URSASS_Backend/routes/leaderboard.js — обновить router.post('/save', ...)
+// ✅ POST: Сохранить результат игры С ВАЛИДАЦИЕЙ ПОДПИС
 
 router.post('/save', saveResultLimiter, async (req, res) => {
   try {
@@ -339,6 +342,7 @@ router.get('/player/:wallet', leaderboardLimiter, async (req, res) => {
 });
 
 module.exports = router;
+
 
 
 
