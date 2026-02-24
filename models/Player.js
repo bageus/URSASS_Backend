@@ -1,3 +1,5 @@
+// URSASS_Backend/models/Player.js — заменить весь файл
+
 const mongoose = require('mongoose');
 
 const playerSchema = new mongoose.Schema({
@@ -9,17 +11,19 @@ const playerSchema = new mongoose.Schema({
     index: true
   },
   
-  totalScore: {
+  // ✅ ЛУЧШИЙ результат (не сумма!)
+  bestScore: {
     type: Number,
     default: 0,
     index: true
   },
   
-  totalDistance: {
+  bestDistance: {
     type: Number,
     default: 0
   },
   
+  // ✅ СУММА собранных монет
   totalGoldCoins: {
     type: Number,
     default: 0
@@ -30,11 +34,13 @@ const playerSchema = new mongoose.Schema({
     default: 0
   },
   
+  // ✅ Количество сыгранных игр
   gamesPlayed: {
     type: Number,
     default: 0
   },
   
+  // ✅ История последних 100 игр (для статистики)
   gameHistory: [
     {
       score: Number,
