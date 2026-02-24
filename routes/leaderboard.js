@@ -147,7 +147,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     
     // ✅ Обновляем статистику игрока
     let player = await Player.findOne({ wallet: walletLower });
-    
+
     if(!player) {
       player = new Player({
         wallet: walletLower,
@@ -181,17 +181,28 @@ router.post('/save', saveResultLimiter, async (req, res) => {
         timestamp: new Date()
       });
       
-      // ✅ Храним только последние 100 игр
-      if(player.gameHistory.length > 100) {
-        player.gameHistory.shift();
+      // ✅ УЛУЧШЕНО: явный лимит + логирование
+      const MAX_GAME_HISTORY = 100;
+      const MAX_HISTORY_SIZE_KB = 500;  // ✅ Макс размер истории
+      
+      if(player.gameHistory.length > MAX_GAME_HISTORY) {
+        console.warn(`⚠️ gameHistory превышает лимит (${player.gameHistory.length}), удаляю старые`);
+        player.gameHistory = player.gameHistory.slice(-MAX_GAME_HISTORY);
+      }
+      
+      // ✅ Дополнительная проверка размера (примерная)
+      const historySizeKB = JSON.stringify(player.gameHistory).length / 1024;
+      if(historySizeKB > MAX_HISTORY_SIZE_KB) {
+        console.warn(`⚠️ gameHistory слишком тяжелая (${historySizeKB}KB), удаляю старые`);
+        player.gameHistory = player.gameHistory.slice(-50);
       }
     }
     
     player.updatedAt = new Date();
     await player.save();
     
-    console.log(`✅ Результат сохранён (ВЕРИФИЦИРОВАН): ${walletLower} | Score: ${score}`);
-    
+    console.log(`✅ Результат сохранён (ВЕРИФИЦИРОВАН): ${walletLower} | Score: ${score} | History size: ${(JSON.stringify(player.gameHistory).length / 1024).toFixed(2)}KB`);
+        
     res.json({
       success: true,
       message: 'Result saved successfully with valid signature',
@@ -277,6 +288,7 @@ router.get('/verified-results/:wallet', async (req, res) => {
 });
 
 module.exports = router;
+
 
 
 
