@@ -3,13 +3,12 @@ const express = require('express');
 const cors = require('cors');
 const connectDB = require('./database');
 const leaderboardRoutes = require('./routes/leaderboard');
+const storeRoutes = require('./routes/store');
 
 const app = express();
 
-// ✅ ДОБАВЬТЕ ЭТОТ БЛОК (для Railway и других прокси)
 app.set('trust proxy', 1);
 
-// ✅ CORS и JSON парсинг
 const allowedOrigins = [
   'https://bageus.github.io',
   'https://ursass-tube.vercel.app',
@@ -19,7 +18,7 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function(origin, callback) {
-    if(!origin || allowedOrigins.includes(origin)) {
+    if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
       console.warn(`❌ CORS блокирован для: ${origin}`);
@@ -35,26 +34,26 @@ app.options('*', cors());
 
 app.use(express.json({ limit: '1mb' }));
 
-// ✅ Подключаемся к БД
 connectDB();
 
-// ✅ Routes
+// Routes
 app.use('/api/leaderboard', leaderboardRoutes);
+app.use('/api/store', storeRoutes);
 
-// ✅ Health check
+// Health check
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
+  res.json({
+    status: 'OK',
     timestamp: new Date(),
     mongodb: 'connected'
   });
 });
 
-// ✅ Error handler (обязательно последний!)
+// Error handler
 app.use((err, req, res, next) => {
   console.error('❌ Error:', err);
-  res.status(err.status || 500).json({ 
-    error: err.message || 'Internal server error' 
+  res.status(err.status || 500).json({
+    error: err.message || 'Internal server error'
   });
 });
 
