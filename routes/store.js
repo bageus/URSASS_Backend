@@ -200,7 +200,8 @@ router.post('/buy', saveResultLimiter, async (req, res) => {
 
       if (upgradeKey === "shield") {
         if (upgrades.shield > 0) {
-          return res.status(400).json({ error: 'Shield already purchased for next game' });
+          // Уже куплен навсегда
+          return res.status(400).json({ error: 'Shield already purchased (permanent upgrade)' });
         }
         upgrades.shield = 1;
       } else if (upgradeKey === "rides_pack") {
@@ -244,30 +245,6 @@ router.post('/buy', saveResultLimiter, async (req, res) => {
  * POST /api/store/consume-shield
  * Списать щит после начала игры (вызывается фронтендом при старте)
  */
-router.post('/consume-shield', saveResultLimiter, async (req, res) => {
-  try {
-    const { wallet } = req.body;
-    if (!wallet) return res.status(400).json({ error: 'Missing wallet' });
 
-    const walletLower = wallet.toLowerCase();
-    const upgrades = await PlayerUpgrades.findOne({ wallet: walletLower });
-
-    if (!upgrades || upgrades.shield <= 0) {
-      return res.json({ consumed: false, message: 'No shield to consume' });
-    }
-
-    upgrades.shield = 0;
-    upgrades.updatedAt = new Date();
-    await upgrades.save();
-
-    console.log(`🛡 Shield consumed for ${walletLower}`);
-
-    res.json({ consumed: true, message: 'Shield consumed' });
-
-  } catch (error) {
-    console.error('❌ POST /consume-shield error:', error);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
 
 module.exports = router;
