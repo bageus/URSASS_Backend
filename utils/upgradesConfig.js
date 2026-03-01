@@ -87,13 +87,13 @@ const UPGRADES_CONFIG = {
 
   // === GOLD — CONSUMABLE ===
 
-  shield: {
+    shield: {
     type: "consumable",
     currency: "gold",
     maxLevel: 1,
     prices: [10],
-    effects: [true],               // старт со щитом
-    description: "Start with shield"
+    effects: [true],
+    description: "Start with shield (permanent)"
   },
 
   rides_pack: {
