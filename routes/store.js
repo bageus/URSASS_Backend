@@ -92,10 +92,28 @@ router.post('/buy', saveResultLimiter, async (req, res) => {
     }
 
     // Проверяем timestamp (не старше 5 минут)
+    // Явно парсим timestamp как число
+    const ts = typeof timestamp === 'number' ? timestamp : parseInt(timestamp, 10);
+
+    if (!ts || isNaN(ts)) {
+      return res.status(400).json({ error: 'Invalid timestamp format' });
+    }
+
     const now = Date.now();
-    const timeDiff = now - timestamp;
-    if (timeDiff < 0 || timeDiff > 5 * 60 * 1000) {
-      return res.status(400).json({ error: 'Invalid timestamp' });
+    const timeDiff = Math.abs(now - ts);
+    const MAX_TIME_DIFF = 10 * 60 * 1000; // 10 минут
+
+    console.log(`⏰ Server time: ${now}`);
+    console.log(`⏰ Client timestamp: ${ts}`);
+    console.log(`⏰ Difference: ${timeDiff}ms (${(timeDiff / 1000).toFixed(1)}s)`);
+
+    if (timeDiff > MAX_TIME_DIFF) {
+      console.warn(`❌ Timestamp invalid: ${timeDiff}ms`);
+      return res.status(400).json({
+        error: `Invalid timestamp. Difference: ${timeDiff}ms. Max allowed: ${MAX_TIME_DIFF}ms.`,
+        serverTime: now,
+        clientTime: ts
+      });
     }
 
     // === ВЕРИФИКАЦИЯ ПОДПИСИ ===
