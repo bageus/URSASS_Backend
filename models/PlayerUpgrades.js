@@ -1,10 +1,5 @@
 const mongoose = require('mongoose');
 
-/**
- * Все улучшения игрока.
- * Каждое поле — текущий купленный уровень (0 = не куплено, 1/2/3 = тиры).
- * Для одноразовых (shield, spin_recharge) — 0 или 1.
- */
 const playerUpgradesSchema = new mongoose.Schema({
   wallet: {
     type: String,
@@ -15,87 +10,39 @@ const playerUpgradesSchema = new mongoose.Schema({
   },
 
   // === SILVER (3 тира каждый) ===
+  x2_duration: { type: Number, default: 0, min: 0, max: 3 },
+  score_plus_mult: { type: Number, default: 0, min: 0, max: 3 },
+  score_minus_mult: { type: Number, default: 0, min: 0, max: 3 },
+  invert_score: { type: Number, default: 0, min: 0, max: 3 },
+  speed_up_mult: { type: Number, default: 0, min: 0, max: 3 },
+  speed_down_mult: { type: Number, default: 0, min: 0, max: 3 },
+  magnet_duration: { type: Number, default: 0, min: 0, max: 3 },
+  spin_cooldown: { type: Number, default: 0, min: 0, max: 3 },
 
-  // X2 Score — длительность: базовая 7с → +5/+5/+5 = 12/17/22
-  x2_duration: {
+  // === GOLD (перманентные/consumable) ===
+  shield: { type: Number, default: 0, min: 0, max: 1 },
+
+  // === СИСТЕМА ЗАЕЗДОВ ===
+
+  // Бесплатные заезды (восстанавливаются раз в 8 часов)
+  freeRidesRemaining: {
     type: Number,
-    default: 0,
+    default: 3,
     min: 0,
     max: 3
   },
 
-  // Score +300/500 — множитель: x1 → x1.5/x1.7/x2
-  score_plus_mult: {
-    type: Number,
-    default: 0,
-    min: 0,
-    max: 3
+  // Когда последний раз обновились бесплатные заезды
+  freeRidesResetAt: {
+    type: Date,
+    default: Date.now
   },
 
-  // Score -300/500 — множитель штрафа: x1 → x0.9/x0.7/x0.5
-  score_minus_mult: {
+  // Купленные заезды (не сгорают, не восстанавливаются)
+  paidRidesRemaining: {
     type: Number,
     default: 0,
-    min: 0,
-    max: 3
-  },
-
-  // Invert — очки во время инверта: x1 → x1.5/x1.7/x2
-  invert_score: {
-    type: Number,
-    default: 0,
-    min: 0,
-    max: 3
-  },
-
-  // Speed Up — коэффициент ускорения: x1 → x2/x3/x4
-  speed_up_mult: {
-    type: Number,
-    default: 0,
-    min: 0,
-    max: 3
-  },
-
-  // Speed Down — коэффициент замедления: x1 → x2/x3/x4
-  speed_down_mult: {
-    type: Number,
-    default: 0,
-    min: 0,
-    max: 3
-  },
-
-  // Magnet — длительность: базовая 7с → +5/+5/+5 = 12/17/22
-  magnet_duration: {
-    type: Number,
-    default: 0,
-    min: 0,
-    max: 3
-  },
-
-  // Spin recharge — кулдаун спина: базовый 30с → -2/-3/-5 = 28/25/20
-  spin_cooldown: {
-    type: Number,
-    default: 0,
-    min: 0,
-    max: 3
-  },
-
-  // === GOLD (одноразовые, покупаются каждый раз) ===
-
-  // Shield — старт со щитом (1 = куплен на следующую игру, 0 = нет)
-  shield: {
-    type: Number,
-    default: 0,
-    min: 0,
-    max: 1
-  },
-
-  // Rides pack — пак 3 заезда (будущее)
-  rides_pack: {
-    type: Number,
-    default: 0,
-    min: 0,
-    max: 99
+    min: 0
   },
 
   updatedAt: {
@@ -103,5 +50,61 @@ const playerUpgradesSchema = new mongoose.Schema({
     default: Date.now
   }
 });
+
+/**
+ * Пересчитать бесплатные заезды на основе времени.
+ * Вызывается при каждом обращении к данным игрока.
+ * Возвращает true если были изменения.
+ */
+playerUpgradesSchema.methods.refreshFreeRides = function() {
+  const now = new Date();
+  const resetAt = this.freeRidesResetAt || new Date(0);
+  const hoursSinceReset = (now - resetAt) / (1000 * 60 * 60);
+
+  // Если прошло 8+ часов и заезды не полные — восстанавливаем
+  if (hoursSinceReset >= 8 && this.freeRidesRemaining < 3) {
+    this.freeRidesRemaining = 3;
+    this.freeRidesResetAt = now;
+    return true;
+  }
+
+  // Если заезды полные — обновляем таймер (чтобы отсчёт шёл от последнего полного состояния)
+  if (this.freeRidesRemaining >= 3) {
+    this.freeRidesResetAt = now;
+  }
+
+  return false;
+};
+
+/**
+ * Получить общее количество доступных заездов
+ */
+playerUpgradesSchema.methods.getTotalRides = function() {
+  return this.freeRidesRemaining + this.paidRidesRemaining;
+};
+
+/**
+ * Потратить 1 заезд. Сначала бесплатные, потом платные.
+ * Возвращает true если успешно.
+ */
+playerUpgradesSchema.methods.consumeRide = function() {
+  if (this.freeRidesRemaining > 0) {
+    this.freeRidesRemaining--;
+
+    // Если это первый потраченный бесплатный заезд — фиксируем время для таймера
+    if (this.freeRidesRemaining < 3) {
+      // freeRidesResetAt уже установлен, не трогаем
+    }
+
+    return true;
+  }
+
+  if (this.paidRidesRemaining > 0) {
+    this.paidRidesRemaining--;
+    return true;
+  }
+
+  return false;
+};
 
 module.exports = mongoose.model('PlayerUpgrades', playerUpgradesSchema);
