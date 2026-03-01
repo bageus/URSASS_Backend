@@ -222,57 +222,6 @@ router.post('/save', saveResultLimiter, async (req, res) => {
   }
 });
 
-// ✅ GET: Статистика конкретного игрока (или пустая для новых)
-router.get('/top', leaderboardLimiter, async (req, res) => {
-  try {
-    const wallet = req.query.wallet?.toLowerCase();
-    
-    // ✅ Сортируем по ЛУЧШЕМУ результату (bestScore), не сумме
-    const topPlayers = await Player.find()
-      .sort({ bestScore: -1 })
-      .limit(10)
-      .select('wallet bestScore bestDistance totalGoldCoins totalSilverCoins gamesPlayed');
-    
-    let playerPosition = null;
-    if(wallet) {
-      const playerData = await Player.findOne({ wallet });
-      if(playerData) {
-        // ✅ Ищем позицию по лучшему результату
-        const position = await Player.countDocuments({
-          bestScore: { $gt: playerData.bestScore }
-        });
-        
-        playerPosition = {
-          position: position + 1,
-          wallet: playerData.wallet,
-          bestScore: playerData.bestScore,
-          bestDistance: playerData.bestDistance,
-          totalGoldCoins: playerData.totalGoldCoins,
-          totalSilverCoins: playerData.totalSilverCoins,
-          gamesPlayed: playerData.gamesPlayed
-        };
-      }
-    }
-    
-    res.json({
-      leaderboard: topPlayers.map((player, index) => ({
-        position: index + 1,
-        wallet: player.wallet,
-        bestScore: player.bestScore,
-        bestDistance: player.bestDistance,
-        totalGoldCoins: player.totalGoldCoins,
-        totalSilverCoins: player.totalSilverCoins,
-        gamesPlayed: player.gamesPlayed
-      })),
-      playerPosition
-    });
-    
-  } catch(error) {
-    console.error('❌ Ошибка GET /top:', error);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
 // ✅ GET: Проверка верифицированных результатов (для админа/отладки)
 router.get('/verified-results/:wallet', async (req, res) => {
   try {
@@ -342,6 +291,7 @@ router.get('/player/:wallet', leaderboardLimiter, async (req, res) => {
 });
 
 module.exports = router;
+
 
 
 
