@@ -85,18 +85,26 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       silver: Math.max(0, Math.min(9999, silverCoins || 0))
     };
     
+        // ✅ Замени блок проверки timestamp в POST /save:
+
+    const ts = typeof timestamp === 'number' ? timestamp : parseInt(timestamp, 10);
+
+    if (!ts || isNaN(ts)) {
+      return res.status(400).json({ error: 'Invalid timestamp format' });
+    }
+
     const now = Date.now();
-    const timeDiff = now - timestamp;
+    const timeDiff = Math.abs(now - ts);
     const MAX_TIME_DIFF = 10 * 60 * 1000;
-    
-    console.log(`⏰ Текущее время (мс): ${now}`);
-    console.log(`⏰ Timestamp клиента (мс): ${timestamp}`);
-    console.log(`⏰ Разница (мс): ${timeDiff}`);
-    
-    if(timeDiff < 0 || timeDiff > MAX_TIME_DIFF) {
-      console.warn(`❌ Timestamp невалиден: ${timeDiff}мс`);
-      return res.status(400).json({ 
-        error: `Invalid timestamp. Difference: ${timeDiff}ms. Must be within ${MAX_TIME_DIFF}ms.`
+
+    console.log(`⏰ Server time: ${now}`);
+    console.log(`⏰ Client timestamp: ${ts}`);
+    console.log(`⏰ Difference: ${timeDiff}ms`);
+
+    if (timeDiff > MAX_TIME_DIFF) {
+      console.warn(`❌ Timestamp invalid: ${timeDiff}ms`);
+      return res.status(400).json({
+        error: `Invalid timestamp. Difference: ${timeDiff}ms.`
       });
     }
     
@@ -291,6 +299,7 @@ router.get('/player/:wallet', leaderboardLimiter, async (req, res) => {
 });
 
 module.exports = router;
+
 
 
 
