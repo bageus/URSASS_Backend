@@ -1,24 +1,12 @@
-/**
- * Конфигурация всех улучшений.
- *
- * type: "tiered" — 3 тира, покупаются последовательно
- * type: "consumable" — одноразовый, покупается перед каждой игрой
- *
- * currency: "silver" | "gold"
- * prices: массив цен за каждый тир
- * effects: что даёт каждый тир
- */
-
 const UPGRADES_CONFIG = {
 
   // === SILVER — TIERED ===
-
   x2_duration: {
     type: "tiered",
     currency: "silver",
     maxLevel: 3,
     prices: [100, 100, 100],
-    effects: [5, 10, 15],           // +секунд к базовым 7с
+    effects: [5, 10, 15],
     description: "X2 Score duration"
   },
 
@@ -27,7 +15,7 @@ const UPGRADES_CONFIG = {
     currency: "silver",
     maxLevel: 3,
     prices: [100, 100, 100],
-    effects: [1.5, 1.7, 2.0],      // множитель очков бонуса +300/500
+    effects: [1.5, 1.7, 2.0],
     description: "Score +300/500 multiplier"
   },
 
@@ -36,7 +24,7 @@ const UPGRADES_CONFIG = {
     currency: "silver",
     maxLevel: 3,
     prices: [100, 100, 100],
-    effects: [0.9, 0.7, 0.5],      // множитель штрафа -300/500
+    effects: [0.9, 0.7, 0.5],
     description: "Score -300/500 reduction"
   },
 
@@ -45,7 +33,7 @@ const UPGRADES_CONFIG = {
     currency: "silver",
     maxLevel: 3,
     prices: [100, 100, 100],
-    effects: [1.5, 1.7, 2.0],      // множитель очков при инверте
+    effects: [1.5, 1.7, 2.0],
     description: "Invert score multiplier"
   },
 
@@ -54,7 +42,7 @@ const UPGRADES_CONFIG = {
     currency: "silver",
     maxLevel: 3,
     prices: [100, 100, 100],
-    effects: [2, 3, 4],            // коэффициент ускорения
+    effects: [2, 3, 4],
     description: "Speed Up multiplier"
   },
 
@@ -63,7 +51,7 @@ const UPGRADES_CONFIG = {
     currency: "silver",
     maxLevel: 3,
     prices: [100, 100, 100],
-    effects: [2, 3, 4],            // коэффициент замедления
+    effects: [2, 3, 4],
     description: "Speed Down multiplier"
   },
 
@@ -72,7 +60,7 @@ const UPGRADES_CONFIG = {
     currency: "silver",
     maxLevel: 3,
     prices: [100, 100, 100],
-    effects: [5, 10, 15],          // +секунд к базовым 7с
+    effects: [5, 10, 15],
     description: "Magnet duration"
   },
 
@@ -81,14 +69,13 @@ const UPGRADES_CONFIG = {
     currency: "silver",
     maxLevel: 3,
     prices: [100, 100, 100],
-    effects: [2, 3, 5],            // -секунд от базового кулдауна 30с
+    effects: [2, 3, 5],
     description: "Spin cooldown reduction"
   },
 
-  // === GOLD — CONSUMABLE ===
-
-    shield: {
-    type: "consumable",
+  // === GOLD — PERMANENT ===
+  shield: {
+    type: "permanent",
     currency: "gold",
     maxLevel: 1,
     prices: [10],
@@ -96,66 +83,51 @@ const UPGRADES_CONFIG = {
     description: "Start with shield (permanent)"
   },
 
+  // === GOLD — RIDES PACK ===
   rides_pack: {
-    type: "consumable",
+    type: "rides",
     currency: "gold",
-    maxLevel: 1,
-    prices: [10],
-    effects: [3],                  // 3 заезда
-    description: "3 rides pack (future)"
+    price: 10,
+    amount: 3,
+    description: "3 extra rides pack"
   }
 };
 
-/**
- * Рассчитать финальные значения эффектов игрока на основе его апгрейдов
- */
 function calculateEffects(upgrades) {
   return {
-    // X2 длительность: базовая 7 + бонус
     x2_duration_bonus: upgrades.x2_duration > 0
       ? UPGRADES_CONFIG.x2_duration.effects[upgrades.x2_duration - 1]
       : 0,
 
-    // Score +300/500 множитель
     score_plus_multiplier: upgrades.score_plus_mult > 0
       ? UPGRADES_CONFIG.score_plus_mult.effects[upgrades.score_plus_mult - 1]
       : 1.0,
 
-    // Score -300/500 множитель (чем меньше — тем лучше для игрока)
     score_minus_multiplier: upgrades.score_minus_mult > 0
       ? UPGRADES_CONFIG.score_minus_mult.effects[upgrades.score_minus_mult - 1]
       : 1.0,
 
-    // Invert score множитель
     invert_score_multiplier: upgrades.invert_score > 0
       ? UPGRADES_CONFIG.invert_score.effects[upgrades.invert_score - 1]
       : 1.0,
 
-    // Speed Up коэффициент
     speed_up_multiplier: upgrades.speed_up_mult > 0
       ? UPGRADES_CONFIG.speed_up_mult.effects[upgrades.speed_up_mult - 1]
       : 1.0,
 
-    // Speed Down коэффициент
     speed_down_multiplier: upgrades.speed_down_mult > 0
       ? UPGRADES_CONFIG.speed_down_mult.effects[upgrades.speed_down_mult - 1]
       : 1.0,
 
-    // Magnet длительность: базовая 7 + бонус
     magnet_duration_bonus: upgrades.magnet_duration > 0
       ? UPGRADES_CONFIG.magnet_duration.effects[upgrades.magnet_duration - 1]
       : 0,
 
-    // Spin cooldown сокращение (в секундах)
     spin_cooldown_reduction: upgrades.spin_cooldown > 0
       ? UPGRADES_CONFIG.spin_cooldown.effects[upgrades.spin_cooldown - 1]
       : 0,
 
-    // Shield на старте
-    start_with_shield: upgrades.shield > 0,
-
-    // Rides pack
-    rides_remaining: upgrades.rides_pack || 0
+    start_with_shield: upgrades.shield > 0
   };
 }
 
