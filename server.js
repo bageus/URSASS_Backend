@@ -20,12 +20,25 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (!origin) {
       callback(null, true);
-    } else {
-      console.warn(`❌ CORS blocked: ${origin}`);
-      callback(null, true);
+      return;
     }
+
+    // Allow exact matches
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    // Allow all Vercel preview deployments
+    if (origin.endsWith('.vercel.app')) {
+      callback(null, true);
+      return;
+    }
+
+    console.warn(`❌ CORS blocked: ${origin}`);
+    callback(null, false);
   },
   credentials: true,
   methods: ['GET', 'POST', 'OPTIONS'],
@@ -60,3 +73,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
+
