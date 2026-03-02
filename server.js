@@ -5,6 +5,7 @@ const connectDB = require('./database');
 const leaderboardRoutes = require('./routes/leaderboard');
 const storeRoutes = require('./routes/store');
 const accountRoutes = require('./routes/account');
+const { initBot } = require('./bot');
 
 const app = express();
 
@@ -34,7 +35,10 @@ app.use(cors({
 app.options('*', cors());
 app.use(express.json({ limit: '1mb' }));
 
-connectDB();
+connectDB().then(() => {
+  // Start bot AFTER DB is connected
+  initBot();
+});
 
 // Routes
 app.use('/api/leaderboard', leaderboardRoutes);
