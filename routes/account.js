@@ -295,5 +295,83 @@ router.get('/info/:identifier', leaderboardLimiter, async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
+const crypto = require('crypto');
+const LinkCode = require('../models/LinkCode');
 
+/**
+ * Generate a random link code like "BEAR-A3F9K2"
+ */
+function generateLinkCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(crypto.randomInt(chars.length));
+  }
+  return `BEAR-${code}`;
+}
+
+/**
+ * POST /api/account/link/request-code
+ * Generate a verification code for linking Telegram
+ */
+router.post('/link/request-code', saveResultLimiter, async (req, res) => {
+  try {
+    const { primaryId } = req.body;
+
+    if (!primaryId) {
+      return res.status(400).json({ error: 'Missing primaryId' });
+    }
+
+    const primaryIdLower = primaryId.toLowerCase();
+
+    const link = await AccountLink.findOne({ primaryId: primaryIdLower });
+    if (!link) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+
+    if (link.telegramId && link.wallet) {
+      return res.status(400).json({ error: 'Account already fully linked' });
+    }
+
+    if (!link.wallet) {
+      return res.status(400).json({ error: 'Only wallet accounts can link Telegram via code' });
+    }
+
+    // Delete old unused codes
+    await LinkCode.deleteMany({ primaryId: primaryIdLower, used: false });
+
+    // Generate unique code
+    let code;
+    let attempts = 0;
+    do {
+      code = generateLinkCode();
+      attempts++;
+      if (attempts > 10) {
+        return res.status(500).json({ error: 'Failed to generate unique code' });
+      }
+    } while (await LinkCode.findOne({ code }));
+
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    await new LinkCode({
+      primaryId: primaryIdLower,
+      code,
+      linkType: 'telegram',
+      expiresAt
+    }).save();
+
+    console.log(`🔑 Code generated: ${code} for ${primaryIdLower}`);
+
+    res.json({
+      success: true,
+      code,
+      expiresInSeconds: 600,
+      botUsername: process.env.TELEGRAM_BOT_USERNAME || 'Ursasstube_bot'
+    });
+
+  } catch (error) {
+    console.error('❌ POST /link/request-code error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 module.exports = router;
