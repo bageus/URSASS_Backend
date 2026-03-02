@@ -14,5 +14,7 @@
     "dotenv": "^16.0.3",
     "ethers": "^5.7.2",
     "express-rate-limit": "^6.10.0"
+    "node-telegram-bot-api": "^0.66.0"
   }
 }
+
