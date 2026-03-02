@@ -18,7 +18,7 @@ function initBot() {
       `🐻 *Bear Tube Runner*\n\n` +
       `🎮 Play the game via the button below!\n\n` +
       `🔗 To link your wallet — click "Link Telegram" in the game, then send the code here.\n\n` +
-      `Code format: \`BEAR-XXXXXX\``,
+      `Code format: 6 characters, e.g. \`A3F9K2\``,
       {
         parse_mode: 'Markdown',
         reply_markup: {
@@ -37,7 +37,7 @@ function initBot() {
       `/start — Open game\n` +
       `/help — This help\n` +
       `/status — Your link status\n\n` +
-      `Send \`BEAR-XXXXXX\` code to link your wallet!`,
+      `Send your 6-character code to link your wallet!`,
       { parse_mode: 'Markdown' }
     );
   });
@@ -50,7 +50,6 @@ function initBot() {
       const AccountLink = require('./models/AccountLink');
       const Player = require('./models/Player');
 
-      // Find by telegramId
       const link = await AccountLink.findOne({ telegramId });
 
       if (!link) {
@@ -63,7 +62,12 @@ function initBot() {
       const player = await Player.findOne({ wallet: link.primaryId });
 
       let text = `📊 *Your Account*\n\n`;
-      text += `📱 Telegram: TG#${link.telegramId}\n`;
+
+      // Show username if available
+      const displayName = msg.from.username
+        ? `@${msg.from.username}`
+        : `TG#${telegramId}`;
+      text += `📱 Telegram: ${displayName}\n`;
 
       if (link.wallet) {
         text += `🔗 Wallet: \`${link.wallet.slice(0, 6)}...${link.wallet.slice(-4)}\`\n`;
@@ -86,21 +90,20 @@ function initBot() {
     }
   });
 
-  // Handle BEAR-XXXXXX codes
+  // Handle 6-char verification codes
   bot.on('message', async (msg) => {
     const text = (msg.text || '').trim().toUpperCase();
 
     // Skip commands
     if (text.startsWith('/')) return;
 
-    // Match code pattern
-    const codeMatch = text.match(/^BEAR-[A-Z0-9]{6}$/);
+    // Match 6-char code (letters + digits, no spaces)
+    const codeMatch = text.match(/^[A-Z0-9]{6}$/);
 
     if (!codeMatch) {
-      // Only hint if it looks like they're trying a code
-      if (text.startsWith('BEAR') || (text.length >= 4 && text.length <= 12)) {
+      if (text.length >= 4 && text.length <= 8) {
         bot.sendMessage(msg.chat.id,
-          `🤔 Invalid code format.\n\nValid codes look like: \`BEAR-A3F9K2\``,
+          `🤔 Invalid code format.\n\nValid codes are 6 characters, e.g. \`A3F9K2\``,
           { parse_mode: 'Markdown' }
         );
       }
@@ -109,6 +112,7 @@ function initBot() {
 
     const code = codeMatch[0];
     const telegramId = String(msg.from.id);
+    const username = msg.from.username || null;
 
     bot.sendMessage(msg.chat.id, `⏳ Verifying \`${code}\`...`, { parse_mode: 'Markdown' });
 
@@ -116,7 +120,6 @@ function initBot() {
       const LinkCode = require('./models/LinkCode');
       const { linkAccounts } = require('./utils/accountManager');
 
-      // Find code
       const linkCode = await LinkCode.findOne({ code, used: false });
 
       if (!linkCode) {
@@ -126,7 +129,6 @@ function initBot() {
         return;
       }
 
-      // Check expiration
       if (new Date() > linkCode.expiresAt) {
         await LinkCode.deleteOne({ _id: linkCode._id });
         bot.sendMessage(msg.chat.id,
@@ -135,20 +137,38 @@ function initBot() {
         return;
       }
 
-      // Mark as used
       linkCode.used = true;
       await linkCode.save();
 
-      // Link accounts
+      // Save username to AccountLink if available
+      if (username) {
+        const AccountLink = require('./models/AccountLink');
+        await AccountLink.findOneAndUpdate(
+          { primaryId: linkCode.primaryId },
+          { telegramUsername: username }
+        );
+      }
+
       const result = await linkAccounts(linkCode.primaryId, 'telegram', telegramId);
 
       if (result.success) {
+        // Save username after link too
+        if (username) {
+          const AccountLink = require('./models/AccountLink');
+          await AccountLink.findOneAndUpdate(
+            { primaryId: result.primaryId || linkCode.primaryId },
+            { telegramUsername: username }
+          );
+        }
+
+        const displayName = username ? `@${username}` : `TG#${telegramId}`;
+
         let text = `✅ *Account linked!*\n\n`;
+        text += `📱 Telegram: ${displayName}\n`;
 
         if (result.wallet) {
           text += `🔗 Wallet: \`${result.wallet.slice(0, 6)}...${result.wallet.slice(-4)}\`\n`;
         }
-        text += `📱 Telegram: TG#${telegramId}\n`;
 
         if (result.merged) {
           text += `\n🔀 Accounts merged!\n`;
@@ -162,7 +182,7 @@ function initBot() {
 
         bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
 
-        console.log(`✅ Bot linked: TG#${telegramId} → ${linkCode.primaryId}`);
+        console.log(`✅ Bot linked: ${displayName} → ${linkCode.primaryId}`);
       } else {
         bot.sendMessage(msg.chat.id, `❌ Linking failed: ${result.error}`);
       }
