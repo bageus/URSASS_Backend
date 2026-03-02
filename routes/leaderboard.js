@@ -15,24 +15,26 @@ const { saveResultLimiter, leaderboardLimiter } = require('../middleware/rateLim
  */
 function buildDisplayName(link, primaryId) {
   if (!link) {
-    // No link found — show primaryId as-is
     if (primaryId && primaryId.startsWith('0x')) {
       return `${primaryId.slice(0, 6)}...${primaryId.slice(-4)}`;
     }
     return primaryId || 'Unknown';
   }
 
-  // If wallet is linked — always show wallet
+  // If wallet is linked — show wallet
   if (link.wallet) {
     return `${link.wallet.slice(0, 6)}...${link.wallet.slice(-4)}`;
   }
 
-  // Only telegram — show TG#id
+  // Only telegram — show @username first, then TG#id
+  if (link.telegramUsername) {
+    return `@${link.telegramUsername}`;
+  }
+
   if (link.telegramId) {
     return `TG#${link.telegramId}`;
   }
 
-  // Fallback
   if (primaryId && primaryId.startsWith('0x')) {
     return `${primaryId.slice(0, 6)}...${primaryId.slice(-4)}`;
   }
@@ -315,3 +317,4 @@ router.get('/player/:wallet', leaderboardLimiter, async (req, res) => {
 });
 
 module.exports = router;
+
