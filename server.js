@@ -25,13 +25,11 @@ app.use(cors({
       return;
     }
 
-    // Allow exact matches
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
       return;
     }
 
-    // Allow all Vercel preview deployments
     if (origin.endsWith('.vercel.app')) {
       callback(null, true);
       return;
@@ -48,10 +46,15 @@ app.use(cors({
 app.options('*', cors());
 app.use(express.json({ limit: '1mb' }));
 
-connectDB().then(() => {
-  // Start bot AFTER DB is connected
-  initBot();
-});
+// Connect DB then start bot
+connectDB()
+  .then(() => {
+    console.log('🤖 Starting Telegram bot...');
+    initBot();
+  })
+  .catch((err) => {
+    console.error('❌ DB connection failed, bot not started:', err.message);
+  });
 
 // Routes
 app.use('/api/leaderboard', leaderboardRoutes);
@@ -73,4 +76,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
-
