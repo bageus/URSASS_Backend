@@ -8,14 +8,15 @@ const { saveResultLimiter, leaderboardLimiter } = require('../middleware/rateLim
 
 /**
  * GET /api/store/upgrades/:wallet
- * Получить все апгрейды + заезды + эффекты
+ * Get all upgrades + rides + effects
  */
 router.get('/upgrades/:wallet', leaderboardLimiter, async (req, res) => {
   try {
-@@ -18,44 +18,72 @@
+    const wallet = req.params.wallet.toLowerCase();
+
+    if (!wallet || wallet.length < 3) {
       return res.status(400).json({ error: 'Invalid wallet address' });
     }
-
 
     let upgrades = await PlayerUpgrades.findOne({ wallet });
     if (!upgrades) {
@@ -23,7 +24,7 @@ router.get('/upgrades/:wallet', leaderboardLimiter, async (req, res) => {
       await upgrades.save();
     }
 
-    // Пересчитываем бесплатные заезды
+    // Refresh free rides
     const changed = upgrades.refreshFreeRides();
     if (changed) {
       await upgrades.save();
@@ -33,14 +34,12 @@ router.get('/upgrades/:wallet', leaderboardLimiter, async (req, res) => {
     const gold = player ? player.totalGoldCoins : 0;
     const silver = player ? player.totalSilverCoins : 0;
 
-
     const effects = calculateEffects(upgrades);
 
-    // Формируем данные апгрейдов
+    // Build upgrades data
     const upgradesData = {};
     for (const key in UPGRADES_CONFIG) {
       const config = UPGRADES_CONFIG[key];
-
 
       if (config.type === "tiered" || config.type === "permanent") {
         const currentLevel = upgrades[key] || 0;
@@ -66,7 +65,7 @@ router.get('/upgrades/:wallet', leaderboardLimiter, async (req, res) => {
       }
     }
 
-    // Данные о заездах
+    // Rides data
     const now = new Date();
     const resetAt = upgrades.freeRidesResetAt || now;
     const msUntilReset = Math.max(0, (8 * 60 * 60 * 1000) - (now - resetAt));
@@ -88,21 +87,21 @@ router.get('/upgrades/:wallet', leaderboardLimiter, async (req, res) => {
       activeEffects: effects
     });
 
-@@ -67,64 +95,44 @@
+  } catch (error) {
+    console.error('❌ GET /upgrades error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
 /**
  * POST /api/store/buy
- * Купить апгрейд или пак заездов
-
-
-
+ * Buy an upgrade or ride pack
  */
 router.post('/buy', saveResultLimiter, async (req, res) => {
   try {
     const { wallet, upgradeKey, tier, signature, timestamp } = req.body;
 
     if (!wallet || !upgradeKey || !signature || !timestamp) {
-
       return res.status(400).json({
         error: 'Missing fields: wallet, upgradeKey, signature, timestamp'
       });
@@ -110,14 +109,12 @@ router.post('/buy', saveResultLimiter, async (req, res) => {
 
     const walletLower = wallet.toLowerCase();
 
-
     const config = UPGRADES_CONFIG[upgradeKey];
     if (!config) {
       return res.status(400).json({ error: `Unknown upgrade: ${upgradeKey}` });
     }
 
-    // Timestamp проверка
-
+    // Timestamp validation
     const ts = typeof timestamp === 'number' ? timestamp : parseInt(timestamp, 10);
 
     if (!ts || isNaN(ts)) {
@@ -128,20 +125,9 @@ router.post('/buy', saveResultLimiter, async (req, res) => {
     const timeDiff = Math.abs(now - ts);
     if (timeDiff > 10 * 60 * 1000) {
       return res.status(400).json({ error: `Invalid timestamp. Diff: ${timeDiff}ms` });
-
-
-
-
-
-
-
-
-
-
-
     }
 
-    // Подпись
+    // Signature verification
     const message = `Buy upgrade\nWallet: ${walletLower}\nUpgrade: ${upgradeKey}\nTier: ${tier !== undefined ? tier : 0}\nTimestamp: ${ts}`;
     const isValid = verifySignature(message, signature, walletLower);
 
@@ -149,18 +135,21 @@ router.post('/buy', saveResultLimiter, async (req, res) => {
       return res.status(401).json({ error: 'Invalid signature' });
     }
 
-    // Данные игрока
+    // Player data
     const player = await Player.findOne({ wallet: walletLower });
     if (!player) {
       return res.status(404).json({ error: 'Player not found. Play at least one game first.' });
-@@ -135,103 +143,107 @@
+    }
+
+    let upgrades = await PlayerUpgrades.findOne({ wallet: walletLower });
+    if (!upgrades) {
       upgrades = new PlayerUpgrades({ wallet: walletLower });
     }
 
-    // Пересчитываем бесплатные заезды
+    // Refresh free rides
     upgrades.refreshFreeRides();
 
-    // === ЛОГИКА ПО ТИПАМ ===
+    // === PURCHASE LOGIC BY TYPE ===
 
     if (config.type === "tiered") {
       const currentLevel = upgrades[upgradeKey] || 0;
@@ -177,23 +166,17 @@ router.post('/buy', saveResultLimiter, async (req, res) => {
 
       const price = config.prices[tier];
 
-
       if (config.currency === "silver") {
         if (player.totalSilverCoins < price) {
           return res.status(400).json({ error: `Not enough silver. Need: ${price}, have: ${player.totalSilverCoins}` });
-
-
         }
         player.totalSilverCoins -= price;
       } else {
         if (player.totalGoldCoins < price) {
           return res.status(400).json({ error: `Not enough gold. Need: ${price}, have: ${player.totalGoldCoins}` });
-
-
         }
         player.totalGoldCoins -= price;
       }
-
 
       upgrades[upgradeKey] = currentLevel + 1;
       console.log(`🛒 ${walletLower} bought ${upgradeKey} tier ${currentLevel + 1}/${config.maxLevel} for ${price} ${config.currency}`);
@@ -205,21 +188,16 @@ router.post('/buy', saveResultLimiter, async (req, res) => {
         return res.status(400).json({ error: 'Already purchased (permanent)' });
       }
 
-
       const price = config.prices[0];
 
       if (config.currency === "gold") {
         if (player.totalGoldCoins < price) {
           return res.status(400).json({ error: `Not enough gold. Need: ${price}, have: ${player.totalGoldCoins}` });
-
-
         }
         player.totalGoldCoins -= price;
       } else {
         if (player.totalSilverCoins < price) {
           return res.status(400).json({ error: `Not enough silver. Need: ${price}, have: ${player.totalSilverCoins}` });
-
-
         }
         player.totalSilverCoins -= price;
       }
@@ -243,17 +221,16 @@ router.post('/buy', saveResultLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Unknown upgrade type' });
     }
 
-    // Сохраняем
+    // Save
     upgrades.updatedAt = new Date();
     player.updatedAt = new Date();
 
     await upgrades.save();
     await player.save();
 
-
     const effects = calculateEffects(upgrades);
 
-    // Данные о заездах
+    // Rides data
     const nowDate = new Date();
     const resetAt = upgrades.freeRidesResetAt || nowDate;
     const msUntilReset = Math.max(0, (8 * 60 * 60 * 1000) - (nowDate - resetAt));
@@ -275,12 +252,15 @@ router.post('/buy', saveResultLimiter, async (req, res) => {
       activeEffects: effects
     });
 
-@@ -242,9 +254,116 @@
+  } catch (error) {
+    console.error('❌ POST /buy error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 /**
  * POST /api/store/use-ride
- * Использовать 1 заезд при старте игры
+ * Consume 1 ride when starting a game
  */
 router.post('/use-ride', saveResultLimiter, async (req, res) => {
   try {
@@ -294,7 +274,7 @@ router.post('/use-ride', saveResultLimiter, async (req, res) => {
       upgrades = new PlayerUpgrades({ wallet: walletLower });
     }
 
-    // Пересчитываем бесплатные
+    // Refresh free rides
     upgrades.refreshFreeRides();
 
     const totalBefore = upgrades.getTotalRides();
@@ -315,7 +295,7 @@ router.post('/use-ride', saveResultLimiter, async (req, res) => {
       });
     }
 
-    // Списываем 1 заезд
+    // Consume 1 ride
     const consumed = upgrades.consumeRide();
     if (!consumed) {
       return res.status(403).json({ error: 'Failed to consume ride' });
@@ -349,7 +329,7 @@ router.post('/use-ride', saveResultLimiter, async (req, res) => {
 
 /**
  * GET /api/store/rides/:wallet
- * Получить информацию о заездах
+ * Get rides info
  */
 router.get('/rides/:wallet', leaderboardLimiter, async (req, res) => {
   try {
@@ -383,7 +363,7 @@ router.get('/rides/:wallet', leaderboardLimiter, async (req, res) => {
   }
 });
 
-// Хелпер: форматирование времени
+// Helper: format time remaining
 function formatTimeLeft(ms) {
   if (ms <= 0) return "Ready";
   const hours = Math.floor(ms / (1000 * 60 * 60));
