@@ -22,7 +22,7 @@ function generateLinkCode() {
   for (let i = 0; i < 6; i++) {
     code += chars.charAt(crypto.randomInt(chars.length));
   }
-  return `BEAR-${code}`;
+  return code;
 }
 
 /**
