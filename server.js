@@ -4,6 +4,7 @@ const cors = require('cors');
 const connectDB = require('./database');
 const leaderboardRoutes = require('./routes/leaderboard');
 const storeRoutes = require('./routes/store');
+const accountRoutes = require('./routes/account');
 
 const app = express();
 
@@ -21,17 +22,16 @@ app.use(cors({
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      console.warn(`❌ CORS блокирован для: ${origin}`);
+      console.warn(`❌ CORS blocked: ${origin}`);
       callback(null, true);
     }
   },
   credentials: true,
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'X-Wallet']
+  allowedHeaders: ['Content-Type', 'X-Wallet', 'X-Primary-Id']
 }));
 
 app.options('*', cors());
-
 app.use(express.json({ limit: '1mb' }));
 
 connectDB();
@@ -39,26 +39,20 @@ connectDB();
 // Routes
 app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/store', storeRoutes);
+app.use('/api/account', accountRoutes);
 
-// Health check
+// Health
 app.get('/health', (req, res) => {
-  res.json({
-    status: 'OK',
-    timestamp: new Date(),
-    mongodb: 'connected'
-  });
+  res.json({ status: 'OK', timestamp: new Date(), mongodb: 'connected' });
 });
 
 // Error handler
 app.use((err, req, res, next) => {
   console.error('❌ Error:', err);
-  res.status(err.status || 500).json({
-    error: err.message || 'Internal server error'
-  });
+  res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Сервер запущен на порту ${PORT}`);
-  console.log(`📡 Разрешённые домены:`, allowedOrigins);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
