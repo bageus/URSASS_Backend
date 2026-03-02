@@ -49,7 +49,10 @@ const accountLinkSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   },
-
+  telegramUsername: {
+    type: String,
+    default: null
+  },
   updatedAt: {
     type: Date,
     default: Date.now
