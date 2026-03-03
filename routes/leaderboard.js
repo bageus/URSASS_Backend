@@ -115,17 +115,29 @@ router.post('/save', saveResultLimiter, async (req, res) => {
 
     const walletLower = wallet.toLowerCase();
 
-    if (typeof score !== 'number' || score < 0 || score > 999999999) {
+    // Anti-cheat: validate score, distance, and coin values
+    if (typeof score !== 'number' || isNaN(score) || score < 0 || score > 999999) {
       return res.status(400).json({ error: 'Invalid score value' });
     }
 
-    if (typeof distance !== 'number' || distance < 0 || distance > 999999999) {
+    if (typeof distance !== 'number' || isNaN(distance) || distance < 0 || distance > 99999) {
       return res.status(400).json({ error: 'Invalid distance value' });
     }
 
+    const goldCoinsVal = goldCoins ?? 0;
+    const silverCoinsVal = silverCoins ?? 0;
+
+    if (typeof goldCoinsVal !== 'number' || isNaN(goldCoinsVal) || goldCoinsVal < 0 || goldCoinsVal > 999) {
+      return res.status(400).json({ error: 'Invalid goldCoins value' });
+    }
+
+    if (typeof silverCoinsVal !== 'number' || isNaN(silverCoinsVal) || silverCoinsVal < 0 || silverCoinsVal > 999) {
+      return res.status(400).json({ error: 'Invalid silverCoins value' });
+    }
+
     const coins = {
-      gold: Math.max(0, Math.min(9999, goldCoins || 0)),
-      silver: Math.max(0, Math.min(9999, silverCoins || 0))
+      gold: Math.floor(goldCoinsVal),
+      silver: Math.floor(silverCoinsVal)
     };
 
     const ts = typeof timestamp === 'number' ? timestamp : parseInt(timestamp, 10);
