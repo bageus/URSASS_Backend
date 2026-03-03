@@ -15,7 +15,7 @@ function initBot() {
   // /start
   bot.onText(/\/start/, (msg) => {
     bot.sendMessage(msg.chat.id,
-      `🐻 *Bear Tube Runner*\n\n` +
+      `🐻 *Ursass Tube*\n\n` +
       `🎮 Play the game via the button below!\n\n` +
       `🔗 To link your wallet — click "Link Telegram" in the game, then send the code here.\n\n` +
       `Code format: 6 characters, e.g. \`A3F9K2\``,
