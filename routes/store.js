@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Player = require('../models/Player');
 const PlayerUpgrades = require('../models/PlayerUpgrades');
+const AccountLink = require('../models/AccountLink');
 const { UPGRADES_CONFIG, calculateEffects } = require('../utils/upgradesConfig');
 const { verifySignature } = require('../utils/verifySignature');
 const { saveResultLimiter, leaderboardLimiter } = require('../middleware/rateLimiter');
@@ -99,12 +100,22 @@ router.get('/upgrades/:wallet', leaderboardLimiter, async (req, res) => {
  */
 router.post('/buy', saveResultLimiter, async (req, res) => {
   try {
-    const { wallet, upgradeKey, tier, signature, timestamp } = req.body;
+    const { wallet, upgradeKey, tier, signature, timestamp, authMode, telegramId } = req.body;
 
-    if (!wallet || !upgradeKey || !signature || !timestamp) {
-      return res.status(400).json({
-        error: 'Missing fields: wallet, upgradeKey, signature, timestamp'
-      });
+    const isTelegramAuth = authMode === 'telegram';
+
+    if (isTelegramAuth) {
+      if (!wallet || !upgradeKey || !telegramId || !timestamp) {
+        return res.status(400).json({
+          error: 'Missing fields: wallet, upgradeKey, telegramId, timestamp'
+        });
+      }
+    } else {
+      if (!wallet || !upgradeKey || !signature || !timestamp) {
+        return res.status(400).json({
+          error: 'Missing fields: wallet, upgradeKey, signature, timestamp'
+        });
+      }
     }
 
     const walletLower = wallet.toLowerCase();
@@ -127,12 +138,20 @@ router.post('/buy', saveResultLimiter, async (req, res) => {
       return res.status(400).json({ error: `Invalid timestamp. Diff: ${timeDiff}ms` });
     }
 
-    // Signature verification
-    const message = `Buy upgrade\nWallet: ${walletLower}\nUpgrade: ${upgradeKey}\nTier: ${tier !== undefined ? tier : 0}\nTimestamp: ${ts}`;
-    const isValid = verifySignature(message, signature, walletLower);
+    if (isTelegramAuth) {
+      // Verify that the telegramId matches the claimed primaryId (wallet) via AccountLink
+      const link = await AccountLink.findOne({ telegramId: String(telegramId) });
+      if (!link || link.primaryId !== walletLower) {
+        return res.status(401).json({ error: 'Telegram identity verification failed' });
+      }
+    } else {
+      // Signature verification
+      const message = `Buy upgrade\nWallet: ${walletLower}\nUpgrade: ${upgradeKey}\nTier: ${tier !== undefined ? tier : 0}\nTimestamp: ${ts}`;
+      const isValid = verifySignature(message, signature, walletLower);
 
-    if (!isValid) {
-      return res.status(401).json({ error: 'Invalid signature' });
+      if (!isValid) {
+        return res.status(401).json({ error: 'Invalid signature' });
+      }
     }
 
     // Player data
