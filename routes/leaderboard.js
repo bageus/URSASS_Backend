@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
 const Player = require('../models/Player');
 const GameResult = require('../models/GameResult');
 const AccountLink = require('../models/AccountLink');
@@ -105,12 +106,22 @@ router.get('/top', leaderboardLimiter, async (req, res) => {
 // ✅ POST: Save game result with signature verification
 router.post('/save', saveResultLimiter, async (req, res) => {
   try {
-    const { wallet, score, distance, goldCoins, silverCoins, signature, timestamp } = req.body;
+    const { wallet, score, distance, goldCoins, silverCoins, signature, timestamp, authMode, telegramId } = req.body;
 
-    if (!wallet || score === undefined || distance === undefined || !signature || !timestamp) {
-      return res.status(400).json({
-        error: 'Missing required fields: wallet, score, distance, signature, timestamp'
-      });
+    const isTelegramAuth = authMode === 'telegram';
+
+    if (isTelegramAuth) {
+      if (!wallet || score === undefined || distance === undefined || !telegramId || !timestamp) {
+        return res.status(400).json({
+          error: 'Missing required fields: wallet, score, distance, telegramId, timestamp'
+        });
+      }
+    } else {
+      if (!wallet || score === undefined || distance === undefined || !signature || !timestamp) {
+        return res.status(400).json({
+          error: 'Missing required fields: wallet, score, distance, signature, timestamp'
+        });
+      }
     }
 
     const walletLower = wallet.toLowerCase();
@@ -159,23 +170,45 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       });
     }
 
-    // Signature verification
-    const messageToVerify = createMessageToVerify(walletLower, score, distance, timestamp);
+    if (isTelegramAuth) {
+      // Verify that the telegramId matches the claimed primaryId (wallet) via AccountLink
+      const link = await AccountLink.findOne({ telegramId: String(telegramId) });
+      if (!link || link.primaryId !== walletLower) {
+        return res.status(401).json({ error: 'Telegram identity verification failed' });
+      }
 
-    console.log(`📝 Message for verification:\n${messageToVerify}`);
-    const isSignatureValid = verifySignature(messageToVerify, signature, walletLower);
+      console.log(`✅ Telegram identity verified for ${walletLower}`);
+    } else {
+      // Signature verification
+      const messageToVerify = createMessageToVerify(walletLower, score, distance, timestamp);
 
-    if (!isSignatureValid) {
-      console.warn(`❌ Invalid signature for ${walletLower}`);
-      return res.status(401).json({
-        error: 'Invalid signature. Result cannot be verified.',
-        details: 'Your wallet signature does not match the submitted data.'
-      });
+      console.log(`📝 Message for verification:\n${messageToVerify}`);
+      const isSignatureValid = verifySignature(messageToVerify, signature, walletLower);
+
+      if (!isSignatureValid) {
+        console.warn(`❌ Invalid signature for ${walletLower}`);
+        return res.status(401).json({
+          error: 'Invalid signature. Result cannot be verified.',
+          details: 'Your wallet signature does not match the submitted data.'
+        });
+      }
+
+      console.log(`✅ Signature valid for ${walletLower}`);
     }
 
-    console.log(`✅ Signature valid for ${walletLower}`);
+    // Duplicate prevention
+    let deduplicationToken;
+    if (isTelegramAuth) {
+      // For telegram auth, generate a unique token from the result data
+      deduplicationToken = crypto
+        .createHash('sha256')
+        .update(`${walletLower}:${Math.floor(score)}:${Math.floor(distance)}:${timestamp}`)
+        .digest('hex');
+    } else {
+      deduplicationToken = signature;
+    }
 
-    const existingResult = await GameResult.findOne({ signature });
+    const existingResult = await GameResult.findOne({ signature: deduplicationToken });
     if (existingResult) {
       return res.status(400).json({
         error: 'This result has already been submitted.'
@@ -189,7 +222,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       distance: Math.floor(distance),
       goldCoins: coins.gold,
       silverCoins: coins.silver,
-      signature,
+      signature: deduplicationToken,
       timestamp,
       ipAddress: req.ip,
       verified: true
