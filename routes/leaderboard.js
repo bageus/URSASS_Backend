@@ -47,7 +47,7 @@ router.get('/top', leaderboardLimiter, async (req, res) => {
   try {
     const wallet = req.query.wallet?.toLowerCase();
 
-    const topPlayers = await Player.find()
+    const topPlayers = await Player.find({ bestScore: { $gt: 0 } })
       .sort({ bestScore: -1 })
       .limit(10)
       .select('wallet bestScore bestDistance totalGoldCoins totalSilverCoins gamesPlayed');
@@ -64,22 +64,36 @@ router.get('/top', leaderboardLimiter, async (req, res) => {
     if (wallet) {
       const playerData = await Player.findOne({ wallet });
       if (playerData) {
-        const position = await Player.countDocuments({
-          bestScore: { $gt: playerData.bestScore }
-        });
-
         const playerLink = await AccountLink.findOne({ primaryId: wallet });
 
-        playerPosition = {
-          position: position + 1,
-          wallet: playerData.wallet,
-          displayName: buildDisplayName(playerLink, playerData.wallet),
-          bestScore: playerData.bestScore,
-          bestDistance: playerData.bestDistance,
-          totalGoldCoins: playerData.totalGoldCoins,
-          totalSilverCoins: playerData.totalSilverCoins,
-          gamesPlayed: playerData.gamesPlayed
-        };
+        if (playerData.bestScore > 0) {
+          const position = await Player.countDocuments({
+            bestScore: { $gt: playerData.bestScore }
+          });
+
+          playerPosition = {
+            position: position + 1,
+            wallet: playerData.wallet,
+            displayName: buildDisplayName(playerLink, playerData.wallet),
+            bestScore: playerData.bestScore,
+            bestDistance: playerData.bestDistance,
+            totalGoldCoins: playerData.totalGoldCoins,
+            totalSilverCoins: playerData.totalSilverCoins,
+            gamesPlayed: playerData.gamesPlayed
+          };
+        } else {
+          // Player has 0 score — no position
+          playerPosition = {
+            position: null,
+            wallet: playerData.wallet,
+            displayName: buildDisplayName(playerLink, playerData.wallet),
+            bestScore: playerData.bestScore,
+            bestDistance: playerData.bestDistance,
+            totalGoldCoins: playerData.totalGoldCoins,
+            totalSilverCoins: playerData.totalSilverCoins,
+            gamesPlayed: playerData.gamesPlayed
+          };
+        }
       }
     }
 
@@ -340,13 +354,17 @@ router.get('/player/:wallet', leaderboardLimiter, async (req, res) => {
       });
     }
 
-    const position = await Player.countDocuments({
-      bestScore: { $gt: player.bestScore }
-    });
+    let position = null;
+    if (player.bestScore > 0) {
+      const count = await Player.countDocuments({
+        bestScore: { $gt: player.bestScore }
+      });
+      position = count + 1;
+    }
 
     res.json({
       wallet: player.wallet,
-      position: position + 1,
+      position: position,
       bestScore: player.bestScore,
       bestDistance: player.bestDistance,
       totalGoldCoins: player.totalGoldCoins,
