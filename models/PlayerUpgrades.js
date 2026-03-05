@@ -11,8 +11,10 @@ const playerUpgradesSchema = new mongoose.Schema({
 
   // === SILVER (3 тира каждый) ===
   x2_duration: { type: Number, default: 0, min: 0, max: 3 },
-  score_plus_mult: { type: Number, default: 0, min: 0, max: 3 },
-  score_minus_mult: { type: Number, default: 0, min: 0, max: 3 },
+  score_plus_300_mult: { type: Number, default: 0, min: 0, max: 3 },
+  score_plus_500_mult: { type: Number, default: 0, min: 0, max: 3 },
+  score_minus_300_mult: { type: Number, default: 0, min: 0, max: 3 },
+  score_minus_500_mult: { type: Number, default: 0, min: 0, max: 3 },
   invert_score: { type: Number, default: 0, min: 0, max: 3 },
   speed_up_mult: { type: Number, default: 0, min: 0, max: 3 },
   speed_down_mult: { type: Number, default: 0, min: 0, max: 3 },
