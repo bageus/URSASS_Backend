@@ -5,7 +5,7 @@ const UPGRADES_CONFIG = {
     type: "tiered",
     currency: "silver",
     maxLevel: 3,
-    prices: [100, 100, 100],
+    prices: [300, 2400, 8000],
     effects: [5, 10, 15],
     description: "X2 Score duration"
   },
@@ -14,7 +14,7 @@ const UPGRADES_CONFIG = {
     type: "tiered",
     currency: "silver",
     maxLevel: 3,
-    prices: [100, 100, 100],
+    prices: [300, 2400, 8000],
     effects: [1.5, 1.7, 2.0],
     description: "Score +300 bonus multiplier"
   },
@@ -23,7 +23,7 @@ const UPGRADES_CONFIG = {
     type: "tiered",
     currency: "silver",
     maxLevel: 3,
-    prices: [100, 100, 100],
+    prices: [300, 2400, 8000],
     effects: [1.5, 1.7, 2.0],
     description: "Score +500 bonus multiplier"
   },
@@ -32,7 +32,7 @@ const UPGRADES_CONFIG = {
     type: "tiered",
     currency: "silver",
     maxLevel: 3,
-    prices: [100, 100, 100],
+    prices: [300, 2400, 8000],
     effects: [0.9, 0.7, 0.5],
     description: "Score -300 penalty reduction"
   },
@@ -41,7 +41,7 @@ const UPGRADES_CONFIG = {
     type: "tiered",
     currency: "silver",
     maxLevel: 3,
-    prices: [100, 100, 100],
+    prices: [300, 2400, 8000],
     effects: [0.9, 0.7, 0.5],
     description: "Score -500 penalty reduction"
   },
@@ -50,7 +50,7 @@ const UPGRADES_CONFIG = {
     type: "tiered",
     currency: "silver",
     maxLevel: 3,
-    prices: [100, 100, 100],
+    prices: [300, 2400, 8000],
     effects: [1.5, 1.7, 2.0],
     description: "Invert score multiplier"
   },
@@ -59,7 +59,7 @@ const UPGRADES_CONFIG = {
     type: "tiered",
     currency: "silver",
     maxLevel: 3,
-    prices: [100, 100, 100],
+    prices: [300, 2400, 8000],
     effects: [2, 3, 4],
     description: "Speed Up multiplier"
   },
@@ -68,7 +68,7 @@ const UPGRADES_CONFIG = {
     type: "tiered",
     currency: "silver",
     maxLevel: 3,
-    prices: [100, 100, 100],
+    prices: [300, 2400, 8000],
     effects: [2, 3, 4],
     description: "Speed Down multiplier"
   },
@@ -77,7 +77,7 @@ const UPGRADES_CONFIG = {
     type: "tiered",
     currency: "silver",
     maxLevel: 3,
-    prices: [100, 100, 100],
+    prices: [300, 2400, 8000],
     effects: [5, 10, 15],
     description: "Magnet duration"
   },
@@ -86,7 +86,7 @@ const UPGRADES_CONFIG = {
     type: "tiered",
     currency: "silver",
     maxLevel: 3,
-    prices: [100, 100, 100],
+    prices: [300, 2400, 8000],
     effects: [2, 3, 5],
     description: "Spin cooldown reduction"
   },
@@ -96,7 +96,7 @@ const UPGRADES_CONFIG = {
     type: "permanent",
     currency: "gold",
     maxLevel: 1,
-    prices: [10],
+    prices: [400],
     effects: [true],
     description: "Start with shield (permanent)"
   },
@@ -105,7 +105,7 @@ const UPGRADES_CONFIG = {
   rides_pack: {
     type: "rides",
     currency: "gold",
-    price: 10,
+    price: 70,
     amount: 3,
     description: "3 extra rides pack"
   }
