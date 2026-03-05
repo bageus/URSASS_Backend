@@ -76,12 +76,16 @@ router.post('/auth/wallet', leaderboardLimiter, async (req, res) => {
 
     const account = await getOrCreateWalletAccount(walletLower);
 
+    // Look up the full AccountLink to get telegramUsername
+    const link = await AccountLink.findOne({ primaryId: account.primaryId });
+
     console.log(`🔗 Wallet auth: ${walletLower} → primaryId: ${account.primaryId}`);
 
     res.json({
       success: true,
       primaryId: account.primaryId,
       telegramId: account.telegramId,
+      telegramUsername: link ? link.telegramUsername : null,
       wallet: account.wallet,
       isLinked: account.isLinked
     });
