@@ -10,22 +10,40 @@ const UPGRADES_CONFIG = {
     description: "X2 Score duration"
   },
 
-  score_plus_mult: {
+  score_plus_300_mult: {
     type: "tiered",
     currency: "silver",
     maxLevel: 3,
     prices: [100, 100, 100],
     effects: [1.5, 1.7, 2.0],
-    description: "Score +300/500 multiplier"
+    description: "Score +300 bonus multiplier"
   },
 
-  score_minus_mult: {
+  score_plus_500_mult: {
+    type: "tiered",
+    currency: "silver",
+    maxLevel: 3,
+    prices: [100, 100, 100],
+    effects: [1.5, 1.7, 2.0],
+    description: "Score +500 bonus multiplier"
+  },
+
+  score_minus_300_mult: {
     type: "tiered",
     currency: "silver",
     maxLevel: 3,
     prices: [100, 100, 100],
     effects: [0.9, 0.7, 0.5],
-    description: "Score -300/500 reduction"
+    description: "Score -300 penalty reduction"
+  },
+
+  score_minus_500_mult: {
+    type: "tiered",
+    currency: "silver",
+    maxLevel: 3,
+    prices: [100, 100, 100],
+    effects: [0.9, 0.7, 0.5],
+    description: "Score -500 penalty reduction"
   },
 
   invert_score: {
@@ -99,12 +117,20 @@ function calculateEffects(upgrades) {
       ? UPGRADES_CONFIG.x2_duration.effects[upgrades.x2_duration - 1]
       : 0,
 
-    score_plus_multiplier: upgrades.score_plus_mult > 0
-      ? UPGRADES_CONFIG.score_plus_mult.effects[upgrades.score_plus_mult - 1]
+    score_plus_300_multiplier: upgrades.score_plus_300_mult > 0
+      ? UPGRADES_CONFIG.score_plus_300_mult.effects[upgrades.score_plus_300_mult - 1]
       : 1.0,
 
-    score_minus_multiplier: upgrades.score_minus_mult > 0
-      ? UPGRADES_CONFIG.score_minus_mult.effects[upgrades.score_minus_mult - 1]
+    score_plus_500_multiplier: upgrades.score_plus_500_mult > 0
+      ? UPGRADES_CONFIG.score_plus_500_mult.effects[upgrades.score_plus_500_mult - 1]
+      : 1.0,
+
+    score_minus_300_multiplier: upgrades.score_minus_300_mult > 0
+      ? UPGRADES_CONFIG.score_minus_300_mult.effects[upgrades.score_minus_300_mult - 1]
+      : 1.0,
+
+    score_minus_500_multiplier: upgrades.score_minus_500_mult > 0
+      ? UPGRADES_CONFIG.score_minus_500_mult.effects[upgrades.score_minus_500_mult - 1]
       : 1.0,
 
     invert_score_multiplier: upgrades.invert_score > 0

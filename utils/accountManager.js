@@ -267,8 +267,10 @@ async function mergeAccounts(primaryIdA, primaryIdB) {
 
   if (slaveUpgrades) {
     slaveUpgrades.x2_duration = 0;
-    slaveUpgrades.score_plus_mult = 0;
-    slaveUpgrades.score_minus_mult = 0;
+    slaveUpgrades.score_plus_300_mult = 0;
+    slaveUpgrades.score_plus_500_mult = 0;
+    slaveUpgrades.score_minus_300_mult = 0;
+    slaveUpgrades.score_minus_500_mult = 0;
     slaveUpgrades.invert_score = 0;
     slaveUpgrades.speed_up_mult = 0;
     slaveUpgrades.speed_down_mult = 0;
