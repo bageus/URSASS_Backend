@@ -5,13 +5,13 @@ const PlayerUpgrades = require('../models/PlayerUpgrades');
 const AccountLink = require('../models/AccountLink');
 const { UPGRADES_CONFIG, calculateEffects } = require('../utils/upgradesConfig');
 const { verifySignature } = require('../utils/verifySignature');
-const { saveResultLimiter, leaderboardLimiter } = require('../middleware/rateLimiter');
+const { writeLimiter, readLimiter } = require('../middleware/rateLimiter');
 
 /**
  * GET /api/store/upgrades/:wallet
  * Get all upgrades + rides + effects
  */
-router.get('/upgrades/:wallet', leaderboardLimiter, async (req, res) => {
+router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
   try {
     const wallet = req.params.wallet.toLowerCase();
 
@@ -98,7 +98,7 @@ router.get('/upgrades/:wallet', leaderboardLimiter, async (req, res) => {
  * POST /api/store/buy
  * Buy an upgrade or ride pack
  */
-router.post('/buy', saveResultLimiter, async (req, res) => {
+router.post('/buy', writeLimiter, async (req, res) => {
   try {
     const { wallet, upgradeKey, tier, signature, timestamp, authMode, telegramId } = req.body;
 
@@ -278,15 +278,23 @@ router.post('/buy', saveResultLimiter, async (req, res) => {
 });
 
 /**
- * POST /api/store/use-ride
- * Consume 1 ride when starting a game
+ * POST /api/store/consume-ride
+ * Consume 1 ride when starting a game (anti-cheat protected by rideSessionId)
  */
-router.post('/use-ride', saveResultLimiter, async (req, res) => {
+const consumeRideHandler = async (req, res) => {
   try {
-    const { wallet } = req.body;
+    const { wallet, rideSessionId } = req.body;
     if (!wallet) return res.status(400).json({ error: 'Missing wallet' });
-
-    const walletLower = wallet.toLowerCase();
+    
+    if (!rideSessionId || typeof rideSessionId !== 'string' || rideSessionId.trim().length < 8) {
+          return res.status(400).json({
+            error: 'Missing or invalid rideSessionId',
+            details: 'Pass a unique rideSessionId for every game start to enable anti-cheat duplicate protection.'
+          });
+        }
+    
+        const walletLower = wallet.toLowerCase();
+        const sessionId = rideSessionId.trim();
 
     let upgrades = await PlayerUpgrades.findOne({ wallet: walletLower });
     if (!upgrades) {
@@ -295,6 +303,20 @@ router.post('/use-ride', saveResultLimiter, async (req, res) => {
 
     // Refresh free rides
     upgrades.refreshFreeRides();
+    
+    upgrades.recentRideSessionIds = upgrades.recentRideSessionIds || [];
+
+    if (upgrades.recentRideSessionIds.includes(sessionId)) {
+      return res.status(409).json({
+        error: 'Ride already consumed for this session',
+        antiCheatTriggered: true,
+        rides: {
+          freeRides: upgrades.freeRidesRemaining,
+          paidRides: upgrades.paidRidesRemaining,
+          totalRides: upgrades.getTotalRides()
+        }
+      });
+    }
 
     const totalBefore = upgrades.getTotalRides();
 
@@ -319,6 +341,12 @@ router.post('/use-ride', saveResultLimiter, async (req, res) => {
     if (!consumed) {
       return res.status(403).json({ error: 'Failed to consume ride' });
     }
+    
+    upgrades.recentRideSessionIds.push(sessionId);
+    if (upgrades.recentRideSessionIds.length > 30) {
+      upgrades.recentRideSessionIds = upgrades.recentRideSessionIds.slice(-30);
+    }
+
 
     upgrades.updatedAt = new Date();
     await upgrades.save();
@@ -331,6 +359,10 @@ router.post('/use-ride', saveResultLimiter, async (req, res) => {
 
     res.json({
       success: true,
+      antiCheat: {
+        duplicateSessionCheck: true,
+        rideSessionId: sessionId
+      },
       rides: {
         freeRides: upgrades.freeRidesRemaining,
         paidRides: upgrades.paidRidesRemaining,
@@ -341,16 +373,19 @@ router.post('/use-ride', saveResultLimiter, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ POST /use-ride error:', error);
+    console.error('❌ POST /consume-ride error:', error);
     res.status(500).json({ error: 'Server error' });
   }
-});
+};
+
+router.post('/consume-ride', writeLimiter, consumeRideHandler);
+router.post('/use-ride', writeLimiter, consumeRideHandler);
 
 /**
  * GET /api/store/rides/:wallet
  * Get rides info
  */
-router.get('/rides/:wallet', leaderboardLimiter, async (req, res) => {
+router.get('/rides/:wallet', readLimiter, async (req, res) => {
   try {
     const wallet = req.params.wallet.toLowerCase();
 
