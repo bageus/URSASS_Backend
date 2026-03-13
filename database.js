@@ -5,13 +5,10 @@ async function connectDB() {
     const mongoUri = process.env.MONGO_URL;
     
     if(!mongoUri) {
-      console.error('❌ MONGO_URL не найдена');
-      process.exit(1);
+      throw new Error('MONGO_URL is missing');
     }
     
     await mongoose.connect(mongoUri, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
       connectTimeoutMS: 10000,
       serverSelectionTimeoutMS: 10000
     });
@@ -19,7 +16,13 @@ async function connectDB() {
     console.log('✅ MongoDB подключена');
   } catch(error) {
     console.error('❌ Ошибка MongoDB:', error.message);
+
+    if (!process.env.MONGO_URL) {
+      throw error;
+    }
+
     setTimeout(() => connectDB(), 5000);
+    throw error;
   }
 }
 
