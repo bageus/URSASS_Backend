@@ -6,10 +6,13 @@ const leaderboardRoutes = require('./routes/leaderboard');
 const storeRoutes = require('./routes/store');
 const accountRoutes = require('./routes/account');
 const { initBot } = require('./bot');
+const logger = require('./utils/logger');
+const { metricsMiddleware, renderMetricsText } = require('./middleware/requestMetrics');
 
 const app = express();
 
 app.set('trust proxy', 1);
+
 
 const allowedOrigins = [
   'https://bageus.github.io',
@@ -45,6 +48,7 @@ app.use(cors({
 
 app.options('*', cors());
 app.use(express.json({ limit: '1mb' }));
+app.use(metricsMiddleware);
 
 const runBotInProcess = process.env.BOT_MODE !== 'worker' && process.env.START_BOT_IN_PROCESS !== 'false';
 
@@ -52,15 +56,15 @@ const runBotInProcess = process.env.BOT_MODE !== 'worker' && process.env.START_B
 connectDB()
   .then(() => {
     if (!runBotInProcess) {
-      console.log('🤖 BOT_MODE=worker (or START_BOT_IN_PROCESS=false): skipping bot in API process');
+      logger.info('BOT_MODE=worker (or START_BOT_IN_PROCESS=false): skipping bot in API process');
       return;
     }
 
-    console.log('🤖 Starting Telegram bot in API process...');
+    logger.info('Starting Telegram bot in API process...');
     initBot();
   })
   .catch((err) => {
-    console.error('❌ DB connection failed, bot not started:', err.message);
+    logger.error({ err: err.message }, 'DB connection failed, bot not started');
   });
 
 // Routes
@@ -68,18 +72,28 @@ app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/store', storeRoutes);
 app.use('/api/account', accountRoutes);
 
+// Versioned aliases (safe migration path)
+app.use('/api/v1/leaderboard', leaderboardRoutes);
+app.use('/api/v1/store', storeRoutes);
+app.use('/api/v1/account', accountRoutes);
+
 // Health
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date(), mongodb: 'connected' });
 });
 
+app.get('/metrics', (req, res) => {
+  res.set('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+  res.end(renderMetricsText());
+});
+
 // Error handler
 app.use((err, req, res, next) => {
-  console.error('❌ Error:', err);
+  logger.error({ err }, 'Unhandled error');
   res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  logger.info({ port: PORT }, 'Server started');
 });
