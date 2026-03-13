@@ -45,8 +45,7 @@ npm install
 cp .env.example .env   # fill in your values
 npm start
 ```
-
-Running `npm install` generates `package-lock.json` for deterministic dependency installs.
+`package-lock.json` is committed and must be kept up to date for deterministic dependency installs (Railway-safe deployments).
 
 ## Environment Variables
 
@@ -71,7 +70,7 @@ See `.env.example` for a template.
 | `GET` | `/api/store/upgrades/:wallet` | Get player upgrades, rides, and balance |
 | `POST` | `/api/store/buy` | Buy an upgrade (requires EIP-191 signature) |
 | `POST` | `/api/store/buy-rides` | Buy rides (requires EIP-191 signature) |
-| `POST` | `/api/store/consume-ride` | Consume a ride when starting a game |
+| `POST` | `/api/store/consume-ride` | Consume a ride when starting a game (requires unique `rideSessionId`) |
 | `POST` | `/api/account/auth/telegram` | Authenticate via Telegram |
 | `POST` | `/api/account/auth/wallet` | Authenticate via wallet (requires EIP-191 signature) |
 | `POST` | `/api/account/link/generate` | Generate a 6-character code to link Telegram to a wallet |
@@ -80,11 +79,17 @@ See `.env.example` for a template.
 ## Security
 
 - **EIP-191 signatures** are required for all write operations that modify player state. The server reconstructs the signed message and verifies it matches the submitted wallet address using `ethers.js`.
-- **Rate limiting** is applied to all endpoints via `middleware/rateLimiter.js`.
+- **Rate limiting is differentiated**: strict for `POST /api/leaderboard/save`, moderate for other write endpoints, and softer for read endpoints.
 - **Anti-cheat validation** on `POST /api/leaderboard/save` rejects results with implausible values (score > 999,999; distance > 99,999 m; gold or silver coins > 999 per game).
+- **Score anomaly metric** is tracked per player: `averageScore`, `scoreToAverageRatio` (`bestScore / averageScore`), and `suspiciousScorePattern` for extreme outliers.
 - **Timestamp validation** rejects requests where the signed timestamp is more than 10 minutes old.
 - **Replay protection** – each game result signature can only be submitted once.
+- **Ride anti-cheat** on `POST /api/store/consume-ride`: every consume request must include a unique `rideSessionId`; duplicate IDs are rejected without spending another ride.
 
 ## Deployment
 
 The server is deployed on [Railway](https://railway.app). Set the environment variables listed above in your Railway project settings.
+
+For better isolation under load, you can run the bot in a separate worker process:
+- API: `npm run start:api` with `BOT_MODE=worker` (or `START_BOT_IN_PROCESS=false`)
+- Bot worker: `npm run start:bot`
