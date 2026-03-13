@@ -4,6 +4,8 @@
   "description": "Ursass Tube Leaderboard API",
   "main": "server.js",
   "scripts": {
+    "check:syntax": "node scripts/check-syntax.js",
+    "prestart": "npm run check:syntax",
     "start": "node server.js",
     "dev": "nodemon server.js",
     "start:api": "node server.js",
