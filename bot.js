@@ -1,20 +1,13 @@
 const TelegramBot = require('node-telegram-bot-api');
 
 let bot = null;
+let restartTimer = null;
 
-function initBot() {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  if (!token) {
-    console.warn('⚠️ TELEGRAM_BOT_TOKEN not set — bot disabled');
-    return null;
-  }
 
-  bot = new TelegramBot(token, { polling: true });
-  console.log('🤖 Telegram bot started: @' + (process.env.TELEGRAM_BOT_USERNAME || 'unknown'));
-
+function registerHandlers(currentBot) {
   // /start
-  bot.onText(/\/start/, (msg) => {
-    bot.sendMessage(msg.chat.id,
+  currentBot.onText(/\/start/, (msg) => {
+    currentBot.sendMessage(msg.chat.id,
       `🐻 *Ursass Tube*\n\n` +
       `🎮 Play the game via the button below!\n\n` +
       `🔗 To link your wallet — click "Link Telegram" in the game, then send the code here.\n\n` +
@@ -31,8 +24,8 @@ function initBot() {
   });
 
   // /help
-  bot.onText(/\/help/, (msg) => {
-    bot.sendMessage(msg.chat.id,
+  currentBot.onText(/\/help/, (msg) => {
+    currentBot.sendMessage(msg.chat.id,
       `📖 *Commands:*\n\n` +
       `/start — Open game\n` +
       `/help — This help\n` +
@@ -43,7 +36,7 @@ function initBot() {
   });
 
   // /status
-  bot.onText(/\/status/, async (msg) => {
+  currentBot.onText(/\/status/, async (msg) => {
     const telegramId = String(msg.from.id);
 
     try {
@@ -53,7 +46,7 @@ function initBot() {
       const link = await AccountLink.findOne({ telegramId });
 
       if (!link) {
-        bot.sendMessage(msg.chat.id,
+        currentBbot.sendMessage(msg.chat.id,
           `❌ No account found.\n\nOpen the game first to create an account!`
         );
         return;
@@ -62,8 +55,6 @@ function initBot() {
       const player = await Player.findOne({ wallet: link.primaryId });
 
       let text = `📊 *Your Account*\n\n`;
-
-      // Show username if available
       const displayName = msg.from.username
         ? `@${msg.from.username}`
         : `TG#${telegramId}`;
@@ -83,26 +74,24 @@ function initBot() {
         text += `\n🥈 Silver: ${player.totalSilverCoins}`;
       }
 
-      bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
+      currentBot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
     } catch (e) {
       console.error('Status error:', e);
-      bot.sendMessage(msg.chat.id, `⚠️ Error. Try again later.`);
+      currentBot.sendMessage(msg.chat.id, `⚠️ Error. Try again later.`);
     }
   });
 
   // Handle 6-char verification codes
-  bot.on('message', async (msg) => {
+  currentBot.on('message', async (msg) => {
     const text = (msg.text || '').trim().toUpperCase();
 
-    // Skip commands
     if (text.startsWith('/')) return;
 
-    // Match 6-char code (letters + digits, no spaces)
     const codeMatch = text.match(/^[A-Z0-9]{6}$/);
 
     if (!codeMatch) {
       if (text.length >= 4 && text.length <= 8) {
-        bot.sendMessage(msg.chat.id,
+        currentBot.sendMessage(msg.chat.id,
           `🤔 Invalid code format.\n\nValid codes are 6 characters, e.g. \`A3F9K2\``,
           { parse_mode: 'Markdown' }
         );
@@ -114,7 +103,7 @@ function initBot() {
     const telegramId = String(msg.from.id);
     const username = msg.from.username || null;
 
-    bot.sendMessage(msg.chat.id, `⏳ Verifying \`${code}\`...`, { parse_mode: 'Markdown' });
+    currentBot.sendMessage(msg.chat.id, `⏳ Verifying \`${code}\`...`, { parse_mode: 'Markdown' });
 
     try {
       const LinkCode = require('./models/LinkCode');
@@ -123,7 +112,7 @@ function initBot() {
       const linkCode = await LinkCode.findOne({ code, used: false });
 
       if (!linkCode) {
-        bot.sendMessage(msg.chat.id,
+        currentBot.sendMessage(msg.chat.id,
           `❌ Code not found or already used.\n\nRequest a new one in the game.`
         );
         return;
@@ -131,7 +120,7 @@ function initBot() {
 
       if (new Date() > linkCode.expiresAt) {
         await LinkCode.deleteOne({ _id: linkCode._id });
-        bot.sendMessage(msg.chat.id,
+        currentBot.sendMessage(msg.chat.id,
           `⏰ Code expired (10 min limit).\n\nRequest a new one in the game.`
         );
         return;
@@ -140,7 +129,6 @@ function initBot() {
       linkCode.used = true;
       await linkCode.save();
 
-      // Save username to AccountLink if available
       if (username) {
         const AccountLink = require('./models/AccountLink');
         await AccountLink.findOneAndUpdate(
@@ -152,7 +140,6 @@ function initBot() {
       const result = await linkAccounts(linkCode.primaryId, 'telegram', telegramId);
 
       if (result.success) {
-        // Save username after link too
         if (username) {
           const AccountLink = require('./models/AccountLink');
           await AccountLink.findOneAndUpdate(
@@ -163,43 +150,78 @@ function initBot() {
 
         const displayName = username ? `@${username}` : `TG#${telegramId}`;
 
-        let text = `✅ *Account linked!*\n\n`;
-        text += `📱 Telegram: ${displayName}\n`;
+        let message = `✅ *Account linked!*\n\n`;
+        message += `📱 Telegram: ${displayName}\n`;
 
         if (result.wallet) {
-          text += `🔗 Wallet: \`${result.wallet.slice(0, 6)}...${result.wallet.slice(-4)}\`\n`;
+          message += `🔗 Wallet: \`${result.wallet.slice(0, 6)}...${result.wallet.slice(-4)}\`\n`;
         }
 
         if (result.merged) {
-          text += `\n🔀 Accounts merged!\n`;
-          text += `Master score: ${result.masterScore}`;
+          message += `\n🔀 Accounts merged!\n`;
+          message += `Master score: ${result.masterScore}`;
           if (result.slaveScoreWas > 0) {
-            text += `\n⚠️ Old score (${result.slaveScoreWas}) was reset.`;
+            message += `\n⚠️ Old score (${result.slaveScoreWas}) was reset.`;
           }
         }
+        message += `\n\n🎮 Return to the game — everything is synced!`;
 
-        text += `\n\n🎮 Return to the game — everything is synced!`;
-
-        bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
+        currentBot.sendMessage(msg.chat.id, message, { parse_mode: 'Markdown' });
 
         console.log(`✅ Bot linked: ${displayName} → ${linkCode.primaryId}`);
       } else {
-        bot.sendMessage(msg.chat.id, `❌ Linking failed: ${result.error}`);
+        currentBot.sendMessage(msg.chat.id, `❌ Linking failed: ${result.error}`);
       }
 
     } catch (e) {
       console.error('❌ Bot verify error:', e);
-      bot.sendMessage(msg.chat.id, `⚠️ Server error. Try again later.`);
+      currentBot.sendMessage(msg.chat.id, `⚠️ Server error. Try again later.`);
     }
   });
+}
 
-  bot.on('polling_error', (error) => {
-    if (error.code !== 'ETELEGRAM') {
-      console.error('🤖 Bot polling error:', error.code);
+function scheduleBotRestart(delayMs = 5000) {
+  if (restartTimer) return;
+
+  console.warn(`🤖 Scheduling bot restart in ${delayMs}ms`);
+  restartTimer = setTimeout(() => {
+    restartTimer = null;
+    initBot();
+  }, delayMs);
+}
+  function initBot() {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) {
+    console.warn('⚠️ TELEGRAM_BOT_TOKEN not set — bot disabled');
+    return null;
+  }
+
+  try {
+    if (bot) {
+      bot.removeAllListeners();
+      bot.stopPolling().catch(() => {});
     }
-  });
 
-  return bot;
+      bot = new TelegramBot(token, { polling: true });
+    registerHandlers(bot);
+
+    bot.on('polling_error', (error) => {
+      console.error('🤖 Bot polling error:', error.code || error.message);
+      scheduleBotRestart();
+    });
+
+    bot.on('error', (error) => {
+      console.error('🤖 Bot runtime error:', error.message || error);
+      scheduleBotRestart();
+    });
+
+    console.log('🤖 Telegram bot started: @' + (process.env.TELEGRAM_BOT_USERNAME || 'unknown'));
+    return bot;
+  } catch (error) {
+    console.error('❌ Bot init failed:', error.message || error);
+    scheduleBotRestart(10000);
+    return null;
+  }
 }
 
 module.exports = { initBot };
