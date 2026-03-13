@@ -55,6 +55,7 @@ npm start
 | `MONGO_URL` | MongoDB connection string |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token |
 | `TELEGRAM_BOT_USERNAME` | Telegram bot username (without `@`) |
+| `CORS_ALLOWED_ORIGINS` | Optional comma-separated list of extra allowed origins |
 
 See `.env.example` for a template.
 
@@ -65,6 +66,7 @@ Versioned aliases are also available under `/api/v1/*` (backward-compatible with
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/health` | Health check |
+| `GET` | `/metrics` | Prometheus metrics endpoint |
 | `GET` | `/api/leaderboard/top?wallet=` | Get top 10 players (optional: include requesting player's position) |
 | `POST` | `/api/leaderboard/save` | Save game result (requires EIP-191 signature) |
 | `GET` | `/api/leaderboard/player/:wallet` | Get player info and history |
@@ -86,6 +88,7 @@ Versioned aliases are also available under `/api/v1/*` (backward-compatible with
 - **Timestamp validation** rejects stale requests; default allowed drift is 3 minutes (`MAX_RESULT_TIMESTAMP_DIFF_MS`).
 - **Replay protection** – each game result signature can only be submitted once.
 - **Ride anti-cheat** on `POST /api/store/consume-ride`: every consume request must include a unique `rideSessionId`; duplicate IDs are rejected without spending another ride.
+- Legacy `POST /api/store/use-ride` is still supported for backward compatibility (without strict `rideSessionId` enforcement), but migration to `/consume-ride` is recommended.
 - **Structured JSON logging** (stdout/stderr) for easy ingestion in Railway/ELK/Cloud logging
 - **Security event trail**: suspicious actions (invalid timestamps/scores, duplicate ride sessions, rapid purchase bursts) are persisted in `SecurityEvent`.
 - **Prometheus metrics** are exposed on `/metrics` (default Node process metrics + request latency + suspicious events counter).
