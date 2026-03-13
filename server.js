@@ -46,10 +46,17 @@ app.use(cors({
 app.options('*', cors());
 app.use(express.json({ limit: '1mb' }));
 
-// Connect DB then start bot
+const runBotInProcess = process.env.BOT_MODE !== 'worker' && process.env.START_BOT_IN_PROCESS !== 'false';
+
+// Connect DB then optionally start bot in the same process
 connectDB()
   .then(() => {
-    console.log('🤖 Starting Telegram bot...');
+    if (!runBotInProcess) {
+      console.log('🤖 BOT_MODE=worker (or START_BOT_IN_PROCESS=false): skipping bot in API process');
+      return;
+    }
+
+    console.log('🤖 Starting Telegram bot in API process...');
     initBot();
   })
   .catch((err) => {
