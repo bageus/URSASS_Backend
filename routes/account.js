@@ -8,7 +8,7 @@ const {
   resolvePrimaryId
 } = require('../utils/accountManager');
 const { verifySignature } = require('../utils/verifySignature');
-const { leaderboardLimiter, saveResultLimiter } = require('../middleware/rateLimiter');
+const { readLimiter, writeLimiter } = require('../middleware/rateLimiter');
 const Player = require('../models/Player');
 const AccountLink = require('../models/AccountLink');
 const LinkCode = require('../models/LinkCode');
@@ -28,7 +28,7 @@ function generateLinkCode() {
 /**
  * POST /api/account/auth/telegram
  */
-router.post('/auth/telegram', leaderboardLimiter, async (req, res) => {
+router.post('/auth/telegram', readLimiter, async (req, res) => {
   try {
     const { telegramId, firstName, username } = req.body;
 
@@ -58,7 +58,7 @@ router.post('/auth/telegram', leaderboardLimiter, async (req, res) => {
 /**
  * POST /api/account/auth/wallet
  */
-router.post('/auth/wallet', leaderboardLimiter, async (req, res) => {
+router.post('/auth/wallet', readLimiter, async (req, res) => {
   try {
     const { wallet, signature, timestamp } = req.body;
 
@@ -100,7 +100,7 @@ router.post('/auth/wallet', leaderboardLimiter, async (req, res) => {
  * POST /api/account/link/request-code
  * Generate a verification code for linking Telegram
  */
-router.post('/link/request-code', saveResultLimiter, async (req, res) => {
+router.post('/link/request-code', writeLimiter, async (req, res) => {
   try {
     const { primaryId } = req.body;
 
@@ -221,7 +221,7 @@ router.post('/link/verify-telegram', async (req, res) => {
  * POST /api/account/link/wallet
  * Link Wallet to an existing Telegram account
  */
-router.post('/link/wallet', saveResultLimiter, async (req, res) => {
+router.post('/link/wallet', writeLimiter, async (req, res) => {
   try {
     const { primaryId, wallet, signature, timestamp } = req.body;
 
@@ -249,7 +249,7 @@ router.post('/link/wallet', saveResultLimiter, async (req, res) => {
 /**
  * GET /api/account/info/:identifier
  */
-router.get('/info/:identifier', leaderboardLimiter, async (req, res) => {
+router.get('/info/:identifier', readLimiter, async (req, res) => {
   try {
     const identifier = req.params.identifier;
 
