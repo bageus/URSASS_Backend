@@ -46,6 +46,11 @@ const playerUpgradesSchema = new mongoose.Schema({
     default: 0,
     min: 0
   },
+  // Недавние идентификаторы сессий заезда для защиты от двойного consume
+    recentRideSessionIds: {
+      type: [String],
+      default: []
+    },
 
   updatedAt: {
     type: Date,
