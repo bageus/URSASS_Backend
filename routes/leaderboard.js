@@ -5,7 +5,7 @@ const Player = require('../models/Player');
 const GameResult = require('../models/GameResult');
 const AccountLink = require('../models/AccountLink');
 const { verifySignature, createMessageToVerify } = require('../utils/verifySignature');
-const { saveResultLimiter, leaderboardLimiter } = require('../middleware/rateLimiter');
+const { saveResultLimiter, readLimiter } = require('../middleware/rateLimiter');
 
 /**
  * Build display name for a player based on their AccountLink data.
@@ -43,14 +43,14 @@ function buildDisplayName(link, primaryId) {
 }
 
 // ✅ GET: Top 10 players
-router.get('/top', leaderboardLimiter, async (req, res) => {
+router.get('/top', readLimiter, async (req, res) => {
   try {
     const wallet = req.query.wallet?.toLowerCase();
 
     const topPlayers = await Player.find({ bestScore: { $gt: 0 } })
       .sort({ bestScore: -1 })
       .limit(10)
-      .select('wallet bestScore bestDistance totalGoldCoins totalSilverCoins gamesPlayed');
+      .select('wallet bestScore bestDistance averageScore scoreToAverageRatio totalGoldCoins totalSilverCoins gamesPlayed');
 
     // Fetch AccountLink data for all top players to build displayName
     const wallets = topPlayers.map(p => p.wallet);
@@ -76,6 +76,8 @@ router.get('/top', leaderboardLimiter, async (req, res) => {
             wallet: playerData.wallet,
             displayName: buildDisplayName(playerLink, playerData.wallet),
             bestScore: playerData.bestScore,
+            averageScore: playerData.averageScore || 0,
+            scoreToAverageRatio: playerData.scoreToAverageRatio || null,
             bestDistance: playerData.bestDistance,
             totalGoldCoins: playerData.totalGoldCoins,
             totalSilverCoins: playerData.totalSilverCoins,
@@ -88,6 +90,8 @@ router.get('/top', leaderboardLimiter, async (req, res) => {
             wallet: playerData.wallet,
             displayName: buildDisplayName(playerLink, playerData.wallet),
             bestScore: playerData.bestScore,
+            averageScore: playerData.averageScore || 0,
+            scoreToAverageRatio: playerData.scoreToAverageRatio || null,
             bestDistance: playerData.bestDistance,
             totalGoldCoins: playerData.totalGoldCoins,
             totalSilverCoins: playerData.totalSilverCoins,
@@ -103,6 +107,8 @@ router.get('/top', leaderboardLimiter, async (req, res) => {
         wallet: player.wallet,
         displayName: buildDisplayName(linkMap[player.wallet], player.wallet),
         bestScore: player.bestScore,
+        averageScore: player.averageScore || 0,
+        scoreToAverageRatio: player.scoreToAverageRatio || null,
         bestDistance: player.bestDistance,
         totalGoldCoins: player.totalGoldCoins,
         totalSilverCoins: player.totalSilverCoins,
@@ -291,6 +297,23 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       }
     }
 
+    const totalScore = player.gameHistory.reduce((sum, game) => sum + (game.score || 0), 0);
+    const averageScore = player.gameHistory.length > 0
+      ? Math.round(totalScore / player.gameHistory.length)
+      : 0;
+
+    player.averageScore = averageScore;
+    player.scoreToAverageRatio = averageScore > 0
+      ? Number((player.bestScore / averageScore).toFixed(2))
+      : null;
+
+    const suspiciousThreshold = 4.5;
+    player.suspiciousScorePattern = Boolean(
+      player.scoreToAverageRatio &&
+      player.gamesPlayed >= 10 &&
+      player.scoreToAverageRatio >= suspiciousThreshold
+    );
+
     player.updatedAt = new Date();
     await player.save();
 
@@ -302,6 +325,9 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       success: true,
       message: 'Result saved successfully with valid signature',
       bestScore: player.bestScore,
+      averageScore: player.averageScore || 0,
+      scoreToAverageRatio: player.scoreToAverageRatio || null,
+      suspiciousScorePattern: player.suspiciousScorePattern || false,
       bestDistance: player.bestDistance,
       totalGoldCoins: player.totalGoldCoins,
       totalSilverCoins: player.totalSilverCoins,
@@ -315,7 +341,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
 });
 
 // ✅ GET: Verified results for a wallet
-router.get('/verified-results/:wallet', async (req, res) => {
+router.get('/verified-results/:wallet', readLimiter, async (req, res) => {
   try {
     const wallet = req.params.wallet.toLowerCase();
 
@@ -333,7 +359,7 @@ router.get('/verified-results/:wallet', async (req, res) => {
 });
 
 // ✅ GET: Player info
-router.get('/player/:wallet', leaderboardLimiter, async (req, res) => {
+router.get('/player/:wallet', readLimiter, async (req, res) => {
   try {
     const wallet = req.params.wallet.toLowerCase();
 
@@ -345,6 +371,9 @@ router.get('/player/:wallet', leaderboardLimiter, async (req, res) => {
         wallet: wallet,
         position: null,
         bestScore: 0,
+        averageScore: 0,
+        scoreToAverageRatio: null,
+        suspiciousScorePattern: false,
         bestDistance: 0,
         totalGoldCoins: 0,
         totalSilverCoins: 0,
@@ -366,6 +395,9 @@ router.get('/player/:wallet', leaderboardLimiter, async (req, res) => {
       wallet: player.wallet,
       position: position,
       bestScore: player.bestScore,
+      averageScore: player.averageScore || 0,
+      scoreToAverageRatio: player.scoreToAverageRatio || null,
+      suspiciousScorePattern: player.suspiciousScorePattern || false,
       bestDistance: player.bestDistance,
       totalGoldCoins: player.totalGoldCoins,
       totalSilverCoins: player.totalSilverCoins,
@@ -380,4 +412,3 @@ router.get('/player/:wallet', leaderboardLimiter, async (req, res) => {
 });
 
 module.exports = router;
-
