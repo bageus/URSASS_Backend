@@ -468,7 +468,8 @@ router.get('/rides/:wallet', readLimiter, async (req, res) => {
       resetInMs: upgrades.freeRidesRemaining < 3 ? msUntilReset : 0,
       resetInFormatted: formatTimeLeft(msUntilReset)
     });
-    } catch (error) {
+    
+} catch (error) {
     logger.error({ err: error }, 'GET /rides/:wallet error');
     res.status(500).json({ error: 'Server error' });
   }
