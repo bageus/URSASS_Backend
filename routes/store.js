@@ -468,4 +468,29 @@ router.get('/rides/:wallet', readLimiter, async (req, res) => {
       resetInMs: upgrades.freeRidesRemaining < 3 ? msUntilReset : 0,
       resetInFormatted: formatTimeLeft(msUntilReset)
     });
+  } catch (error) {
+    logger.error({ err: error }, 'GET /rides/:wallet error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
+function formatTimeLeft(ms) {
+  if (ms <= 0) return 'Ready now';
+
+  const totalSeconds = Math.ceil(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+
+  return `${seconds}s`;
+}
+
+module.exports = router;
