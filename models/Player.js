@@ -21,7 +21,22 @@ const playerSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
-  
+
+  averageScore: {
+    type: Number,
+    default: 0
+  },
+
+  scoreToAverageRatio: {
+    type: Number,
+    default: null
+  },
+
+  suspiciousScorePattern: {
+    type: Boolean,
+    default: false
+  },
+
   // ✅ СУММА собранных монет
   totalGoldCoins: {
     type: Number,
@@ -65,4 +80,3 @@ const playerSchema = new mongoose.Schema({
 });
 
 module.exports = mongoose.model('Player', playerSchema);
-
