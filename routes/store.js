@@ -6,6 +6,18 @@ const AccountLink = require('../models/AccountLink');
 const { UPGRADES_CONFIG, calculateEffects } = require('../utils/upgradesConfig');
 const { verifySignature } = require('../utils/verifySignature');
 const { writeLimiter, readLimiter } = require('../middleware/rateLimiter');
+const SecurityEvent = require('../models/SecurityEvent');
+const logger = require('../utils/logger');
+const { markSuspicious } = require('../middleware/requestMetrics');
+
+
+async function logSecurityEvent({ wallet = null, eventType, route, ipAddress, details = {} }) {
+  try {
+    await SecurityEvent.create({ wallet, eventType, route, ipAddress, details });
+  } catch (error) {
+    logger.warn({ error: error.message, eventType }, 'Failed to persist SecurityEvent');
+  }
+}
 
 /**
  * GET /api/store/upgrades/:wallet
@@ -120,6 +132,25 @@ router.post('/buy', writeLimiter, async (req, res) => {
 
     const walletLower = wallet.toLowerCase();
 
+    const recentBuyCount = await SecurityEvent.countDocuments({
+          wallet: walletLower,
+          eventType: 'purchase_attempt',
+          createdAt: { $gte: new Date(Date.now() - 2 * 60 * 1000) }
+        });
+    
+        if (recentBuyCount >= 12) {
+          markSuspicious('rapid_purchases');
+          await logSecurityEvent({
+            wallet: walletLower,
+            eventType: 'suspicious_rapid_purchases',
+            route: req.path,
+            ipAddress: req.ip,
+            details: { recentBuyCount }
+          });
+          logger.warn({ wallet: walletLower, recentBuyCount }, 'Suspicious rapid purchase pattern');
+        }
+
+    
     const config = UPGRADES_CONFIG[upgradeKey];
     if (!config) {
       return res.status(400).json({ error: `Unknown upgrade: ${upgradeKey}` });
@@ -254,6 +285,17 @@ router.post('/buy', writeLimiter, async (req, res) => {
     const resetAt = upgrades.freeRidesResetAt || nowDate;
     const msUntilReset = Math.max(0, (8 * 60 * 60 * 1000) - (nowDate - resetAt));
 
+    await logSecurityEvent({
+      wallet: walletLower,
+      eventType: 'purchase_attempt',
+      route: req.path,
+      ipAddress: req.ip,
+      details: { upgradeKey, tier: tier ?? 0, authMode: authMode || 'wallet' }
+    });
+
+    logger.info({ wallet: walletLower, upgradeKey, tier: tier ?? 0 }, 'Purchase processed');
+
+
     res.json({
       success: true,
       message: `Purchased ${upgradeKey}`,
@@ -272,7 +314,7 @@ router.post('/buy', writeLimiter, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ POST /buy error:', error);
+    logger.error({ err: error }, 'POST /buy error');
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -307,6 +349,15 @@ const consumeRideHandler = async (req, res) => {
     upgrades.recentRideSessionIds = upgrades.recentRideSessionIds || [];
 
     if (upgrades.recentRideSessionIds.includes(sessionId)) {
+      markSuspicious('duplicate_ride_session');
+      await logSecurityEvent({
+        wallet: walletLower,
+        eventType: 'duplicate_ride_session',
+        route: req.path,
+        ipAddress: req.ip,
+        details: { rideSessionId: sessionId }
+      });
+
       return res.status(409).json({
         error: 'Ride already consumed for this session',
         antiCheatTriggered: true,
@@ -373,7 +424,7 @@ const consumeRideHandler = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ POST /consume-ride error:', error);
+    logger.error({ err: error }, 'POST /consume-ride error');
     res.status(500).json({ error: 'Server error' });
   }
 };
