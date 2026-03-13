@@ -60,6 +60,8 @@ See `.env.example` for a template.
 
 ## API Endpoints
 
+Versioned aliases are also available under `/api/v1/*` (backward-compatible with current `/api/*`).
+
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/health` | Health check |
@@ -68,12 +70,11 @@ See `.env.example` for a template.
 | `GET` | `/api/leaderboard/player/:wallet` | Get player info and history |
 | `GET` | `/api/leaderboard/verified-results/:wallet` | Get verified game results for a wallet |
 | `GET` | `/api/store/upgrades/:wallet` | Get player upgrades, rides, and balance |
-| `POST` | `/api/store/buy` | Buy an upgrade (requires EIP-191 signature) |
-| `POST` | `/api/store/buy-rides` | Buy rides (requires EIP-191 signature) |
+| `POST` | `/api/store/buy` | Buy an upgrade or ride pack (requires EIP-191 signature) |
 | `POST` | `/api/store/consume-ride` | Consume a ride when starting a game (requires unique `rideSessionId`) |
 | `POST` | `/api/account/auth/telegram` | Authenticate via Telegram |
 | `POST` | `/api/account/auth/wallet` | Authenticate via wallet (requires EIP-191 signature) |
-| `POST` | `/api/account/link/generate` | Generate a 6-character code to link Telegram to a wallet |
+| `POST` | `/api/account/link/request-code` | Generate a 6-character code to link Telegram to a wallet |
 | `GET` | `/api/account/info` | Get account info |
 
 ## Security
@@ -82,9 +83,12 @@ See `.env.example` for a template.
 - **Rate limiting is differentiated**: strict for `POST /api/leaderboard/save`, moderate for other write endpoints, and softer for read endpoints.
 - **Anti-cheat validation** on `POST /api/leaderboard/save` rejects results with implausible values (score > 999,999; distance > 99,999 m; gold or silver coins > 999 per game).
 - **Score anomaly metric** is tracked per player: `averageScore`, `scoreToAverageRatio` (`bestScore / averageScore`), and `suspiciousScorePattern` for extreme outliers.
-- **Timestamp validation** rejects requests where the signed timestamp is more than 10 minutes old.
+- **Timestamp validation** rejects stale requests; default allowed drift is 3 minutes (`MAX_RESULT_TIMESTAMP_DIFF_MS`).
 - **Replay protection** – each game result signature can only be submitted once.
 - **Ride anti-cheat** on `POST /api/store/consume-ride`: every consume request must include a unique `rideSessionId`; duplicate IDs are rejected without spending another ride.
+- **Structured JSON logging** (stdout/stderr) for easy ingestion in Railway/ELK/Cloud logging
+- **Security event trail**: suspicious actions (invalid timestamps/scores, duplicate ride sessions, rapid purchase bursts) are persisted in `SecurityEvent`.
+- **Prometheus metrics** are exposed on `/metrics` (default Node process metrics + request latency + suspicious events counter).
 
 ## Deployment
 
