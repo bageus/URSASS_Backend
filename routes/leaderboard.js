@@ -6,6 +6,18 @@ const GameResult = require('../models/GameResult');
 const AccountLink = require('../models/AccountLink');
 const { verifySignature, createMessageToVerify } = require('../utils/verifySignature');
 const { saveResultLimiter, readLimiter } = require('../middleware/rateLimiter');
+const SecurityEvent = require('../models/SecurityEvent');
+const logger = require('../utils/logger');
+const { markSuspicious } = require('../middleware/requestMetrics');
+
+
+async function logSecurityEvent({ wallet = null, eventType, route, ipAddress, details = {} }) {
+  try {
+    await SecurityEvent.create({ wallet, eventType, route, ipAddress, details });
+  } catch (error) {
+    logger.warn({ error: error.message, eventType }, 'Failed to persist SecurityEvent');
+  }
+}
 
 /**
  * Build display name for a player based on their AccountLink data.
@@ -148,6 +160,8 @@ router.post('/save', saveResultLimiter, async (req, res) => {
 
     // Anti-cheat: validate score, distance, and coin values
     if (typeof score !== 'number' || isNaN(score) || score < 0 || score > 999999) {
+      markSuspicious('invalid_score_value');
+      await logSecurityEvent({ wallet: walletLower, eventType: 'invalid_score_value', route: req.path, ipAddress: req.ip, details: { score } });
       return res.status(400).json({ error: 'Invalid score value' });
     }
 
@@ -179,12 +193,21 @@ router.post('/save', saveResultLimiter, async (req, res) => {
 
     const now = Date.now();
     const timeDiff = Math.abs(now - ts);
-    const MAX_TIME_DIFF = 10 * 60 * 1000;
+    const MAX_TIME_DIFF = Number(process.env.MAX_RESULT_TIMESTAMP_DIFF_MS || 3 * 60 * 1000);
 
     console.log(`⏰ Server time: ${now}, Client timestamp: ${ts}, Difference: ${timeDiff}ms`);
 
     if (timeDiff > MAX_TIME_DIFF) {
-      console.warn(`❌ Timestamp invalid: ${timeDiff}ms`);
+      markSuspicious('invalid_timestamp');
+      await logSecurityEvent({
+        wallet: walletLower,
+        eventType: 'invalid_timestamp',
+        route: req.path,
+        ipAddress: req.ip,
+        details: { timeDiff, maxAllowed: MAX_TIME_DIFF }
+      });
+
+      logger.warn({ wallet: walletLower, timeDiff, maxAllowed: MAX_TIME_DIFF }, 'Timestamp invalid');
       return res.status(400).json({
         error: `Invalid timestamp. Difference: ${timeDiff}ms.`
       });
@@ -314,6 +337,28 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       player.scoreToAverageRatio >= suspiciousThreshold
     );
 
+    if (player.suspiciousScorePattern) {
+      markSuspicious('score_peak_vs_average');
+      await logSecurityEvent({
+        wallet: walletLower,
+        eventType: 'suspicious_score_pattern',
+        route: req.path,
+        ipAddress: req.ip,
+        details: {
+          bestScore: player.bestScore,
+          averageScore: player.averageScore,
+          scoreToAverageRatio: player.scoreToAverageRatio
+        }
+      });
+
+      logger.warn({
+        wallet: walletLower,
+        bestScore: player.bestScore,
+        averageScore: player.averageScore,
+        ratio: player.scoreToAverageRatio
+      }, 'Suspicious score pattern detected');
+    }
+
     player.updatedAt = new Date();
     await player.save();
 
@@ -335,7 +380,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ POST /save error:', error);
+    logger.error({ err: error }, 'POST /save error');
     res.status(500).json({ error: 'Server error' });
   }
 });
