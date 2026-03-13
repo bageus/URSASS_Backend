@@ -327,17 +327,19 @@ const consumeRideHandler = async (req, res) => {
   try {
     const { wallet, rideSessionId } = req.body;
     if (!wallet) return res.status(400).json({ error: 'Missing wallet' });
-    
-    if (!rideSessionId || typeof rideSessionId !== 'string' || rideSessionId.trim().length < 8) {
-          return res.status(400).json({
-            error: 'Missing or invalid rideSessionId',
-            details: 'Pass a unique rideSessionId for every game start to enable anti-cheat duplicate protection.'
-          });
-        }
-    
-        const walletLower = wallet.toLowerCase();
-        const sessionId = rideSessionId.trim();
 
+    const walletLower = wallet.toLowerCase();
+    const isLegacyUseRideRoute = req.path === '/use-ride';
+
+    let sessionId = null;
+    if (rideSessionId && typeof rideSessionId === 'string' && rideSessionId.trim().length >= 8) {
+      sessionId = rideSessionId.trim();
+    } else if (!isLegacyUseRideRoute) {
+      return res.status(400).json({
+        error: 'Missing or invalid rideSessionId',
+        details: 'Pass a unique rideSessionId for every game start to enable anti-cheat duplicate protection.'
+      });
+    }
     let upgrades = await PlayerUpgrades.findOne({ wallet: walletLower });
     if (!upgrades) {
       upgrades = new PlayerUpgrades({ wallet: walletLower });
@@ -393,10 +395,13 @@ const consumeRideHandler = async (req, res) => {
       return res.status(403).json({ error: 'Failed to consume ride' });
     }
     
-    upgrades.recentRideSessionIds.push(sessionId);
-    if (upgrades.recentRideSessionIds.length > 30) {
-      upgrades.recentRideSessionIds = upgrades.recentRideSessionIds.slice(-30);
+   if (sessionId) {
+      upgrades.recentRideSessionIds.push(sessionId);
+      if (upgrades.recentRideSessionIds.length > 30) {
+        upgrades.recentRideSessionIds = upgrades.recentRideSessionIds.slice(-30);
+      }
     }
+
 
 
     upgrades.updatedAt = new Date();
@@ -407,13 +412,15 @@ const consumeRideHandler = async (req, res) => {
     const msUntilReset = Math.max(0, (8 * 60 * 60 * 1000) - (nowDate - resetAt));
 
     console.log(`🎟 ${walletLower} used 1 ride. Free: ${upgrades.freeRidesRemaining}, Paid: ${upgrades.paidRidesRemaining}`);
+    
+
+    const antiCheat = sessionId
+      ? { duplicateSessionCheck: true, rideSessionId: sessionId }
+      : { duplicateSessionCheck: false, warning: 'Legacy /use-ride call without rideSessionId. Please migrate to /consume-ride with rideSessionId.' };
 
     res.json({
       success: true,
-      antiCheat: {
-        duplicateSessionCheck: true,
-        rideSessionId: sessionId
-      },
+      antiCheat,
       rides: {
         freeRides: upgrades.freeRidesRemaining,
         paidRides: upgrades.paidRidesRemaining,
@@ -462,18 +469,3 @@ router.get('/rides/:wallet', readLimiter, async (req, res) => {
       resetInFormatted: formatTimeLeft(msUntilReset)
     });
 
-  } catch (error) {
-    console.error('❌ GET /rides error:', error);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// Helper: format time remaining
-function formatTimeLeft(ms) {
-  if (ms <= 0) return "Ready";
-  const hours = Math.floor(ms / (1000 * 60 * 60));
-  const minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
-  return `${hours}h ${minutes}m`;
-}
-
-module.exports = router;
