@@ -13,12 +13,17 @@ const app = express();
 
 app.set('trust proxy', 1);
 
+const extraAllowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean);
 
 const allowedOrigins = [
   'https://bageus.github.io',
   'https://ursass-tube.vercel.app',
   'http://localhost:3000',
-  'http://localhost:5173'
+  'http://localhost:5173',
+  ...extraAllowedOrigins
 ];
 
 app.use(cors({
@@ -38,8 +43,8 @@ app.use(cors({
       return;
     }
 
-    console.warn(`❌ CORS blocked: ${origin}`);
-    callback(null, false);
+    logger.warn({ origin }, 'CORS blocked');
+    callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
   methods: ['GET', 'POST', 'OPTIONS'],
