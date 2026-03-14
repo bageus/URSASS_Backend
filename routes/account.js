@@ -19,7 +19,8 @@ const { issueAuthChallenge } = require('../utils/authChallenge');
 const MAX_AUTH_TIME_DIFF = Number(process.env.MAX_AUTH_TIMESTAMP_DIFF_MS || 3 * 60 * 1000);
 
 function isFreshTimestamp(timestamp) {
-  const ts = typeof timestamp === 'number' ? timestamp : parseInt(timestamp, 10);
+  const parsedTs = typeof timestamp === 'number' ? timestamp : parseInt(timestamp, 10);
+  const ts = parsedTs > 0 && parsedTs < 1e12 ? parsedTs * 1000 : parsedTs;
   if (!ts || Number.isNaN(ts)) {
     return false;
   }
