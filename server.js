@@ -13,7 +13,29 @@ const { metricsMiddleware, renderMetricsText } = require('./middleware/requestMe
 
 const app = express();
 
-app.set('trust proxy', 1);
+const trustProxyValue = process.env.TRUST_PROXY;
+if (trustProxyValue === 'true') {
+  app.set('trust proxy', true);
+} else if (trustProxyValue === 'false' || !trustProxyValue) {
+  app.set('trust proxy', false);
+} else {
+  app.set('trust proxy', trustProxyValue);
+}
+
+function isLoopbackOrPrivate(ip = '') {
+  const normalized = String(ip).replace(/^::ffff:/, '');
+  if (!normalized) {
+    return false;
+  }
+
+  if (normalized === '::1' || normalized === '127.0.0.1') {
+    return true;
+  }
+
+  return normalized.startsWith('10.')
+    || normalized.startsWith('192.168.')
+    || /^172\.(1[6-9]|2\d|3[0-1])\./.test(normalized);
+}
 
 const isAllowedOrigin = createCorsOriginValidator(process.env);
 
@@ -88,6 +110,19 @@ app.get('/health', (req, res) => {
 });
 
 app.get('/metrics', async (req, res) => {
+  const metricsToken = process.env.METRICS_TOKEN;
+  const authHeader = req.get('authorization') || '';
+  const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+  const headerToken = req.get('x-metrics-token');
+
+  const hasValidToken = metricsToken
+    ? bearerToken === metricsToken || headerToken === metricsToken
+    : false;
+
+  if (!hasValidToken && !isLoopbackOrPrivate(req.ip)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
   res.set('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
   const metricsText = await renderMetricsText();
   res.end(metricsText);
