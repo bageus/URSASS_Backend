@@ -56,6 +56,8 @@ npm start
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token |
 | `TELEGRAM_BOT_USERNAME` | Telegram bot username (without `@`) |
 | `CORS_ALLOWED_ORIGINS` | Optional comma-separated list of extra allowed origins |
+| `CORS_PREVIEW_MODE` | Preview CORS mode: `none` (default), `strict`, `wildcard` |
+| `LEGACY_USE_RIDE_NO_AUTH` | Allows legacy unauthenticated `/use-ride` when `true` (not recommended) |
 
 See `.env.example` for a template.
 
@@ -82,7 +84,7 @@ Versioned aliases are also available under `/api/v1/*` (backward-compatible with
 ## Security
 
 - **EIP-191 signatures** are required for all write operations that modify player state. The server reconstructs the signed message and verifies it matches the submitted wallet address using `ethers.js`.
-- **Rate limiting is differentiated**: strict for `POST /api/leaderboard/save`, moderate for other write endpoints, and softer for read endpoints.
+- **Rate limiting is differentiated**: strict for `POST /api/leaderboard/save`, dedicated auth limiter for `POST /api/account/auth/*`, moderate for other write endpoints, and softer for read endpoints.
 - **Anti-cheat validation** on `POST /api/leaderboard/save` rejects results with implausible values (score > 999,999; distance > 99,999 m; gold or silver coins > 999 per game).
 - **Score anomaly metric** is tracked per player: `averageScore`, `scoreToAverageRatio` (`bestScore / averageScore`), and `suspiciousScorePattern` for extreme outliers.
 - **Timestamp validation** rejects stale requests; default allowed drift is 3 minutes (`MAX_RESULT_TIMESTAMP_DIFF_MS`).
@@ -100,3 +102,12 @@ The server is deployed on [Railway](https://railway.app). Set the environment va
 For better isolation under load, you can run the bot in a separate worker process:
 - API: `npm run start:api` with `BOT_MODE=worker` (or `START_BOT_IN_PROCESS=false`)
 - Bot worker: `npm run start:bot`
+
+
+## CI
+
+GitHub Actions workflow runs syntax checks and unit tests on push/PR.
+
+```bash
+npm test
+```
