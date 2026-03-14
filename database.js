@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const logger = require('./utils/logger');
 
 async function connectDB() {
   try {
@@ -13,9 +14,9 @@ async function connectDB() {
       serverSelectionTimeoutMS: 10000
     });
     
-    console.log('✅ MongoDB подключена');
+    logger.info('MongoDB connected');
   } catch(error) {
-    console.error('❌ Ошибка MongoDB:', error.message);
+    logger.error({ err: error.message }, 'MongoDB connection error');
 
     if (!process.env.MONGO_URL) {
       throw error;
