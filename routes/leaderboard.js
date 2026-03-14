@@ -9,6 +9,7 @@ const { saveResultLimiter, readLimiter } = require('../middleware/rateLimiter');
 const SecurityEvent = require('../models/SecurityEvent');
 const logger = require('../utils/logger');
 const { markSuspicious } = require('../middleware/requestMetrics');
+const { executeInTransaction } = require('../utils/transaction');
 
 
 async function logSecurityEvent({ wallet = null, eventType, route, ipAddress, details = {} }) {
@@ -239,147 +240,157 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       console.log(`✅ Signature valid for ${walletLower}`);
     }
 
-    // Duplicate prevention
-    let deduplicationToken;
-    if (isTelegramAuth) {
-      // For telegram auth, generate a unique token from the result data
-      deduplicationToken = crypto
-        .createHash('sha256')
-        .update(`${walletLower}:${Math.floor(score)}:${Math.floor(distance)}:${timestamp}`)
-        .digest('hex');
-    } else {
-      deduplicationToken = signature;
-    }
+    const saveOutcome = await executeInTransaction(async (session) => {
+      const sessionOpts = session ? { session } : {};
 
-    const existingResult = await GameResult.findOne({ signature: deduplicationToken });
-    if (existingResult) {
-      return res.status(400).json({
-        error: 'This result has already been submitted.'
-      });
-    }
+      // Duplicate prevention
+      let deduplicationToken;
+      if (isTelegramAuth) {
+        deduplicationToken = crypto
+          .createHash('sha256')
+          .update(`${walletLower}:${Math.floor(score)}:${Math.floor(distance)}:${timestamp}`)
+          .digest('hex');
+      } else {
+        deduplicationToken = signature;
+      }
 
-    // Save game result
-    const gameResult = new GameResult({
-      wallet: walletLower,
-      score: Math.floor(score),
-      distance: Math.floor(distance),
-      goldCoins: coins.gold,
-      silverCoins: coins.silver,
-      signature: deduplicationToken,
-      timestamp,
-      ipAddress: req.ip,
-      verified: true
-    });
+      const existingResult = await GameResult.findOne({ signature: deduplicationToken }, null, sessionOpts);
+      if (existingResult) {
+        const err = new Error('This result has already been submitted.');
+        err.status = 400;
+        throw err;
+      }
 
-    await gameResult.save();
-
-    // Update player stats
-    let player = await Player.findOne({ wallet: walletLower });
-
-    if (!player) {
-      player = new Player({
+      const gameResult = new GameResult({
         wallet: walletLower,
-        bestScore: Math.floor(score),
-        bestDistance: Math.floor(distance),
-        totalGoldCoins: coins.gold,
-        totalSilverCoins: coins.silver,
-        gamesPlayed: 1,
-        gameHistory: [{
+        score: Math.floor(score),
+        distance: Math.floor(distance),
+        goldCoins: coins.gold,
+        silverCoins: coins.silver,
+        signature: deduplicationToken,
+        timestamp,
+        ipAddress: req.ip,
+        verified: true
+      });
+
+      await gameResult.save(sessionOpts);
+
+      let player = await Player.findOne({ wallet: walletLower }, null, sessionOpts);
+
+      if (!player) {
+        player = new Player({
+          wallet: walletLower,
+          bestScore: Math.floor(score),
+          bestDistance: Math.floor(distance),
+          totalGoldCoins: coins.gold,
+          totalSilverCoins: coins.silver,
+          gamesPlayed: 1,
+          gameHistory: [{
+            score: Math.floor(score),
+            distance: Math.floor(distance),
+            goldCoins: coins.gold,
+            silverCoins: coins.silver,
+            timestamp: new Date()
+          }]
+        });
+      } else {
+        if (Math.floor(score) > player.bestScore) {
+          player.bestScore = Math.floor(score);
+        }
+
+        if (Math.floor(distance) > player.bestDistance) {
+          player.bestDistance = Math.floor(distance);
+        }
+
+        player.totalGoldCoins += coins.gold;
+        player.totalSilverCoins += coins.silver;
+        player.gamesPlayed += 1;
+
+        player.gameHistory.push({
           score: Math.floor(score),
           distance: Math.floor(distance),
           goldCoins: coins.gold,
           silverCoins: coins.silver,
           timestamp: new Date()
-        }]
-      });
-    } else {
-      if (Math.floor(score) > player.bestScore) {
-        console.log(`📈 New best score: ${Math.floor(score)} (was ${player.bestScore})`);
-        player.bestScore = Math.floor(score);
+        });
+
+        if (player.gameHistory.length > 100) {
+          player.gameHistory.shift();
+        }
       }
 
-      if (Math.floor(distance) > player.bestDistance) {
-        console.log(`📈 New best distance: ${Math.floor(distance)} (was ${player.bestDistance})`);
-        player.bestDistance = Math.floor(distance);
-      }
+      const totalScore = player.gameHistory.reduce((sum, game) => sum + (game.score || 0), 0);
+      const averageScore = player.gameHistory.length > 0
+        ? Math.round(totalScore / player.gameHistory.length)
+        : 0;
 
-      player.totalGoldCoins += coins.gold;
-      player.totalSilverCoins += coins.silver;
-      player.gamesPlayed += 1;
+      player.averageScore = averageScore;
+      player.scoreToAverageRatio = averageScore > 0
+        ? Number((player.bestScore / averageScore).toFixed(2))
+        : null;
 
-      player.gameHistory.push({
-        score: Math.floor(score),
-        distance: Math.floor(distance),
-        goldCoins: coins.gold,
-        silverCoins: coins.silver,
-        timestamp: new Date()
-      });
+      const suspiciousThreshold = 4.5;
+      player.suspiciousScorePattern = Boolean(
+        player.scoreToAverageRatio
+        && player.gamesPlayed >= 10
+        && player.scoreToAverageRatio >= suspiciousThreshold
+      );
 
-      if (player.gameHistory.length > 100) {
-        player.gameHistory.shift();
-      }
-    }
+      if (player.suspiciousScorePattern) {
+        markSuspicious('score_peak_vs_average');
+        await logSecurityEvent({
+          wallet: walletLower,
+          eventType: 'suspicious_score_pattern',
+          route: req.path,
+          ipAddress: req.ip,
+          details: {
+            bestScore: player.bestScore,
+            averageScore: player.averageScore,
+            scoreToAverageRatio: player.scoreToAverageRatio
+          }
+        });
 
-    const totalScore = player.gameHistory.reduce((sum, game) => sum + (game.score || 0), 0);
-    const averageScore = player.gameHistory.length > 0
-      ? Math.round(totalScore / player.gameHistory.length)
-      : 0;
-
-    player.averageScore = averageScore;
-    player.scoreToAverageRatio = averageScore > 0
-      ? Number((player.bestScore / averageScore).toFixed(2))
-      : null;
-
-    const suspiciousThreshold = 4.5;
-    player.suspiciousScorePattern = Boolean(
-      player.scoreToAverageRatio &&
-      player.gamesPlayed >= 10 &&
-      player.scoreToAverageRatio >= suspiciousThreshold
-    );
-
-    if (player.suspiciousScorePattern) {
-      markSuspicious('score_peak_vs_average');
-      await logSecurityEvent({
-        wallet: walletLower,
-        eventType: 'suspicious_score_pattern',
-        route: req.path,
-        ipAddress: req.ip,
-        details: {
+        logger.warn({
+          wallet: walletLower,
           bestScore: player.bestScore,
           averageScore: player.averageScore,
-          scoreToAverageRatio: player.scoreToAverageRatio
-        }
-      });
+          ratio: player.scoreToAverageRatio
+        }, 'Suspicious score pattern detected');
+      }
 
-      logger.warn({
-        wallet: walletLower,
+      player.updatedAt = new Date();
+      await player.save(sessionOpts);
+
+      return {
         bestScore: player.bestScore,
-        averageScore: player.averageScore,
-        ratio: player.scoreToAverageRatio
-      }, 'Suspicious score pattern detected');
-    }
-
-    player.updatedAt = new Date();
-    await player.save();
-
-    console.log(`✅ Result saved (VERIFIED): ${walletLower}`);
-    console.log(`   Best score: ${player.bestScore}, Best distance: ${player.bestDistance}`);
-    console.log(`   Total Gold: ${player.totalGoldCoins}, Total Silver: ${player.totalSilverCoins}`);
+        averageScore: player.averageScore || 0,
+        scoreToAverageRatio: player.scoreToAverageRatio || null,
+        suspiciousScorePattern: player.suspiciousScorePattern || false,
+        bestDistance: player.bestDistance,
+        totalGoldCoins: player.totalGoldCoins,
+        totalSilverCoins: player.totalSilverCoins,
+        gamesPlayed: player.gamesPlayed
+      };
+    });
 
     res.json({
       success: true,
       message: 'Result saved successfully with valid signature',
-      bestScore: player.bestScore,
-      averageScore: player.averageScore || 0,
-      scoreToAverageRatio: player.scoreToAverageRatio || null,
-      suspiciousScorePattern: player.suspiciousScorePattern || false,
-      bestDistance: player.bestDistance,
-      totalGoldCoins: player.totalGoldCoins,
-      totalSilverCoins: player.totalSilverCoins,
-      gamesPlayed: player.gamesPlayed
+      bestScore: saveOutcome.bestScore,
+      averageScore: saveOutcome.averageScore,
+      scoreToAverageRatio: saveOutcome.scoreToAverageRatio,
+      suspiciousScorePattern: saveOutcome.suspiciousScorePattern,
+      bestDistance: saveOutcome.bestDistance,
+      totalGoldCoins: saveOutcome.totalGoldCoins,
+      totalSilverCoins: saveOutcome.totalSilverCoins,
+      gamesPlayed: saveOutcome.gamesPlayed
     });
 
   } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ error: error.message });
+    }
+
     logger.error({ err: error }, 'POST /save error');
     res.status(500).json({ error: 'Server error' });
   }
