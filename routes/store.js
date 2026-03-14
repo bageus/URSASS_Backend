@@ -9,6 +9,7 @@ const { writeLimiter, readLimiter } = require('../middleware/rateLimiter');
 const SecurityEvent = require('../models/SecurityEvent');
 const logger = require('../utils/logger');
 const { markSuspicious } = require('../middleware/requestMetrics');
+const { executeInTransaction } = require('../utils/transaction');
 
 
 async function logSecurityEvent({ wallet = null, eventType, route, ipAddress, details = {} }) {
@@ -133,32 +134,29 @@ router.post('/buy', writeLimiter, async (req, res) => {
     const walletLower = wallet.toLowerCase();
 
     const recentBuyCount = await SecurityEvent.countDocuments({
-          wallet: walletLower,
-          eventType: 'purchase_attempt',
-          createdAt: { $gte: new Date(Date.now() - 2 * 60 * 1000) }
-        });
-    
-        if (recentBuyCount >= 12) {
-          markSuspicious('rapid_purchases');
-          await logSecurityEvent({
-            wallet: walletLower,
-            eventType: 'suspicious_rapid_purchases',
-            route: req.path,
-            ipAddress: req.ip,
-            details: { recentBuyCount }
-          });
-          logger.warn({ wallet: walletLower, recentBuyCount }, 'Suspicious rapid purchase pattern');
-        }
+           wallet: walletLower,
+      eventType: 'purchase_attempt',
+      createdAt: { $gte: new Date(Date.now() - 2 * 60 * 1000) }
+    });
 
-    
+    if (recentBuyCount >= 12) {
+      markSuspicious('rapid_purchases');
+      await logSecurityEvent({
+        wallet: walletLower,
+        eventType: 'suspicious_rapid_purchases',
+        route: req.path,
+        ipAddress: req.ip,
+        details: { recentBuyCount }
+      });
+      logger.warn({ wallet: walletLower, recentBuyCount }, 'Suspicious rapid purchase pattern');
+    }
+
     const config = UPGRADES_CONFIG[upgradeKey];
     if (!config) {
       return res.status(400).json({ error: `Unknown upgrade: ${upgradeKey}` });
     }
 
-    // Timestamp validation
     const ts = typeof timestamp === 'number' ? timestamp : parseInt(timestamp, 10);
-
     if (!ts || isNaN(ts)) {
       return res.status(400).json({ error: 'Invalid timestamp format' });
     }
@@ -170,150 +168,168 @@ router.post('/buy', writeLimiter, async (req, res) => {
     }
 
     if (isTelegramAuth) {
-      // Verify that the telegramId matches the claimed primaryId (wallet) via AccountLink
       const link = await AccountLink.findOne({ telegramId: String(telegramId) });
       if (!link || link.primaryId !== walletLower) {
         return res.status(401).json({ error: 'Telegram identity verification failed' });
       }
     } else {
-      // Signature verification
-      const message = `Buy upgrade\nWallet: ${walletLower}\nUpgrade: ${upgradeKey}\nTier: ${tier !== undefined ? tier : 0}\nTimestamp: ${ts}`;
+      const message = `Buy upgrade
+Wallet: ${walletLower}
+Upgrade: ${upgradeKey}
+Tier: ${tier !== undefined ? tier : 0}
+Timestamp: ${ts}`;
       const isValid = verifySignature(message, signature, walletLower);
-
       if (!isValid) {
         return res.status(401).json({ error: 'Invalid signature' });
       }
     }
 
-    // Player data
-    const player = await Player.findOne({ wallet: walletLower });
-    if (!player) {
-      return res.status(404).json({ error: 'Player not found. Play at least one game first.' });
-    }
+    const result = await executeInTransaction(async (session) => {
+      const sessionOpts = session ? { session } : {};
 
-    let upgrades = await PlayerUpgrades.findOne({ wallet: walletLower });
-    if (!upgrades) {
-      upgrades = new PlayerUpgrades({ wallet: walletLower });
-    }
-
-    // Refresh free rides
-    upgrades.refreshFreeRides();
-
-    // === PURCHASE LOGIC BY TYPE ===
-
-    if (config.type === "tiered") {
-      const currentLevel = upgrades[upgradeKey] || 0;
-
-      if (tier !== currentLevel) {
-        return res.status(400).json({
-          error: `Must buy tier ${currentLevel}. Current: ${currentLevel}, requested: ${tier}`
-        });
+      const player = await Player.findOne({ wallet: walletLower }, null, sessionOpts);
+      if (!player) {
+        const err = new Error('Player not found. Play at least one game first.');
+        err.status = 404;
+        throw err;
       }
+
+     let upgrades = await PlayerUpgrades.findOne({ wallet: walletLower }, null, sessionOpts);
+      if (!upgrades) {
+        upgrades = new PlayerUpgrades({ wallet: walletLower });
+      }
+
+      upgrades.refreshFreeRides();
+
+     if (config.type === 'tiered') {
+        const currentLevel = upgrades[upgradeKey] || 0;
+
+        if (tier !== currentLevel) {
+          const err = new Error(`Must buy tier ${currentLevel}. Current: ${currentLevel}, requested: ${tier}`);
+          err.status = 400;
+          throw err;
+        }
 
       if (currentLevel >= config.maxLevel) {
-        return res.status(400).json({ error: 'Already at max level' });
-      }
-
-      const price = config.prices[tier];
-
-      if (config.currency === "silver") {
-        if (player.totalSilverCoins < price) {
-          return res.status(400).json({ error: `Not enough silver. Need: ${price}, have: ${player.totalSilverCoins}` });
+          const err = new Error('Already at max level');
+          err.status = 400;
+          throw err;
         }
-        player.totalSilverCoins -= price;
-      } else {
+
+    const price = config.prices[tier];
+        if (config.currency === 'silver') {
+          if (player.totalSilverCoins < price) {
+            const err = new Error(`Not enough silver. Need: ${price}, have: ${player.totalSilverCoins}`);
+            err.status = 400;
+            throw err;
+          }
+          player.totalSilverCoins -= price;
+        } else {
+          if (player.totalGoldCoins < price) {
+            const err = new Error(`Not enough gold. Need: ${price}, have: ${player.totalGoldCoins}`);
+            err.status = 400;
+            throw err;
+          }
+          player.totalGoldCoins -= price;
+        }
+
+       upgrades[upgradeKey] = currentLevel + 1;
+      } else if (config.type === 'permanent') {
+        const currentLevel = upgrades[upgradeKey] || 0;
+        if (currentLevel >= config.maxLevel) {
+          const err = new Error('Already purchased (permanent)');
+          err.status = 400;
+          throw err;
+        }
+
+       const price = config.prices[0];
+        if (config.currency === 'gold') {
+          if (player.totalGoldCoins < price) {
+            const err = new Error(`Not enough gold. Need: ${price}, have: ${player.totalGoldCoins}`);
+            err.status = 400;
+            throw err;
+          }
+          player.totalGoldCoins -= price;
+        } else {
+          if (player.totalSilverCoins < price) {
+            const err = new Error(`Not enough silver. Need: ${price}, have: ${player.totalSilverCoins}`);
+            err.status = 400;
+            throw err;
+          }
+          player.totalSilverCoins -= price;
+        }
+
+        upgrades[upgradeKey] = 1;
+      } else if (config.type === 'rides') {
+        const price = config.price;
         if (player.totalGoldCoins < price) {
-          return res.status(400).json({ error: `Not enough gold. Need: ${price}, have: ${player.totalGoldCoins}` });
+          const err = new Error(`Not enough gold. Need: ${price}, have: ${player.totalGoldCoins}`);
+          err.status = 400;
+          throw err;
         }
+        
         player.totalGoldCoins -= price;
-      }
-
-      upgrades[upgradeKey] = currentLevel + 1;
-      console.log(`🛒 ${walletLower} bought ${upgradeKey} tier ${currentLevel + 1}/${config.maxLevel} for ${price} ${config.currency}`);
-
-    } else if (config.type === "permanent") {
-      const currentLevel = upgrades[upgradeKey] || 0;
-
-      if (currentLevel >= config.maxLevel) {
-        return res.status(400).json({ error: 'Already purchased (permanent)' });
-      }
-
-      const price = config.prices[0];
-
-      if (config.currency === "gold") {
-        if (player.totalGoldCoins < price) {
-          return res.status(400).json({ error: `Not enough gold. Need: ${price}, have: ${player.totalGoldCoins}` });
-        }
-        player.totalGoldCoins -= price;
+        upgrades.paidRidesRemaining += config.amount;
       } else {
-        if (player.totalSilverCoins < price) {
-          return res.status(400).json({ error: `Not enough silver. Need: ${price}, have: ${player.totalSilverCoins}` });
-        }
-        player.totalSilverCoins -= price;
+        const err = new Error('Unknown upgrade type');
+        err.status = 400;
+        throw err;
       }
 
-      upgrades[upgradeKey] = 1;
-      console.log(`🛒 ${walletLower} bought permanent ${upgradeKey} for ${price} ${config.currency}`);
+      upgrades.updatedAt = new Date();
+      player.updatedAt = new Date();
 
-    } else if (config.type === "rides") {
-      const price = config.price;
-
-      if (player.totalGoldCoins < price) {
-        return res.status(400).json({ error: `Not enough gold. Need: ${price}, have: ${player.totalGoldCoins}` });
-      }
-
-      player.totalGoldCoins -= price;
-      upgrades.paidRidesRemaining += config.amount;
-
-      console.log(`🛒 ${walletLower} bought ${config.amount} rides for ${price} gold. Total paid rides: ${upgrades.paidRidesRemaining}`);
-
-    } else {
-      return res.status(400).json({ error: 'Unknown upgrade type' });
-    }
-
-    // Save
-    upgrades.updatedAt = new Date();
-    player.updatedAt = new Date();
-
-    await upgrades.save();
-    await player.save();
-
-    const effects = calculateEffects(upgrades);
-
-    // Rides data
-    const nowDate = new Date();
-    const resetAt = upgrades.freeRidesResetAt || nowDate;
-    const msUntilReset = Math.max(0, (8 * 60 * 60 * 1000) - (nowDate - resetAt));
+    await upgrades.save(sessionOpts);
+    await player.save(sessionOpts);
 
     await logSecurityEvent({
-      wallet: walletLower,
-      eventType: 'purchase_attempt',
-      route: req.path,
-      ipAddress: req.ip,
-      details: { upgradeKey, tier: tier ?? 0, authMode: authMode || 'wallet' }
+        wallet: walletLower,
+        eventType: 'purchase_attempt',
+        route: req.path,
+        ipAddress: req.ip,
+        details: { upgradeKey, tier: tier ?? 0, authMode: authMode || 'wallet' }
+      });
+
+    const effects = calculateEffects(upgrades);
+      const nowDate = new Date();
+      const resetAt = upgrades.freeRidesResetAt || nowDate;
+      const msUntilReset = Math.max(0, (8 * 60 * 60 * 1000) - (nowDate - resetAt));
+
+    return {
+        gold: player.totalGoldCoins,
+        silver: player.totalSilverCoins,
+        freeRides: upgrades.freeRidesRemaining,
+        paidRides: upgrades.paidRidesRemaining,
+        totalRides: upgrades.getTotalRides(),
+        resetInMs: upgrades.freeRidesRemaining < 3 ? msUntilReset : 0,
+        resetInFormatted: formatTimeLeft(msUntilReset),
+        activeEffects: effects
+      };
     });
 
     logger.info({ wallet: walletLower, upgradeKey, tier: tier ?? 0 }, 'Purchase processed');
-
 
     res.json({
       success: true,
       message: `Purchased ${upgradeKey}`,
       balance: {
-        gold: player.totalGoldCoins,
-        silver: player.totalSilverCoins
+        gold: result.gold,
+        silver: result.silver
       },
       rides: {
-        freeRides: upgrades.freeRidesRemaining,
-        paidRides: upgrades.paidRidesRemaining,
-        totalRides: upgrades.getTotalRides(),
-        resetInMs: upgrades.freeRidesRemaining < 3 ? msUntilReset : 0,
-        resetInFormatted: formatTimeLeft(msUntilReset)
+        freeRides: result.freeRides,
+        paidRides: result.paidRides,
+        totalRides: result.totalRides,
+        resetInMs: result.resetInMs,
+        resetInFormatted: result.resetInFormatted
       },
-      activeEffects: effects
+      activeEffects: result.activeEffects
     });
-
   } catch (error) {
+       if (error.status) {
+      return res.status(error.status).json({ error: error.message });
+    }
+
     logger.error({ err: error }, 'POST /buy error');
     res.status(500).json({ error: 'Server error' });
   }
@@ -325,11 +341,53 @@ router.post('/buy', writeLimiter, async (req, res) => {
  */
 const consumeRideHandler = async (req, res) => {
   try {
-    const { wallet, rideSessionId } = req.body;
+    const { wallet, rideSessionId, signature, timestamp, authMode, telegramId } = req.body;
     if (!wallet) return res.status(400).json({ error: 'Missing wallet' });
 
     const walletLower = wallet.toLowerCase();
     const isLegacyUseRideRoute = req.path === '/use-ride';
+     const isTelegramAuth = authMode === 'telegram';
+    
+    
+        const allowLegacyUnauth = process.env.LEGACY_USE_RIDE_NO_AUTH === 'true' && isLegacyUseRideRoute;
+    
+        if (!allowLegacyUnauth) {
+          const ts = typeof timestamp === 'number' ? timestamp : parseInt(timestamp, 10);
+          if (!ts || isNaN(ts)) {
+            return res.status(400).json({ error: 'Invalid timestamp format' });
+          }
+    
+          const timeDiff = Math.abs(Date.now() - ts);
+          if (timeDiff > 10 * 60 * 1000) {
+            return res.status(400).json({ error: `Invalid timestamp. Diff: ${timeDiff}ms` });
+          }
+    
+          if (isTelegramAuth) {
+            if (!telegramId) {
+              return res.status(400).json({ error: 'Missing telegramId for telegram auth mode' });
+            }
+    
+            const link = await AccountLink.findOne({ telegramId: String(telegramId) });
+            if (!link || link.primaryId !== walletLower) {
+              return res.status(401).json({ error: 'Telegram identity verification failed' });
+            }
+          } else {
+            if (!signature) {
+              return res.status(400).json({ error: 'Missing signature' });
+            }
+    
+            const message = `Consume ride
+    Wallet: ${walletLower}
+    RideSessionId: ${rideSessionId || 'legacy'}
+    Timestamp: ${ts}`;
+            const isValid = verifySignature(message, signature, walletLower);
+            if (!isValid) {
+              return res.status(401).json({ error: 'Invalid signature' });
+            }
+          }
+        } else {
+          logger.warn({ wallet: walletLower }, 'Legacy unauthenticated /use-ride access enabled by env');
+        }
 
     let sessionId = null;
     if (rideSessionId && typeof rideSessionId === 'string' && rideSessionId.trim().length >= 8) {
