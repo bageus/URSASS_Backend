@@ -14,6 +14,18 @@ const AccountLink = require('../models/AccountLink');
 const LinkCode = require('../models/LinkCode');
 const SecurityEvent = require('../models/SecurityEvent');
 const logger = require('../utils/logger');
+const { issueAuthChallenge } = require('../utils/authChallenge');
+
+const MAX_AUTH_TIME_DIFF = Number(process.env.MAX_AUTH_TIMESTAMP_DIFF_MS || 3 * 60 * 1000);
+
+function isFreshTimestamp(timestamp) {
+  const ts = typeof timestamp === 'number' ? timestamp : parseInt(timestamp, 10);
+  if (!ts || Number.isNaN(ts)) {
+    return false;
+  }
+
+  return Math.abs(Date.now() - ts) <= MAX_AUTH_TIME_DIFF;
+}
 
 async function logSecurityEvent({ wallet = null, eventType, route, ipAddress, details = {} }) {
   try {
@@ -41,7 +53,12 @@ router.post('/auth/telegram', authLimiter, async (req, res) => {
     }
 
     const account = await getOrCreateTelegramAccount(telegramId);
-
+    const challenge = await issueAuthChallenge({
+        type: 'telegram_result_submit',
+        primaryId: account.primaryId,
+        telegramId: String(telegramId),
+        ttlMs: Number(process.env.TELEGRAM_RESULT_CHALLENGE_TTL_MS || 2 * 60 * 1000)
+      });
     logger.info({ telegramId: String(telegramId), primaryId: account.primaryId }, 'Telegram auth success');
 
     res.json({
@@ -50,7 +67,9 @@ router.post('/auth/telegram', authLimiter, async (req, res) => {
       telegramId: account.telegramId,
       wallet: account.wallet,
       isLinked: account.isLinked,
-      displayName: firstName || username || `TG#${telegramId}`
+      displayName: firstName || username || `TG#${telegramId}`,
+      resultChallengeToken: challenge.token,
+      resultChallengeExpiresInSeconds: challenge.expiresInSeconds
     });
   } catch (error) {
     logger.error({ err: error }, 'POST /auth/telegram error');
@@ -67,6 +86,10 @@ router.post('/auth/wallet', authLimiter, async (req, res) => {
     }
 
     const walletLower = wallet.toLowerCase();
+    if (!isFreshTimestamp(timestamp)) {
+      return res.status(400).json({ error: 'Timestamp is too old or invalid' });
+    }
+
     const message = `Auth wallet\nWallet: ${walletLower}\nTimestamp: ${timestamp}`;
     const isValid = verifySignature(message, signature, walletLower);
     
@@ -226,6 +249,10 @@ router.post('/link/wallet', writeLimiter, async (req, res) => {
     }
 
     const walletLower = wallet.toLowerCase();
+    if (!isFreshTimestamp(timestamp)) {
+      return res.status(400).json({ error: 'Timestamp is too old or invalid' });
+    }
+    
     const message = `Link wallet\nWallet: ${walletLower}\nPrimaryId: ${primaryId}\nTimestamp: ${timestamp}`;
     const isValid = verifySignature(message, signature, walletLower);
     
