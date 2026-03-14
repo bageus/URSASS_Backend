@@ -1,4 +1,5 @@
 const ethers = require('ethers');
+const logger = require('./logger');
 
 /**
  * ✅ Верифицирует EIP-191 подпись
@@ -15,7 +16,7 @@ function verifySignature(message, signature, wallet) {
     // ✅ Сравниваем с адресом кошелька (в lowercase для надёжности)
     return recoveredAddress.toLowerCase() === wallet.toLowerCase();
   } catch(error) {
-    console.error('❌ Ошибка верификации подписи:', error.message);
+    logger.warn({ err: error.message }, 'Signature verification error');
     return false;
   }
 }
