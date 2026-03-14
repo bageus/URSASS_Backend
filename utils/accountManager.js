@@ -1,4 +1,5 @@
 const AccountLink = require('../models/AccountLink');
+const logger = require('./logger');
 const Player = require('../models/Player');
 const PlayerUpgrades = require('../models/PlayerUpgrades');
 
@@ -236,7 +237,7 @@ async function mergeAccounts(primaryIdA, primaryIdB) {
     slavePlayer = playerA;
   }
 
-  console.log(`🔗 MERGE: Master=${masterLink.primaryId} (score=${masterPlayer.bestScore}), Slave=${slaveLink.primaryId} (score=${slavePlayer.bestScore})`);
+ logger.info({ master: masterLink.primaryId, slave: slaveLink.primaryId, masterScore: masterPlayer.bestScore, slaveScore: slavePlayer.bestScore }, 'Merging linked accounts');
 
   // Переносим идентификаторы с slave на master
   if (slaveLink.telegramId && !masterLink.telegramId) {
@@ -288,7 +289,7 @@ async function mergeAccounts(primaryIdA, primaryIdB) {
   // Сохраняем master
   await masterLink.save();
 
-  console.log(`✅ MERGE COMPLETE: Master=${masterLink.primaryId}, TG=${masterLink.telegramId}, Wallet=${masterLink.wallet}`);
+  logger.info({ master: masterLink.primaryId, telegramId: masterLink.telegramId, wallet: masterLink.wallet }, 'Merge complete');
 
   return {
     success: true,
