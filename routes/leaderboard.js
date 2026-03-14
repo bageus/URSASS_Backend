@@ -12,6 +12,20 @@ const { markSuspicious } = require('../middleware/requestMetrics');
 const { executeInTransaction } = require('../utils/transaction');
 const { consumeAuthChallenge } = require('../utils/authChallenge');
 
+const DB_QUERY_MAX_TIME_MS = Number(process.env.DB_QUERY_MAX_TIME_MS || 5000);
+const LEADERBOARD_TOP_TIMEOUT_MS = Number(process.env.LEADERBOARD_TOP_TIMEOUT_MS || 7000);
+
+function withTimeout(promise, timeoutMs, timeoutMessage = 'Operation timed out') {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      const err = new Error(timeoutMessage);
+      err.status = 503;
+      setTimeout(() => reject(err), timeoutMs);
+    })
+  ]);
+}
+
 
 async function logSecurityEvent({ wallet = null, eventType, route, ipAddress, details = {} }) {
   try {
@@ -61,46 +75,49 @@ router.get('/top', readLimiter, async (req, res) => {
   try {
     const wallet = req.query.wallet?.toLowerCase();
 
-    const topPlayers = await Player.find({ bestScore: { $gt: 0 } })
-      .sort({ bestScore: -1 })
-      .limit(10)
-      .select('wallet bestScore bestDistance averageScore scoreToAverageRatio totalGoldCoins totalSilverCoins gamesPlayed');
+    const payload = await withTimeout((async () => {
+      const topPlayers = await Player.find({ bestScore: { $gt: 0 } })
+        .sort({ bestScore: -1 })
+        .limit(10)
+        .maxTimeMS(DB_QUERY_MAX_TIME_MS)
+        .select('wallet bestScore bestDistance averageScore scoreToAverageRatio totalGoldCoins totalSilverCoins gamesPlayed')
+        .lean();
 
-    // Fetch AccountLink data for all top players to build displayName
-    const wallets = topPlayers.map(p => p.wallet);
-    const links = await AccountLink.find({ primaryId: { $in: wallets } });
-    const linkMap = {};
-    for (const link of links) {
-      linkMap[link.primaryId] = link;
-    }
+      // Fetch AccountLink data for all top players to build displayName
+      const wallets = topPlayers.map((player) => player.wallet);
+      const links = wallets.length
+        ? await AccountLink.find({ primaryId: { $in: wallets } })
+          .maxTimeMS(DB_QUERY_MAX_TIME_MS)
+          .lean()
+        : [];
 
-    let playerPosition = null;
-    if (wallet) {
-      const playerData = await Player.findOne({ wallet });
-      if (playerData) {
-        const playerLink = await AccountLink.findOne({ primaryId: wallet });
+      const linkMap = {};
+      for (const link of links) {
+        linkMap[link.primaryId] = link;
+      }
 
-        if (playerData.bestScore > 0) {
-          const position = await Player.countDocuments({
-            bestScore: { $gt: playerData.bestScore }
-          });
+      let playerPosition = null;
+      if (wallet) {
+        const [playerData, playerLink] = await Promise.all([
+          Player.findOne({ wallet })
+            .maxTimeMS(DB_QUERY_MAX_TIME_MS)
+            .lean(),
+          AccountLink.findOne({ primaryId: wallet })
+            .maxTimeMS(DB_QUERY_MAX_TIME_MS)
+            .lean()
+        ]);
+
+        if (playerData) {
+          let position = null;
+          if (playerData.bestScore > 0) {
+            const rankHigherCount = await Player.countDocuments({
+              bestScore: { $gt: playerData.bestScore }
+            }).maxTimeMS(DB_QUERY_MAX_TIME_MS);
+            position = rankHigherCount + 1;
+          }
 
           playerPosition = {
-            position: position + 1,
-            wallet: playerData.wallet,
-            displayName: buildDisplayName(playerLink, playerData.wallet),
-            bestScore: playerData.bestScore,
-            averageScore: playerData.averageScore || 0,
-            scoreToAverageRatio: playerData.scoreToAverageRatio || null,
-            bestDistance: playerData.bestDistance,
-            totalGoldCoins: playerData.totalGoldCoins,
-            totalSilverCoins: playerData.totalSilverCoins,
-            gamesPlayed: playerData.gamesPlayed
-          };
-        } else {
-          // Player has 0 score — no position
-          playerPosition = {
-            position: null,
+            position,
             wallet: playerData.wallet,
             displayName: buildDisplayName(playerLink, playerData.wallet),
             bestScore: playerData.bestScore,
@@ -113,26 +130,32 @@ router.get('/top', readLimiter, async (req, res) => {
           };
         }
       }
-    }
 
-    res.json({
-      leaderboard: topPlayers.map((player, index) => ({
-        position: index + 1,
-        wallet: player.wallet,
-        displayName: buildDisplayName(linkMap[player.wallet], player.wallet),
-        bestScore: player.bestScore,
-        averageScore: player.averageScore || 0,
-        scoreToAverageRatio: player.scoreToAverageRatio || null,
-        bestDistance: player.bestDistance,
-        totalGoldCoins: player.totalGoldCoins,
-        totalSilverCoins: player.totalSilverCoins,
-        gamesPlayed: player.gamesPlayed
-      })),
-      playerPosition
-    });
+      return {
+        leaderboard: topPlayers.map((player, index) => ({
+          position: index + 1,
+          wallet: player.wallet,
+          displayName: buildDisplayName(linkMap[player.wallet], player.wallet),
+          bestScore: player.bestScore,
+          averageScore: player.averageScore || 0,
+          scoreToAverageRatio: player.scoreToAverageRatio || null,
+          bestDistance: player.bestDistance,
+          totalGoldCoins: player.totalGoldCoins,
+          totalSilverCoins: player.totalSilverCoins,
+          gamesPlayed: player.gamesPlayed
+        })),
+        playerPosition
+      };
+    })(), LEADERBOARD_TOP_TIMEOUT_MS, 'Leaderboard request timed out');
+
+    res.json(payload);
 
   } catch (error) {
-    logger.error({ err: error }, 'GET /top error');
+    logger.error({ err: error, timeoutMs: LEADERBOARD_TOP_TIMEOUT_MS }, 'GET /top error');
+    if (error.status) {
+      return res.status(error.status).json({ error: error.message });
+    }
+
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -140,7 +163,7 @@ router.get('/top', readLimiter, async (req, res) => {
 // ✅ POST: Save game result with signature verification
 router.post('/save', saveResultLimiter, async (req, res) => {
   try {
-        const {
+    const {
       wallet,
       score,
       distance,
@@ -156,9 +179,9 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     const isTelegramAuth = authMode === 'telegram';
 
     if (isTelegramAuth) {
-       if (!wallet || score === undefined || distance === undefined || !telegramId || !timestamp || !challengeToken) {
+      if (!wallet || score === undefined || distance === undefined || !telegramId || !timestamp || !challengeToken) {
         return res.status(400).json({
-          error: 'Missing required fields: wallet, score, distance, telegramId, timestamp, challengeToken
+          error: 'Missing required fields: wallet, score, distance, telegramId, timestamp, challengeToken'
         });
       }
     } else {
@@ -228,7 +251,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
 
     if (isTelegramAuth) {
       // Verify that the telegramId matches the claimed primaryId (wallet) via AccountLink
-            const link = await AccountLink.findOne({ telegramId: String(telegramId) });
+      const link = await AccountLink.findOne({ telegramId: String(telegramId) });
       if (!link || link.primaryId !== walletLower) {
         return res.status(401).json({ error: 'Telegram identity verification failed' });
       }
