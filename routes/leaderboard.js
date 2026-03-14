@@ -10,6 +10,7 @@ const SecurityEvent = require('../models/SecurityEvent');
 const logger = require('../utils/logger');
 const { markSuspicious } = require('../middleware/requestMetrics');
 const { executeInTransaction } = require('../utils/transaction');
+const { consumeAuthChallenge } = require('../utils/authChallenge');
 
 
 async function logSecurityEvent({ wallet = null, eventType, route, ipAddress, details = {} }) {
@@ -131,7 +132,7 @@ router.get('/top', readLimiter, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ GET /top error:', error);
+    logger.error({ err: error }, 'GET /top error');
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -139,14 +140,25 @@ router.get('/top', readLimiter, async (req, res) => {
 // ✅ POST: Save game result with signature verification
 router.post('/save', saveResultLimiter, async (req, res) => {
   try {
-    const { wallet, score, distance, goldCoins, silverCoins, signature, timestamp, authMode, telegramId } = req.body;
+        const {
+      wallet,
+      score,
+      distance,
+      goldCoins,
+      silverCoins,
+      signature,
+      timestamp,
+      authMode,
+      telegramId,
+      challengeToken
+    } = req.body;
 
     const isTelegramAuth = authMode === 'telegram';
 
     if (isTelegramAuth) {
-      if (!wallet || score === undefined || distance === undefined || !telegramId || !timestamp) {
+       if (!wallet || score === undefined || distance === undefined || !telegramId || !timestamp || !challengeToken) {
         return res.status(400).json({
-          error: 'Missing required fields: wallet, score, distance, telegramId, timestamp'
+          error: 'Missing required fields: wallet, score, distance, telegramId, timestamp, challengeToken
         });
       }
     } else {
@@ -196,7 +208,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     const timeDiff = Math.abs(now - ts);
     const MAX_TIME_DIFF = Number(process.env.MAX_RESULT_TIMESTAMP_DIFF_MS || 3 * 60 * 1000);
 
-    console.log(`⏰ Server time: ${now}, Client timestamp: ${ts}, Difference: ${timeDiff}ms`);
+    logger.debug({ now, ts, timeDiff }, 'Result timestamp check');
 
     if (timeDiff > MAX_TIME_DIFF) {
       markSuspicious('invalid_timestamp');
@@ -216,28 +228,39 @@ router.post('/save', saveResultLimiter, async (req, res) => {
 
     if (isTelegramAuth) {
       // Verify that the telegramId matches the claimed primaryId (wallet) via AccountLink
-      const link = await AccountLink.findOne({ telegramId: String(telegramId) });
+            const link = await AccountLink.findOne({ telegramId: String(telegramId) });
       if (!link || link.primaryId !== walletLower) {
         return res.status(401).json({ error: 'Telegram identity verification failed' });
       }
 
-      console.log(`✅ Telegram identity verified for ${walletLower}`);
+      const isChallengeValid = await consumeAuthChallenge({
+        token: challengeToken,
+        type: 'telegram_result_submit',
+        primaryId: walletLower,
+        telegramId: String(telegramId)
+      });
+
+      if (!isChallengeValid) {
+        return res.status(401).json({ error: 'Invalid or expired challenge token' });
+      }
+
+      logger.info({ wallet: walletLower, telegramId: String(telegramId) }, 'Telegram identity verified');
     } else {
       // Signature verification
       const messageToVerify = createMessageToVerify(walletLower, score, distance, timestamp);
 
-      console.log(`📝 Message for verification:\n${messageToVerify}`);
+      logger.debug({ wallet: walletLower, messageToVerify }, 'Verifying signed result');
       const isSignatureValid = verifySignature(messageToVerify, signature, walletLower);
 
       if (!isSignatureValid) {
-        console.warn(`❌ Invalid signature for ${walletLower}`);
+        logger.warn({ wallet: walletLower }, 'Invalid result signature');
         return res.status(401).json({
           error: 'Invalid signature. Result cannot be verified.',
           details: 'Your wallet signature does not match the submitted data.'
         });
       }
 
-      console.log(`✅ Signature valid for ${walletLower}`);
+      logger.info({ wallet: walletLower }, 'Result signature verified');
     }
 
     const saveOutcome = await executeInTransaction(async (session) => {
@@ -409,7 +432,7 @@ router.get('/verified-results/:wallet', readLimiter, async (req, res) => {
     res.json({ wallet, count: results.length, results });
 
   } catch (error) {
-    console.error('❌ GET /verified-results error:', error);
+    logger.error({ err: error }, 'GET /verified-results error');
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -462,7 +485,7 @@ router.get('/player/:wallet', readLimiter, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ GET /player error:', error);
+    logger.error({ err: error }, 'GET /player error');
     res.status(500).json({ error: 'Server error' });
   }
 });
