@@ -1,18 +1,6 @@
 const rateLimit = require('express-rate-limit');
 
 function parseClientIp(req) {
-  const forwarded = req.get('x-forwarded-for');
-  if (forwarded) {
-    const trusted = forwarded
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean)[0];
-
-    if (trusted) {
-      return trusted;
-    }
-  }
-
   return req.ip || req.connection?.remoteAddress || 'unknown';
 }
 
