@@ -1,0 +1,280 @@
+const express = require('express');
+const router = express.Router();
+const crypto = require('crypto');
+const {
+  getOrCreateTelegramAccount,
+  getOrCreateWalletAccount,
+  linkAccounts,
+  resolvePrimaryId
+} = require('../utils/accountManager');
+const { verifySignature } = require('../utils/verifySignature');
+const { readLimiter, writeLimiter } = require('../middleware/rateLimiter');
+const Player = require('../models/Player');
+const AccountLink = require('../models/AccountLink');
+const LinkCode = require('../models/LinkCode');
+
+/**
+ * Generate a random link code like "BEAR-A3F9K2"
+ */
+function generateLinkCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(crypto.randomInt(chars.length));
+  }
+  return code;
+}
+
+/**
+ * POST /api/account/auth/telegram
+ */
+router.post('/auth/telegram', readLimiter, async (req, res) => {
+  try {
+    const { telegramId, firstName, username } = req.body;
+
+    if (!telegramId) {
+      return res.status(400).json({ error: 'Missing telegramId' });
+    }
+
+    const account = await getOrCreateTelegramAccount(telegramId);
+
+    console.log(`📱 Telegram auth: ${telegramId} (${firstName || username || 'anon'}) → primaryId: ${account.primaryId}`);
+
+    res.json({
+      success: true,
+      primaryId: account.primaryId,
+      telegramId: account.telegramId,
+      wallet: account.wallet,
+      isLinked: account.isLinked,
+      displayName: firstName || username || `TG#${telegramId}`
+    });
+
+  } catch (error) {
+    console.error('❌ POST /auth/telegram error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * POST /api/account/auth/wallet
+ */
+router.post('/auth/wallet', readLimiter, async (req, res) => {
+  try {
+    const { wallet, signature, timestamp } = req.body;
+
+    if (!wallet || !signature || !timestamp) {
+      return res.status(400).json({ error: 'Missing wallet, signature, or timestamp' });
+    }
+
+    const walletLower = wallet.toLowerCase();
+
+    const message = `Auth wallet\nWallet: ${walletLower}\nTimestamp: ${timestamp}`;
+    const isValid = verifySignature(message, signature, walletLower);
+    if (!isValid) {
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
+
+    const account = await getOrCreateWalletAccount(walletLower);
+
+    // Look up the full AccountLink to get telegramUsername
+    const link = await AccountLink.findOne({ primaryId: account.primaryId });
+
+    console.log(`🔗 Wallet auth: ${walletLower} → primaryId: ${account.primaryId}`);
+
+    res.json({
+      success: true,
+      primaryId: account.primaryId,
+      telegramId: account.telegramId,
+      telegramUsername: link ? link.telegramUsername : null,
+      wallet: account.wallet,
+      isLinked: account.isLinked
+    });
+
+  } catch (error) {
+    console.error('❌ POST /auth/wallet error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * POST /api/account/link/request-code
+ * Generate a verification code for linking Telegram
+ */
+router.post('/link/request-code', writeLimiter, async (req, res) => {
+  try {
+    const { primaryId } = req.body;
+
+    if (!primaryId) {
+      return res.status(400).json({ error: 'Missing primaryId' });
+    }
+
+    const primaryIdLower = primaryId.toLowerCase();
+
+    const link = await AccountLink.findOne({ primaryId: primaryIdLower });
+    if (!link) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+
+    if (link.telegramId && link.wallet) {
+      return res.status(400).json({ error: 'Account already fully linked' });
+    }
+
+    if (!link.wallet) {
+      return res.status(400).json({ error: 'Only wallet accounts can link Telegram via code' });
+    }
+
+    // Delete old unused codes
+    await LinkCode.deleteMany({ primaryId: primaryIdLower, used: false });
+
+    // Generate unique code
+    let code;
+    let attempts = 0;
+    do {
+      code = generateLinkCode();
+      attempts++;
+      if (attempts > 10) {
+        return res.status(500).json({ error: 'Failed to generate unique code' });
+      }
+    } while (await LinkCode.findOne({ code }));
+
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    await new LinkCode({
+      primaryId: primaryIdLower,
+      code,
+      linkType: 'telegram',
+      expiresAt
+    }).save();
+
+    console.log(`🔑 Code generated: ${code} for ${primaryIdLower}`);
+
+    res.json({
+      success: true,
+      code,
+      expiresInSeconds: 600,
+      botUsername: process.env.TELEGRAM_BOT_USERNAME || 'Ursasstube_bot'
+    });
+
+  } catch (error) {
+    console.error('❌ POST /link/request-code error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * POST /api/account/link/verify-telegram
+ * Called by the Telegram bot when user sends a verification code
+ */
+router.post('/link/verify-telegram', async (req, res) => {
+  try {
+    const { telegramId, code, botSecret } = req.body;
+
+    if (!telegramId || !code) {
+      return res.status(400).json({ error: 'Missing telegramId or code' });
+    }
+
+    const expectedSecret = process.env.TELEGRAM_BOT_SECRET;
+    if (expectedSecret && botSecret !== expectedSecret) {
+      return res.status(401).json({ error: 'Invalid bot secret' });
+    }
+
+    const codeUpper = code.toUpperCase().trim();
+    const tgIdStr = String(telegramId);
+
+    const linkCode = await LinkCode.findOne({ code: codeUpper, used: false });
+
+    if (!linkCode) {
+      return res.status(404).json({
+        success: false,
+        error: 'Code not found or already used'
+      });
+    }
+
+    if (new Date() > linkCode.expiresAt) {
+      await LinkCode.deleteOne({ _id: linkCode._id });
+      return res.status(400).json({
+        success: false,
+        error: 'Code expired. Please request a new one.'
+      });
+    }
+
+    linkCode.used = true;
+    await linkCode.save();
+
+    const result = await linkAccounts(linkCode.primaryId, 'telegram', tgIdStr);
+
+    if (result.success) {
+      console.log(`✅ Telegram linked via bot: TG#${tgIdStr} → ${linkCode.primaryId}`);
+    } else {
+      console.log(`❌ Link failed: ${result.error}`);
+    }
+
+    res.json(result);
+
+  } catch (error) {
+    console.error('❌ POST /link/verify-telegram error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * POST /api/account/link/wallet
+ * Link Wallet to an existing Telegram account
+ */
+router.post('/link/wallet', writeLimiter, async (req, res) => {
+  try {
+    const { primaryId, wallet, signature, timestamp } = req.body;
+
+    if (!primaryId || !wallet || !signature || !timestamp) {
+      return res.status(400).json({ error: 'Missing fields' });
+    }
+
+    const walletLower = wallet.toLowerCase();
+
+    const message = `Link wallet\nWallet: ${walletLower}\nPrimaryId: ${primaryId}\nTimestamp: ${timestamp}`;
+    const isValid = verifySignature(message, signature, walletLower);
+    if (!isValid) {
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
+
+    const result = await linkAccounts(primaryId, 'wallet', walletLower);
+    res.json(result);
+
+  } catch (error) {
+    console.error('❌ POST /link/wallet error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * GET /api/account/info/:identifier
+ */
+router.get('/info/:identifier', readLimiter, async (req, res) => {
+  try {
+    const identifier = req.params.identifier;
+
+    const resolvedId = await resolvePrimaryId(identifier);
+    if (!resolvedId) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+
+    const link = await AccountLink.findOne({ primaryId: resolvedId });
+    const player = await Player.findOne({ wallet: resolvedId });
+
+    res.json({
+      primaryId: link.primaryId,
+      telegramId: link.telegramId,
+      wallet: link.wallet,
+      isLinked: !!(link.telegramId && link.wallet),
+      linkedAt: link.linkedAt,
+      bestScore: player ? player.bestScore : 0,
+      gamesPlayed: player ? player.gamesPlayed : 0
+    });
+
+  } catch (error) {
+    console.error('❌ GET /info error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+module.exports = router;
