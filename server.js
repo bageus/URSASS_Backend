@@ -8,24 +8,14 @@ const accountRoutes = require('./routes/account');
 const { initBot } = require('./bot');
 const logger = require('./utils/logger');
 const mongoose = require('mongoose');
+const { createCorsOriginValidator } = require('./utils/corsConfig');
 const { metricsMiddleware, renderMetricsText } = require('./middleware/requestMetrics');
 
 const app = express();
 
 app.set('trust proxy', 1);
 
-const extraAllowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
-  .split(',')
-  .map((value) => value.trim())
-  .filter(Boolean);
-
-const allowedOrigins = [
-  'https://bageus.github.io',
-  'https://ursass-tube.vercel.app',
-  'http://localhost:3000',
-  'http://localhost:5173',
-  ...extraAllowedOrigins
-];
+const isAllowedOrigin = createCorsOriginValidator(process.env);
 
 app.use(cors({
   origin: function(origin, callback) {
@@ -34,12 +24,7 @@ app.use(cors({
       return;
     }
 
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-      return;
-    }
-
-    if (origin.endsWith('.vercel.app')) {
+    if (isAllowedOrigin(origin)) {
       callback(null, true);
       return;
     }
