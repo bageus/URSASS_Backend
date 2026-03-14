@@ -8,14 +8,21 @@ const {
   resolvePrimaryId
 } = require('../utils/accountManager');
 const { verifySignature } = require('../utils/verifySignature');
-const { readLimiter, writeLimiter } = require('../middleware/rateLimiter');
+const { readLimiter, writeLimiter, authLimiter } = require('../middleware/rateLimiter');
 const Player = require('../models/Player');
 const AccountLink = require('../models/AccountLink');
 const LinkCode = require('../models/LinkCode');
+const SecurityEvent = require('../models/SecurityEvent');
+const logger = require('../utils/logger');
 
-/**
- * Generate a random link code like "BEAR-A3F9K2"
- */
+async function logSecurityEvent({ wallet = null, eventType, route, ipAddress, details = {} }) {
+  try {
+    await SecurityEvent.create({ wallet, eventType, route, ipAddress, details });
+  } catch (error) {
+    logger.warn({ eventType, err: error.message }, 'Failed to persist SecurityEvent');
+  }
+}
+
 function generateLinkCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
@@ -25,10 +32,7 @@ function generateLinkCode() {
   return code;
 }
 
-/**
- * POST /api/account/auth/telegram
- */
-router.post('/auth/telegram', readLimiter, async (req, res) => {
+router.post('/auth/telegram', authLimiter, async (req, res) => {
   try {
     const { telegramId, firstName, username } = req.body;
 
@@ -38,7 +42,7 @@ router.post('/auth/telegram', readLimiter, async (req, res) => {
 
     const account = await getOrCreateTelegramAccount(telegramId);
 
-    console.log(`📱 Telegram auth: ${telegramId} (${firstName || username || 'anon'}) → primaryId: ${account.primaryId}`);
+    logger.info({ telegramId: String(telegramId), primaryId: account.primaryId }, 'Telegram auth success');
 
     res.json({
       success: true,
@@ -48,17 +52,13 @@ router.post('/auth/telegram', readLimiter, async (req, res) => {
       isLinked: account.isLinked,
       displayName: firstName || username || `TG#${telegramId}`
     });
-
   } catch (error) {
-    console.error('❌ POST /auth/telegram error:', error);
+    logger.error({ err: error }, 'POST /auth/telegram error');
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-/**
- * POST /api/account/auth/wallet
- */
-router.post('/auth/wallet', readLimiter, async (req, res) => {
+router.post('/auth/wallet', authLimiter, async (req, res) => {
   try {
     const { wallet, signature, timestamp } = req.body;
 
@@ -67,19 +67,24 @@ router.post('/auth/wallet', readLimiter, async (req, res) => {
     }
 
     const walletLower = wallet.toLowerCase();
-
     const message = `Auth wallet\nWallet: ${walletLower}\nTimestamp: ${timestamp}`;
     const isValid = verifySignature(message, signature, walletLower);
+    
     if (!isValid) {
+      await logSecurityEvent({
+        wallet: walletLower,
+        eventType: 'wallet_auth_signature_failed',
+        route: req.path,
+        ipAddress: req.ip
+      });
       return res.status(401).json({ error: 'Invalid signature' });
     }
 
     const account = await getOrCreateWalletAccount(walletLower);
 
-    // Look up the full AccountLink to get telegramUsername
     const link = await AccountLink.findOne({ primaryId: account.primaryId });
 
-    console.log(`🔗 Wallet auth: ${walletLower} → primaryId: ${account.primaryId}`);
+    logger.info({ wallet: walletLower, primaryId: account.primaryId }, 'Wallet auth success');
 
     res.json({
       success: true,
@@ -89,17 +94,12 @@ router.post('/auth/wallet', readLimiter, async (req, res) => {
       wallet: account.wallet,
       isLinked: account.isLinked
     });
-
   } catch (error) {
-    console.error('❌ POST /auth/wallet error:', error);
+    logger.error({ err: error }, 'POST /auth/wallet error');
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-/**
- * POST /api/account/link/request-code
- * Generate a verification code for linking Telegram
- */
 router.post('/link/request-code', writeLimiter, async (req, res) => {
   try {
     const { primaryId } = req.body;
@@ -123,15 +123,13 @@ router.post('/link/request-code', writeLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Only wallet accounts can link Telegram via code' });
     }
 
-    // Delete old unused codes
     await LinkCode.deleteMany({ primaryId: primaryIdLower, used: false });
 
-    // Generate unique code
     let code;
     let attempts = 0;
     do {
       code = generateLinkCode();
-      attempts++;
+      attempts += 1;
       if (attempts > 10) {
         return res.status(500).json({ error: 'Failed to generate unique code' });
       }
@@ -146,7 +144,7 @@ router.post('/link/request-code', writeLimiter, async (req, res) => {
       expiresAt
     }).save();
 
-    console.log(`🔑 Code generated: ${code} for ${primaryIdLower}`);
+    logger.info({ primaryId: primaryIdLower }, 'Link code generated');
 
     res.json({
       success: true,
@@ -154,18 +152,13 @@ router.post('/link/request-code', writeLimiter, async (req, res) => {
       expiresInSeconds: 600,
       botUsername: process.env.TELEGRAM_BOT_USERNAME || 'Ursasstube_bot'
     });
-
   } catch (error) {
-    console.error('❌ POST /link/request-code error:', error);
+    logger.error({ err: error }, 'POST /link/request-code error');
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-/**
- * POST /api/account/link/verify-telegram
- * Called by the Telegram bot when user sends a verification code
- */
-router.post('/link/verify-telegram', async (req, res) => {
+router.post('/link/verify-telegram', authLimiter, async (req, res) => {
   try {
     const { telegramId, code, botSecret } = req.body;
 
@@ -175,6 +168,13 @@ router.post('/link/verify-telegram', async (req, res) => {
 
     const expectedSecret = process.env.TELEGRAM_BOT_SECRET;
     if (expectedSecret && botSecret !== expectedSecret) {
+        await logSecurityEvent({
+        wallet: null,
+        eventType: 'telegram_verify_invalid_secret',
+        route: req.path,
+        ipAddress: req.ip,
+        details: { telegramId: String(telegramId) }
+      });
       return res.status(401).json({ error: 'Invalid bot secret' });
     }
 
@@ -204,23 +204,19 @@ router.post('/link/verify-telegram', async (req, res) => {
     const result = await linkAccounts(linkCode.primaryId, 'telegram', tgIdStr);
 
     if (result.success) {
-      console.log(`✅ Telegram linked via bot: TG#${tgIdStr} → ${linkCode.primaryId}`);
+      logger.info({ telegramId: tgIdStr, primaryId: linkCode.primaryId }, 'Telegram linked via bot');
     } else {
-      console.log(`❌ Link failed: ${result.error}`);
+      logger.warn({ telegramId: tgIdStr, primaryId: linkCode.primaryId, error: result.error }, 'Telegram link failed');
     }
 
     res.json(result);
 
   } catch (error) {
-    console.error('❌ POST /link/verify-telegram error:', error);
+    logger.error({ err: error }, 'POST /link/verify-telegram error');
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-/**
- * POST /api/account/link/wallet
- * Link Wallet to an existing Telegram account
- */
 router.post('/link/wallet', writeLimiter, async (req, res) => {
   try {
     const { primaryId, wallet, signature, timestamp } = req.body;
@@ -230,25 +226,28 @@ router.post('/link/wallet', writeLimiter, async (req, res) => {
     }
 
     const walletLower = wallet.toLowerCase();
-
     const message = `Link wallet\nWallet: ${walletLower}\nPrimaryId: ${primaryId}\nTimestamp: ${timestamp}`;
     const isValid = verifySignature(message, signature, walletLower);
+    
     if (!isValid) {
+      await logSecurityEvent({
+        wallet: walletLower,
+        eventType: 'link_wallet_signature_failed',
+        route: req.path,
+        ipAddress: req.ip,
+        details: { primaryId }
+      });
       return res.status(401).json({ error: 'Invalid signature' });
     }
 
     const result = await linkAccounts(primaryId, 'wallet', walletLower);
     res.json(result);
-
   } catch (error) {
-    console.error('❌ POST /link/wallet error:', error);
+    logger.error({ err: error }, 'POST /link/wallet error');
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-/**
- * GET /api/account/info/:identifier
- */
 router.get('/info/:identifier', readLimiter, async (req, res) => {
   try {
     const identifier = req.params.identifier;
@@ -272,7 +271,7 @@ router.get('/info/:identifier', readLimiter, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ GET /info error:', error);
+    logger.error({ err: error }, 'GET /info error');
     res.status(500).json({ error: 'Server error' });
   }
 });
