@@ -7,6 +7,7 @@ const storeRoutes = require('./routes/store');
 const accountRoutes = require('./routes/account');
 const { initBot } = require('./bot');
 const logger = require('./utils/logger');
+const mongoose = require('mongoose');
 const { metricsMiddleware, renderMetricsText } = require('./middleware/requestMetrics');
 
 const app = express();
@@ -84,12 +85,27 @@ app.use('/api/v1/account', accountRoutes);
 
 // Health
 app.get('/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date(), mongodb: 'connected' });
+  const stateMap = {
+    0: 'disconnected',
+    1: 'connected',
+    2: 'connecting',
+    3: 'disconnecting'
+  };
+
+  const mongoState = stateMap[mongoose.connection.readyState] || 'unknown';
+  const isReady = mongoState === 'connected';
+
+  res.status(isReady ? 200 : 503).json({
+    status: isReady ? 'OK' : 'DEGRADED',
+    timestamp: new Date(),
+    mongodb: mongoState
+  });
 });
 
-app.get('/metrics', (req, res) => {
+app.get('/metrics', async (req, res) => {
   res.set('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
-  res.end(renderMetricsText());
+  const metricsText = await renderMetricsText();
+  res.end(metricsText);
 });
 
 // Error handler
