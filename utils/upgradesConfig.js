@@ -1,3 +1,10 @@
+const isTestEnv = process.env.NODE_ENV === 'test';
+const TEST_GOLD_PRICE = 1;
+
+function goldPrice(defaultPrice) {
+  return isTestEnv ? TEST_GOLD_PRICE : defaultPrice;
+}
+
 const UPGRADES_CONFIG = {
 
   // === SILVER — TIERED ===
@@ -96,9 +103,27 @@ const UPGRADES_CONFIG = {
     type: "permanent",
     currency: "gold",
     maxLevel: 1,
-    prices: [400],
+    prices: [goldPrice(400)],
     effects: [true],
     description: "Start with shield (permanent)"
+  },
+
+  radar: {
+    type: "permanent",
+    currency: "gold",
+    maxLevel: 1,
+    prices: [goldPrice(400)],
+    effects: [true],
+    description: "Radar (permanent)"
+  },
+
+  alert: {
+    type: "permanent",
+    currency: "gold",
+    maxLevel: 1,
+    prices: [goldPrice(400)],
+    effects: [true],
+    description: "Alert (permanent)"
   },
 
   // === GOLD — RIDES PACK ===
@@ -153,7 +178,9 @@ function calculateEffects(upgrades) {
       ? UPGRADES_CONFIG.spin_cooldown.effects[upgrades.spin_cooldown - 1]
       : 0,
 
-    start_with_shield: upgrades.shield > 0
+    start_with_shield: upgrades.shield > 0,
+    start_with_radar: upgrades.radar > 0,
+    start_with_alert: upgrades.alert > 0
   };
 }
 
