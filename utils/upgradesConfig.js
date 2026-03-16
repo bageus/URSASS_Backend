@@ -13,7 +13,7 @@ const UPGRADES_CONFIG = {
     currency: "silver",
     maxLevel: 3,
     prices: [300, 2400, 8000],
-    effects: [5, 5, 5],
+    effects: [5, 10, 15],
     description: "X2 Score duration"
   },
 
