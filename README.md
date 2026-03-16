@@ -84,12 +84,14 @@ Versioned aliases are also available under `/api/v1/*` (backward-compatible with
 
 ## Store Upgrade Semantics
 
-- `shield` is now a **3-level permanent progression** (levels `1..3`) that controls both
-  - starting the run with a shield (`start_with_shield`), and
-  - maximum shield capacity (`activeEffects.shield_capacity`: `1`, `2`, `3`).
+- `shield` is now a **1-level permanent progression**:
+  - level 1 enables `activeEffects.start_with_shield = true`.
+- `shield_capacity` is a separate **2-level permanent progression**:
+  - level 1 (`2000 Gold`): `activeEffects.shield_capacity = 2`
+  - level 2 (`5000 Gold`): `activeEffects.shield_capacity = 3`
 - `alert` (Spin Alert) is now a **2-level permanent progression**:
-  - level 1: `activeEffects.spin_alert_mode = "alert"`
-  - level 2: `activeEffects.spin_alert_mode = "perfect"` and `activeEffects.perfect_spin_enabled = true`
+  - level 1 (`1000 Gold`): `activeEffects.spin_alert_mode = "alert"`
+  - level 2 (`3000 Gold`): `activeEffects.spin_alert_mode = "perfect"` and `activeEffects.perfect_spin_enabled = true`
 - Backward-compatible request aliases for `POST /api/store/buy` are preserved:
   - `spin_alert` → `alert`
   - `spin_perfect` → `alert`

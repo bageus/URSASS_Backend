@@ -102,10 +102,19 @@ const UPGRADES_CONFIG = {
   shield: {
     type: "permanent",
     currency: "gold",
-    maxLevel: 3,
-    prices: [goldPrice(400), goldPrice(900), goldPrice(1600)],
-    effects: [1, 2, 3],
-    description: "Start with shield + max shield capacity"
+    maxLevel: 1,
+    prices: [goldPrice(400)],
+    effects: [true],
+    description: "Start with shield"
+  },
+
+  shield_capacity: {
+    type: "permanent",
+    currency: "gold",
+    maxLevel: 2,
+    prices: [goldPrice(2000), goldPrice(5000)],
+    effects: [2, 3],
+    description: "Shield capacity progression: 2 -> 3"
   },
 
   radar: {
@@ -121,7 +130,7 @@ const UPGRADES_CONFIG = {
     type: "permanent",
     currency: "gold",
     maxLevel: 2,
-    prices: [goldPrice(1000), goldPrice(2200)],
+    prices: [goldPrice(1000), goldPrice(3000)],
     effects: ["alert", "perfect"],
     description: "Spin alert progression: alert -> perfect"
   },
@@ -137,6 +146,13 @@ const UPGRADES_CONFIG = {
 };
 
 function calculateEffects(upgrades) {
+  const legacyShieldLevel = upgrades.shield || 0;
+  const hasSeparateShieldCapacity = typeof upgrades.shield_capacity === "number";
+  const normalizedShieldLevel = legacyShieldLevel > 0 ? 1 : 0;
+  const normalizedShieldCapacityLevel = hasSeparateShieldCapacity
+    ? upgrades.shield_capacity
+    : Math.max(0, legacyShieldLevel - 1);
+
   return {
     x2_duration_bonus: upgrades.x2_duration > 0
       ? UPGRADES_CONFIG.x2_duration.effects[upgrades.x2_duration - 1]
@@ -178,11 +194,12 @@ function calculateEffects(upgrades) {
       ? UPGRADES_CONFIG.spin_cooldown.effects[upgrades.spin_cooldown - 1]
       : 0,
 
-    shield_level: upgrades.shield || 0,
-    shield_capacity: upgrades.shield > 0
-      ? UPGRADES_CONFIG.shield.effects[upgrades.shield - 1]
-      : 0,
-    start_with_shield: upgrades.shield > 0,
+    shield_level: normalizedShieldLevel,
+    shield_capacity_level: normalizedShieldCapacityLevel,
+    shield_capacity: normalizedShieldCapacityLevel > 0
+      ? UPGRADES_CONFIG.shield_capacity.effects[normalizedShieldCapacityLevel - 1]
+      : 1,
+    start_with_shield: normalizedShieldLevel > 0,
     start_with_radar: upgrades.radar > 0,
     alert_level: upgrades.alert || 0,
     spin_alert_mode: upgrades.alert > 0

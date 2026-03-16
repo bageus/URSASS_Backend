@@ -22,7 +22,8 @@ const playerUpgradesSchema = new mongoose.Schema({
   spin_cooldown: { type: Number, default: 0, min: 0, max: 3 },
 
   // === GOLD (перманентные/consumable) ===
-  shield: { type: Number, default: 0, min: 0, max: 3 },
+  shield: { type: Number, default: 0, min: 0, max: 1 },
+  shield_capacity: { type: Number, default: 0, min: 0, max: 2 },
   radar: { type: Number, default: 0, min: 0, max: 1 },
   alert: { type: Number, default: 0, min: 0, max: 2 },
 

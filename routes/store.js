@@ -21,6 +21,29 @@ function resolveUpgradeKey(upgradeKey) {
   return UPGRADE_KEY_ALIASES[upgradeKey] || upgradeKey;
 }
 
+function normalizeShieldUpgrades(upgrades) {
+  let changed = false;
+  const legacyShieldLevel = upgrades.shield || 0;
+
+  if (legacyShieldLevel > 1) {
+    const currentCapacityLevel = typeof upgrades.shield_capacity === 'number' ? upgrades.shield_capacity : 0;
+    const migratedCapacityLevel = Math.min(2, legacyShieldLevel - 1);
+
+    if (currentCapacityLevel < migratedCapacityLevel) {
+      upgrades.shield_capacity = migratedCapacityLevel;
+      changed = true;
+    }
+
+    upgrades.shield = 1;
+    changed = true;
+  } else if (typeof upgrades.shield_capacity !== 'number') {
+    upgrades.shield_capacity = 0;
+    changed = true;
+  }
+
+  return changed;
+}
+
 async function logSecurityEvent({ wallet = null, eventType, route, ipAddress, details = {} }) {
   try {
     await SecurityEvent.create({ wallet, eventType, route, ipAddress, details });
@@ -47,9 +70,10 @@ router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
       await upgrades.save();
     }
 
-    // Refresh free rides
+    // Refresh free rides + normalize legacy shield progression
     const changed = upgrades.refreshFreeRides();
-    if (changed) {
+    const shieldChanged = normalizeShieldUpgrades(upgrades);
+    if (changed || shieldChanged) {
       await upgrades.save();
     }
 
@@ -215,8 +239,9 @@ router.post('/buy', writeLimiter, async (req, res) => {
       upgrades = new PlayerUpgrades({ wallet: walletLower });
     }
 
-    // Refresh free rides
+    // Refresh free rides + normalize legacy shield progression
     upgrades.refreshFreeRides();
+    normalizeShieldUpgrades(upgrades);
 
     // === PURCHASE LOGIC BY TYPE ===
 
@@ -377,8 +402,9 @@ const consumeRideHandler = async (req, res) => {
       upgrades = new PlayerUpgrades({ wallet: walletLower });
     }
 
-    // Refresh free rides
+    // Refresh free rides + normalize legacy shield progression
     upgrades.refreshFreeRides();
+    normalizeShieldUpgrades(upgrades);
     
     upgrades.recentRideSessionIds = upgrades.recentRideSessionIds || [];
 
