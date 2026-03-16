@@ -228,7 +228,10 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       console.log(`✅ Telegram identity verified for ${walletLower}`);
     } else {
       // Signature verification
-      const messageToVerify = createMessageToVerify(walletLower, score, distance, timestamp);
+      // Keep the exact wallet string provided by client in signed payload.
+      // EIP-191 signatures are case-sensitive for message contents,
+      // so lowercasing here can break verification for checksum addresses.
+      const messageToVerify = createMessageToVerify(wallet, score, distance, timestamp);
 
       console.log(`📝 Message for verification:\n${messageToVerify}`);
       const isSignatureValid = verifySignature(messageToVerify, signature, walletLower);
