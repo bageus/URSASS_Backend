@@ -112,7 +112,7 @@ const UPGRADES_CONFIG = {
     type: "permanent",
     currency: "gold",
     maxLevel: 1,
-    prices: [goldPrice(1)],
+    prices: [goldPrice(1000)],
     effects: [true],
     description: "Radar (permanent)"
   },
@@ -121,7 +121,7 @@ const UPGRADES_CONFIG = {
     type: "permanent",
     currency: "gold",
     maxLevel: 1,
-    prices: [goldPrice(1)],
+    prices: [goldPrice(1000)],
     effects: [true],
     description: "Alert (permanent)"
   },
