@@ -102,10 +102,10 @@ const UPGRADES_CONFIG = {
   shield: {
     type: "permanent",
     currency: "gold",
-    maxLevel: 1,
-    prices: [goldPrice(400)],
-    effects: [true],
-    description: "Start with shield (permanent)"
+    maxLevel: 3,
+    prices: [goldPrice(400), goldPrice(900), goldPrice(1600)],
+    effects: [1, 2, 3],
+    description: "Start with shield + max shield capacity"
   },
 
   radar: {
@@ -120,10 +120,10 @@ const UPGRADES_CONFIG = {
   alert: {
     type: "permanent",
     currency: "gold",
-    maxLevel: 1,
-    prices: [goldPrice(1000)],
-    effects: [true],
-    description: "Alert (permanent)"
+    maxLevel: 2,
+    prices: [goldPrice(1000), goldPrice(2200)],
+    effects: ["alert", "perfect"],
+    description: "Spin alert progression: alert -> perfect"
   },
 
   // === GOLD — RIDES PACK ===
@@ -178,9 +178,18 @@ function calculateEffects(upgrades) {
       ? UPGRADES_CONFIG.spin_cooldown.effects[upgrades.spin_cooldown - 1]
       : 0,
 
+    shield_level: upgrades.shield || 0,
+    shield_capacity: upgrades.shield > 0
+      ? UPGRADES_CONFIG.shield.effects[upgrades.shield - 1]
+      : 0,
     start_with_shield: upgrades.shield > 0,
     start_with_radar: upgrades.radar > 0,
-    start_with_alert: upgrades.alert > 0
+    alert_level: upgrades.alert || 0,
+    spin_alert_mode: upgrades.alert > 0
+      ? UPGRADES_CONFIG.alert.effects[upgrades.alert - 1]
+      : null,
+    start_with_alert: upgrades.alert > 0,
+    perfect_spin_enabled: upgrades.alert >= 2
   };
 }
 
