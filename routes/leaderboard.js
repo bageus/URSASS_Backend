@@ -185,31 +185,36 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       silver: Math.floor(silverCoinsVal)
     };
 
-    const ts = typeof timestamp === 'number' ? timestamp : parseInt(timestamp, 10);
+    const tsRaw = typeof timestamp === 'number' ? timestamp : parseInt(timestamp, 10);
 
-    if (!ts || isNaN(ts)) {
+    if (!tsRaw || isNaN(tsRaw)) {
       return res.status(400).json({ error: 'Invalid timestamp format' });
     }
 
+    // Support both milliseconds and seconds timestamps from clients.
+    // If value looks like unix seconds (10 digits), normalize to ms for validation.
+    const ts = tsRaw < 1e12 ? tsRaw * 1000 : tsRaw;
+
     const now = Date.now();
-    const timeDiff = Math.abs(now - ts);
-    const MAX_TIME_DIFF = Number(process.env.MAX_RESULT_TIMESTAMP_DIFF_MS || 3 * 60 * 1000);
+    const ageMs = now - ts;
+    const maxPastAge = Number(process.env.MAX_RESULT_TIMESTAMP_AGE_MS || 2 * 60 * 60 * 1000);
+    const maxFutureSkew = Number(process.env.MAX_RESULT_FUTURE_SKEW_MS || 3 * 60 * 1000);
 
-    console.log(`⏰ Server time: ${now}, Client timestamp: ${ts}, Difference: ${timeDiff}ms`);
+    console.log(`⏰ Server time: ${now}, Client timestamp: ${ts}, Age: ${ageMs}ms`);
 
-    if (timeDiff > MAX_TIME_DIFF) {
+    if (ageMs > maxPastAge || ageMs < -maxFutureSkew) {
       markSuspicious('invalid_timestamp');
       await logSecurityEvent({
         wallet: walletLower,
         eventType: 'invalid_timestamp',
         route: req.path,
         ipAddress: req.ip,
-        details: { timeDiff, maxAllowed: MAX_TIME_DIFF }
+        details: { ageMs, maxPastAge, maxFutureSkew }
       });
 
-      logger.warn({ wallet: walletLower, timeDiff, maxAllowed: MAX_TIME_DIFF }, 'Timestamp invalid');
+      logger.warn({ wallet: walletLower, ageMs, maxPastAge, maxFutureSkew }, 'Timestamp invalid');
       return res.status(400).json({
-        error: `Invalid timestamp. Difference: ${timeDiff}ms.`
+        error: `Invalid timestamp. Age: ${ageMs}ms.`
       });
     }
 
