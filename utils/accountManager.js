@@ -277,6 +277,7 @@ async function mergeAccounts(primaryIdA, primaryIdB) {
     slaveUpgrades.magnet_duration = 0;
     slaveUpgrades.spin_cooldown = 0;
     slaveUpgrades.shield = 0;
+    slaveUpgrades.shield_capacity = 0;
     slaveUpgrades.radar = 0;
     slaveUpgrades.alert = 0;
     slaveUpgrades.freeRidesRemaining = 0;
