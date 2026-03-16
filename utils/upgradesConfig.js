@@ -13,7 +13,7 @@ const UPGRADES_CONFIG = {
     currency: "silver",
     maxLevel: 3,
     prices: [300, 2400, 8000],
-    effects: [5, 10, 15],
+    effects: [5, 5, 5],
     description: "X2 Score duration"
   },
 
@@ -112,7 +112,7 @@ const UPGRADES_CONFIG = {
     type: "permanent",
     currency: "gold",
     maxLevel: 1,
-    prices: [goldPrice(400)],
+    prices: [goldPrice(1)],
     effects: [true],
     description: "Radar (permanent)"
   },
@@ -121,7 +121,7 @@ const UPGRADES_CONFIG = {
     type: "permanent",
     currency: "gold",
     maxLevel: 1,
-    prices: [goldPrice(400)],
+    prices: [goldPrice(1)],
     effects: [true],
     description: "Alert (permanent)"
   },
