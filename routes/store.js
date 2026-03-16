@@ -10,6 +10,15 @@ const SecurityEvent = require('../models/SecurityEvent');
 const logger = require('../utils/logger');
 const { markSuspicious } = require('../middleware/requestMetrics');
 
+const UPGRADE_KEY_ALIASES = {
+  spin_alert: 'alert',
+  start_with_alert: 'alert',
+  start_with_radar: 'radar'
+};
+
+function resolveUpgradeKey(upgradeKey) {
+  return UPGRADE_KEY_ALIASES[upgradeKey] || upgradeKey;
+}
 
 async function logSecurityEvent({ wallet = null, eventType, route, ipAddress, details = {} }) {
   try {
@@ -78,6 +87,13 @@ router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
       }
     }
 
+    if (upgradesData.alert && !upgradesData.spin_alert) {
+      upgradesData.spin_alert = { ...upgradesData.alert };
+    }
+    if (upgradesData.radar && !upgradesData.start_with_radar) {
+      upgradesData.start_with_radar = { ...upgradesData.radar };
+    }
+
     // Rides data
     const now = new Date();
     const resetAt = upgrades.freeRidesResetAt || now;
@@ -113,17 +129,19 @@ router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
 router.post('/buy', writeLimiter, async (req, res) => {
   try {
     const { wallet, upgradeKey, tier, signature, timestamp, authMode, telegramId } = req.body;
+    const requestedUpgradeKey = String(upgradeKey || '').trim();
+    const resolvedUpgradeKey = resolveUpgradeKey(requestedUpgradeKey);
 
     const isTelegramAuth = authMode === 'telegram';
 
     if (isTelegramAuth) {
-      if (!wallet || !upgradeKey || !telegramId || !timestamp) {
+      if (!wallet || !requestedUpgradeKey || !telegramId || !timestamp) {
         return res.status(400).json({
           error: 'Missing fields: wallet, upgradeKey, telegramId, timestamp'
         });
       }
     } else {
-      if (!wallet || !upgradeKey || !signature || !timestamp) {
+      if (!wallet || !requestedUpgradeKey || !signature || !timestamp) {
         return res.status(400).json({
           error: 'Missing fields: wallet, upgradeKey, signature, timestamp'
         });
@@ -151,9 +169,9 @@ router.post('/buy', writeLimiter, async (req, res) => {
         }
 
     
-    const config = UPGRADES_CONFIG[upgradeKey];
+    const config = UPGRADES_CONFIG[resolvedUpgradeKey];
     if (!config) {
-      return res.status(400).json({ error: `Unknown upgrade: ${upgradeKey}` });
+      return res.status(400).json({ error: `Unknown upgrade: ${requestedUpgradeKey}` });
     }
 
     // Timestamp validation
@@ -177,7 +195,7 @@ router.post('/buy', writeLimiter, async (req, res) => {
       }
     } else {
       // Signature verification
-      const message = `Buy upgrade\nWallet: ${walletLower}\nUpgrade: ${upgradeKey}\nTier: ${tier !== undefined ? tier : 0}\nTimestamp: ${ts}`;
+      const message = `Buy upgrade\nWallet: ${walletLower}\nUpgrade: ${requestedUpgradeKey}\nTier: ${tier !== undefined ? tier : 0}\nTimestamp: ${ts}`;
       const isValid = verifySignature(message, signature, walletLower);
 
       if (!isValid) {
@@ -202,7 +220,7 @@ router.post('/buy', writeLimiter, async (req, res) => {
     // === PURCHASE LOGIC BY TYPE ===
 
     if (config.type === "tiered") {
-      const currentLevel = upgrades[upgradeKey] || 0;
+      const currentLevel = upgrades[resolvedUpgradeKey] || 0;
 
       if (tier !== currentLevel) {
         return res.status(400).json({
@@ -228,11 +246,11 @@ router.post('/buy', writeLimiter, async (req, res) => {
         player.totalGoldCoins -= price;
       }
 
-      upgrades[upgradeKey] = currentLevel + 1;
-      console.log(`🛒 ${walletLower} bought ${upgradeKey} tier ${currentLevel + 1}/${config.maxLevel} for ${price} ${config.currency}`);
+      upgrades[resolvedUpgradeKey] = currentLevel + 1;
+      console.log(`🛒 ${walletLower} bought ${resolvedUpgradeKey} tier ${currentLevel + 1}/${config.maxLevel} for ${price} ${config.currency}`);
 
     } else if (config.type === "permanent") {
-      const currentLevel = upgrades[upgradeKey] || 0;
+      const currentLevel = upgrades[resolvedUpgradeKey] || 0;
 
       if (currentLevel >= config.maxLevel) {
         return res.status(400).json({ error: 'Already purchased (permanent)' });
@@ -252,8 +270,8 @@ router.post('/buy', writeLimiter, async (req, res) => {
         player.totalSilverCoins -= price;
       }
 
-      upgrades[upgradeKey] = 1;
-      console.log(`🛒 ${walletLower} bought permanent ${upgradeKey} for ${price} ${config.currency}`);
+      upgrades[resolvedUpgradeKey] = 1;
+      console.log(`🛒 ${walletLower} bought permanent ${resolvedUpgradeKey} for ${price} ${config.currency}`);
 
     } else if (config.type === "rides") {
       const price = config.price;
@@ -290,15 +308,22 @@ router.post('/buy', writeLimiter, async (req, res) => {
       eventType: 'purchase_attempt',
       route: req.path,
       ipAddress: req.ip,
-      details: { upgradeKey, tier: tier ?? 0, authMode: authMode || 'wallet' }
+      details: {
+        requestedUpgradeKey,
+        resolvedUpgradeKey,
+        tier: tier ?? 0,
+        authMode: authMode || 'wallet'
+      }
     });
 
-    logger.info({ wallet: walletLower, upgradeKey, tier: tier ?? 0 }, 'Purchase processed');
+    logger.info({ wallet: walletLower, requestedUpgradeKey, resolvedUpgradeKey, tier: tier ?? 0 }, 'Purchase processed');
 
 
     res.json({
       success: true,
-      message: `Purchased ${upgradeKey}`,
+      message: `Purchased ${resolvedUpgradeKey}`,
+      requestedUpgradeKey,
+      resolvedUpgradeKey,
       balance: {
         gold: player.totalGoldCoins,
         silver: player.totalSilverCoins
