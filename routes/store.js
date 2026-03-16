@@ -13,7 +13,8 @@ const { markSuspicious } = require('../middleware/requestMetrics');
 const UPGRADE_KEY_ALIASES = {
   spin_alert: 'alert',
   start_with_alert: 'alert',
-  start_with_radar: 'radar'
+  start_with_radar: 'radar',
+  spin_perfect: 'alert'
 };
 
 function resolveUpgradeKey(upgradeKey) {
@@ -252,11 +253,17 @@ router.post('/buy', writeLimiter, async (req, res) => {
     } else if (config.type === "permanent") {
       const currentLevel = upgrades[resolvedUpgradeKey] || 0;
 
-      if (currentLevel >= config.maxLevel) {
-        return res.status(400).json({ error: 'Already purchased (permanent)' });
+      if (tier !== currentLevel) {
+        return res.status(400).json({
+          error: `Must buy tier ${currentLevel}. Current: ${currentLevel}, requested: ${tier}`
+        });
       }
 
-      const price = config.prices[0];
+      if (currentLevel >= config.maxLevel) {
+        return res.status(400).json({ error: 'Already at max level' });
+      }
+
+      const price = config.prices[currentLevel];
 
       if (config.currency === "gold") {
         if (player.totalGoldCoins < price) {
@@ -270,8 +277,8 @@ router.post('/buy', writeLimiter, async (req, res) => {
         player.totalSilverCoins -= price;
       }
 
-      upgrades[resolvedUpgradeKey] = 1;
-      console.log(`🛒 ${walletLower} bought permanent ${resolvedUpgradeKey} for ${price} ${config.currency}`);
+      upgrades[resolvedUpgradeKey] = currentLevel + 1;
+      console.log(`🛒 ${walletLower} bought ${resolvedUpgradeKey} tier ${currentLevel + 1}/${config.maxLevel} for ${price} ${config.currency}`);
 
     } else if (config.type === "rides") {
       const price = config.price;
