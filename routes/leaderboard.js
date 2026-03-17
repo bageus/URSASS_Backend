@@ -130,7 +130,7 @@ router.get('/top', readLimiter, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ GET /top error:', error);
+    logger.error({ err: error }, 'GET /top error');
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -200,7 +200,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     const maxPastAge = Number(process.env.MAX_RESULT_TIMESTAMP_AGE_MS || 2 * 60 * 60 * 1000);
     const maxFutureSkew = Number(process.env.MAX_RESULT_FUTURE_SKEW_MS || 3 * 60 * 1000);
 
-    console.log(`⏰ Server time: ${now}, Client timestamp: ${ts}, Age: ${ageMs}ms`);
+    logger.info({ serverTime: now, clientTimestamp: ts, ageMs }, 'Result timestamp check');
 
     if (ageMs > maxPastAge || ageMs < -maxFutureSkew) {
       markSuspicious('invalid_timestamp');
@@ -225,7 +225,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
         return res.status(401).json({ error: 'Telegram identity verification failed' });
       }
 
-      console.log(`✅ Telegram identity verified for ${walletLower}`);
+      logger.info({ wallet: walletLower }, 'Telegram identity verified');
     } else {
       // Signature verification
       // Keep the exact wallet string provided by client in signed payload.
@@ -233,18 +233,18 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       // so lowercasing here can break verification for checksum addresses.
       const messageToVerify = createMessageToVerify(wallet, score, distance, timestamp);
 
-      console.log(`📝 Message for verification:\n${messageToVerify}`);
+      logger.info({ wallet: walletLower, messageToVerify }, 'Message for verification');
       const isSignatureValid = verifySignature(messageToVerify, signature, walletLower);
 
       if (!isSignatureValid) {
-        console.warn(`❌ Invalid signature for ${walletLower}`);
+        logger.warn({ wallet: walletLower }, 'Invalid signature');
         return res.status(401).json({
           error: 'Invalid signature. Result cannot be verified.',
           details: 'Your wallet signature does not match the submitted data.'
         });
       }
 
-      console.log(`✅ Signature valid for ${walletLower}`);
+      logger.info({ wallet: walletLower }, 'Signature valid');
     }
 
     // Duplicate prevention
@@ -302,12 +302,12 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       });
     } else {
       if (Math.floor(score) > player.bestScore) {
-        console.log(`📈 New best score: ${Math.floor(score)} (was ${player.bestScore})`);
+        logger.info({ wallet: walletLower, newBestScore: Math.floor(score), previousBestScore: player.bestScore }, 'New best score');
         player.bestScore = Math.floor(score);
       }
 
       if (Math.floor(distance) > player.bestDistance) {
-        console.log(`📈 New best distance: ${Math.floor(distance)} (was ${player.bestDistance})`);
+        logger.info({ wallet: walletLower, newBestDistance: Math.floor(distance), previousBestDistance: player.bestDistance }, 'New best distance');
         player.bestDistance = Math.floor(distance);
       }
 
@@ -370,9 +370,13 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     player.updatedAt = new Date();
     await player.save();
 
-    console.log(`✅ Result saved (VERIFIED): ${walletLower}`);
-    console.log(`   Best score: ${player.bestScore}, Best distance: ${player.bestDistance}`);
-    console.log(`   Total Gold: ${player.totalGoldCoins}, Total Silver: ${player.totalSilverCoins}`);
+    logger.info({
+      wallet: walletLower,
+      bestScore: player.bestScore,
+      bestDistance: player.bestDistance,
+      totalGoldCoins: player.totalGoldCoins,
+      totalSilverCoins: player.totalSilverCoins
+    }, 'Result saved (VERIFIED)');
 
     res.json({
       success: true,
@@ -412,7 +416,7 @@ router.get('/verified-results/:wallet', readLimiter, async (req, res) => {
     res.json({ wallet, count: results.length, results });
 
   } catch (error) {
-    console.error('❌ GET /verified-results error:', error);
+    logger.error({ err: error }, 'GET /verified-results error');
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -465,7 +469,7 @@ router.get('/player/:wallet', readLimiter, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ GET /player error:', error);
+    logger.error({ err: error }, 'GET /player error');
     res.status(500).json({ error: 'Server error' });
   }
 });
