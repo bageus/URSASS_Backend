@@ -26,7 +26,7 @@
 
 ---
 
-#### 2) Унифицировать проверку свежести timestamp для wallet auth/link
+#### 2) Унифицировать проверку свежести timestamp для wallet auth/link // выполнено
 **Проблема:** подпись проверяется, но сам timestamp в `auth/wallet` и `link/wallet` не валидируется по окну времени. Это делает возможным replay старой валидной подписи.
 
 **Где видно:** `routes/account.js` в `/auth/wallet` и `/link/wallet` timestamp участвует в сообщении, но нет проверки `Date.now() - timestamp`.
