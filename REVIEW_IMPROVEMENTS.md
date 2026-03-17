@@ -55,7 +55,7 @@
 
 ---
 
-#### 5) Перевести `console.log/error` на единый structured logger
+#### 5) Перевести `console.log/error` на единый structured logger // выполнено
 **Проблема:** в коде смешаны `console.*` и `logger.*`, из-за чего формат логов в проде становится неоднородным.
 
 **Рекомендация:** заменить `console.*` на `logger.info/warn/error` во всех route-файлах и utils.
