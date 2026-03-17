@@ -1,6 +1,7 @@
 const AccountLink = require('../models/AccountLink');
 const Player = require('../models/Player');
 const PlayerUpgrades = require('../models/PlayerUpgrades');
+const logger = require('./logger');
 
 /**
  * Получить или создать primaryId для Telegram пользователя
@@ -236,7 +237,12 @@ async function mergeAccounts(primaryIdA, primaryIdB) {
     slavePlayer = playerA;
   }
 
-  console.log(`🔗 MERGE: Master=${masterLink.primaryId} (score=${masterPlayer.bestScore}), Slave=${slaveLink.primaryId} (score=${slavePlayer.bestScore})`);
+  logger.info({
+    masterPrimaryId: masterLink.primaryId,
+    masterScore: masterPlayer.bestScore,
+    slavePrimaryId: slaveLink.primaryId,
+    slaveScore: slavePlayer.bestScore
+  }, 'Account merge started');
 
   // Переносим идентификаторы с slave на master
   if (slaveLink.telegramId && !masterLink.telegramId) {
@@ -291,7 +297,11 @@ async function mergeAccounts(primaryIdA, primaryIdB) {
   // Сохраняем master
   await masterLink.save();
 
-  console.log(`✅ MERGE COMPLETE: Master=${masterLink.primaryId}, TG=${masterLink.telegramId}, Wallet=${masterLink.wallet}`);
+  logger.info({
+    masterPrimaryId: masterLink.primaryId,
+    telegramId: masterLink.telegramId,
+    wallet: masterLink.wallet
+  }, 'Account merge completed');
 
   return {
     success: true,

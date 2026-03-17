@@ -142,7 +142,7 @@ router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ GET /upgrades error:', error);
+    logger.error({ err: error }, 'GET /upgrades error');
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -273,7 +273,7 @@ router.post('/buy', writeLimiter, async (req, res) => {
       }
 
       upgrades[resolvedUpgradeKey] = currentLevel + 1;
-      console.log(`🛒 ${walletLower} bought ${resolvedUpgradeKey} tier ${currentLevel + 1}/${config.maxLevel} for ${price} ${config.currency}`);
+      logger.info({ wallet: walletLower, upgradeKey: resolvedUpgradeKey, tier: currentLevel + 1, maxLevel: config.maxLevel, price, currency: config.currency }, 'Upgrade purchased');
 
     } else if (config.type === "permanent") {
       const currentLevel = upgrades[resolvedUpgradeKey] || 0;
@@ -303,7 +303,7 @@ router.post('/buy', writeLimiter, async (req, res) => {
       }
 
       upgrades[resolvedUpgradeKey] = currentLevel + 1;
-      console.log(`🛒 ${walletLower} bought ${resolvedUpgradeKey} tier ${currentLevel + 1}/${config.maxLevel} for ${price} ${config.currency}`);
+      logger.info({ wallet: walletLower, upgradeKey: resolvedUpgradeKey, tier: currentLevel + 1, maxLevel: config.maxLevel, price, currency: config.currency }, 'Upgrade purchased');
 
     } else if (config.type === "rides") {
       const price = config.price;
@@ -315,7 +315,7 @@ router.post('/buy', writeLimiter, async (req, res) => {
       player.totalGoldCoins -= price;
       upgrades.paidRidesRemaining += config.amount;
 
-      console.log(`🛒 ${walletLower} bought ${config.amount} rides for ${price} gold. Total paid rides: ${upgrades.paidRidesRemaining}`);
+      logger.info({ wallet: walletLower, ridesBought: config.amount, price, currency: 'gold', paidRidesRemaining: upgrades.paidRidesRemaining }, 'Rides purchased');
 
     } else {
       return res.status(400).json({ error: 'Unknown upgrade type' });
@@ -469,7 +469,7 @@ const consumeRideHandler = async (req, res) => {
     const resetAt = upgrades.freeRidesResetAt || nowDate;
     const msUntilReset = Math.max(0, (8 * 60 * 60 * 1000) - (nowDate - resetAt));
 
-    console.log(`🎟 ${walletLower} used 1 ride. Free: ${upgrades.freeRidesRemaining}, Paid: ${upgrades.paidRidesRemaining}`);
+    logger.info({ wallet: walletLower, freeRidesRemaining: upgrades.freeRidesRemaining, paidRidesRemaining: upgrades.paidRidesRemaining }, 'Ride consumed');
     
 
     const antiCheat = sessionId

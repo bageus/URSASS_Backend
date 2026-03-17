@@ -12,6 +12,7 @@ const { readLimiter, writeLimiter, verifyTelegramLimiter } = require('../middlew
 const Player = require('../models/Player');
 const AccountLink = require('../models/AccountLink');
 const LinkCode = require('../models/LinkCode');
+const logger = require('../utils/logger');
 
 const WALLET_TIMESTAMP_WINDOW_MS = Number(process.env.WALLET_AUTH_TIMESTAMP_WINDOW_MS || 10 * 60 * 1000);
 
@@ -58,7 +59,7 @@ router.post('/auth/telegram', readLimiter, async (req, res) => {
 
     const account = await getOrCreateTelegramAccount(telegramId);
 
-    console.log(`📱 Telegram auth: ${telegramId} (${firstName || username || 'anon'}) → primaryId: ${account.primaryId}`);
+    logger.info({ telegramId, displayName: firstName || username || 'anon', primaryId: account.primaryId }, 'Telegram auth');
 
     res.json({
       success: true,
@@ -70,7 +71,7 @@ router.post('/auth/telegram', readLimiter, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ POST /auth/telegram error:', error);
+    logger.error({ err: error }, 'POST /auth/telegram error');
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -106,7 +107,7 @@ router.post('/auth/wallet', readLimiter, async (req, res) => {
     // Look up the full AccountLink to get telegramUsername
     const link = await AccountLink.findOne({ primaryId: account.primaryId });
 
-    console.log(`🔗 Wallet auth: ${walletLower} → primaryId: ${account.primaryId}`);
+    logger.info({ wallet: walletLower, primaryId: account.primaryId }, 'Wallet auth');
 
     res.json({
       success: true,
@@ -118,7 +119,7 @@ router.post('/auth/wallet', readLimiter, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ POST /auth/wallet error:', error);
+    logger.error({ err: error }, 'POST /auth/wallet error');
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -173,7 +174,7 @@ router.post('/link/request-code', writeLimiter, async (req, res) => {
       expiresAt
     }).save();
 
-    console.log(`🔑 Code generated: ${code} for ${primaryIdLower}`);
+    logger.info({ code, primaryId: primaryIdLower }, 'Link code generated');
 
     res.json({
       success: true,
@@ -183,7 +184,7 @@ router.post('/link/request-code', writeLimiter, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ POST /link/request-code error:', error);
+    logger.error({ err: error }, 'POST /link/request-code error');
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -231,15 +232,15 @@ router.post('/link/verify-telegram', verifyTelegramLimiter, async (req, res) => 
     const result = await linkAccounts(linkCode.primaryId, 'telegram', tgIdStr);
 
     if (result.success) {
-      console.log(`✅ Telegram linked via bot: TG#${tgIdStr} → ${linkCode.primaryId}`);
+      logger.info({ telegramId: tgIdStr, primaryId: linkCode.primaryId }, 'Telegram linked via bot');
     } else {
-      console.log(`❌ Link failed: ${result.error}`);
+      logger.warn({ telegramId: tgIdStr, primaryId: linkCode.primaryId, error: result.error }, 'Telegram link failed');
     }
 
     res.json(result);
 
   } catch (error) {
-    console.error('❌ POST /link/verify-telegram error:', error);
+    logger.error({ err: error }, 'POST /link/verify-telegram error');
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -275,7 +276,7 @@ router.post('/link/wallet', writeLimiter, async (req, res) => {
     res.json(result);
 
   } catch (error) {
-    console.error('❌ POST /link/wallet error:', error);
+    logger.error({ err: error }, 'POST /link/wallet error');
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -306,7 +307,7 @@ router.get('/info/:identifier', readLimiter, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ GET /info error:', error);
+    logger.error({ err: error }, 'GET /info error');
     res.status(500).json({ error: 'Server error' });
   }
 });
