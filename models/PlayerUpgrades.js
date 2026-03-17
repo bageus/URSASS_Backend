@@ -23,7 +23,7 @@ const playerUpgradesSchema = new mongoose.Schema({
 
   // === GOLD (перманентные/consumable) ===
   shield: { type: Number, default: 0, min: 0, max: 1 },
-  shield_capacity: { type: Number, default: 0, min: 0, max: 2 },
+  shield_capacity: { type: Number, default: 1, min: 0, max: 2 },
   radar: { type: Number, default: 0, min: 0, max: 1 },
   alert: { type: Number, default: 0, min: 0, max: 2 },
 
