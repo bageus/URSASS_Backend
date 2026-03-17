@@ -261,7 +261,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
 
     const existingResult = await GameResult.findOne({ signature: deduplicationToken });
     if (existingResult) {
-      return res.status(400).json({
+      return res.status(409).json({
         error: 'This result has already been submitted.'
       });
     }
@@ -388,6 +388,12 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     });
 
   } catch (error) {
+    if (error?.code === 11000) {
+      return res.status(409).json({
+        error: 'This result has already been submitted.'
+      });
+    }
+
     logger.error({ err: error }, 'POST /save error');
     res.status(500).json({ error: 'Server error' });
   }
