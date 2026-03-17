@@ -174,6 +174,32 @@ router.post('/buy', writeLimiter, async (req, res) => {
     }
 
     const walletLower = wallet.toLowerCase();
+    const purchaseDetails = {
+      requestedUpgradeKey,
+      resolvedUpgradeKey,
+      tier: tier ?? 0,
+      authMode: authMode || 'wallet'
+    };
+
+    const logPurchaseResult = async (status, reason, details = {}) => {
+      await logSecurityEvent({
+        wallet: walletLower,
+        eventType: 'purchase_result',
+        route: req.path,
+        ipAddress: req.ip,
+        details: {
+          ...purchaseDetails,
+          status,
+          reason,
+          ...details
+        }
+      });
+    };
+
+    const failPurchase = async (statusCode, reason, message, details = {}) => {
+      await logPurchaseResult('fail', reason, details);
+      return res.status(statusCode).json({ error: message });
+    };
 
     const recentBuyCount = await SecurityEvent.countDocuments({
           wallet: walletLower,
@@ -193,30 +219,38 @@ router.post('/buy', writeLimiter, async (req, res) => {
           logger.warn({ wallet: walletLower, recentBuyCount }, 'Suspicious rapid purchase pattern');
         }
 
+    await logSecurityEvent({
+      wallet: walletLower,
+      eventType: 'purchase_attempt',
+      route: req.path,
+      ipAddress: req.ip,
+      details: purchaseDetails
+    });
+
     
     const config = UPGRADES_CONFIG[resolvedUpgradeKey];
     if (!config) {
-      return res.status(400).json({ error: `Unknown upgrade: ${requestedUpgradeKey}` });
+      return failPurchase(400, 'unknown_upgrade', `Unknown upgrade: ${requestedUpgradeKey}`);
     }
 
     // Timestamp validation
     const ts = typeof timestamp === 'number' ? timestamp : parseInt(timestamp, 10);
 
     if (!ts || isNaN(ts)) {
-      return res.status(400).json({ error: 'Invalid timestamp format' });
+      return failPurchase(400, 'invalid_timestamp_format', 'Invalid timestamp format');
     }
 
     const now = Date.now();
     const timeDiff = Math.abs(now - ts);
     if (timeDiff > 10 * 60 * 1000) {
-      return res.status(400).json({ error: `Invalid timestamp. Diff: ${timeDiff}ms` });
+      return failPurchase(400, 'timestamp_out_of_range', `Invalid timestamp. Diff: ${timeDiff}ms`, { timeDiff });
     }
 
     if (isTelegramAuth) {
       // Verify that the telegramId matches the claimed primaryId (wallet) via AccountLink
       const link = await AccountLink.findOne({ telegramId: String(telegramId) });
       if (!link || link.primaryId !== walletLower) {
-        return res.status(401).json({ error: 'Telegram identity verification failed' });
+        return failPurchase(401, 'telegram_verification_failed', 'Telegram identity verification failed');
       }
     } else {
       // Signature verification
@@ -224,14 +258,14 @@ router.post('/buy', writeLimiter, async (req, res) => {
       const isValid = verifySignature(message, signature, walletLower);
 
       if (!isValid) {
-        return res.status(401).json({ error: 'Invalid signature' });
+        return failPurchase(401, 'invalid_signature', 'Invalid signature');
       }
     }
 
     // Player data
     const player = await Player.findOne({ wallet: walletLower });
     if (!player) {
-      return res.status(404).json({ error: 'Player not found. Play at least one game first.' });
+      return failPurchase(404, 'player_not_found', 'Player not found. Play at least one game first.');
     }
 
     let upgrades = await PlayerUpgrades.findOne({ wallet: walletLower });
@@ -249,25 +283,31 @@ router.post('/buy', writeLimiter, async (req, res) => {
       const currentLevel = upgrades[resolvedUpgradeKey] || 0;
 
       if (tier !== currentLevel) {
-        return res.status(400).json({
-          error: `Must buy tier ${currentLevel}. Current: ${currentLevel}, requested: ${tier}`
+        return failPurchase(400, 'tier_mismatch', `Must buy tier ${currentLevel}. Current: ${currentLevel}, requested: ${tier}`, {
+          currentLevel
         });
       }
 
       if (currentLevel >= config.maxLevel) {
-        return res.status(400).json({ error: 'Already at max level' });
+        return failPurchase(400, 'max_level_reached', 'Already at max level');
       }
 
       const price = config.prices[tier];
 
       if (config.currency === "silver") {
         if (player.totalSilverCoins < price) {
-          return res.status(400).json({ error: `Not enough silver. Need: ${price}, have: ${player.totalSilverCoins}` });
+          return failPurchase(400, 'insufficient_silver', `Not enough silver. Need: ${price}, have: ${player.totalSilverCoins}`, {
+            required: price,
+            available: player.totalSilverCoins
+          });
         }
         player.totalSilverCoins -= price;
       } else {
         if (player.totalGoldCoins < price) {
-          return res.status(400).json({ error: `Not enough gold. Need: ${price}, have: ${player.totalGoldCoins}` });
+          return failPurchase(400, 'insufficient_gold', `Not enough gold. Need: ${price}, have: ${player.totalGoldCoins}`, {
+            required: price,
+            available: player.totalGoldCoins
+          });
         }
         player.totalGoldCoins -= price;
       }
@@ -279,25 +319,31 @@ router.post('/buy', writeLimiter, async (req, res) => {
       const currentLevel = upgrades[resolvedUpgradeKey] || 0;
 
       if (tier !== currentLevel) {
-        return res.status(400).json({
-          error: `Must buy tier ${currentLevel}. Current: ${currentLevel}, requested: ${tier}`
+        return failPurchase(400, 'tier_mismatch', `Must buy tier ${currentLevel}. Current: ${currentLevel}, requested: ${tier}`, {
+          currentLevel
         });
       }
 
       if (currentLevel >= config.maxLevel) {
-        return res.status(400).json({ error: 'Already at max level' });
+        return failPurchase(400, 'max_level_reached', 'Already at max level');
       }
 
       const price = config.prices[currentLevel];
 
       if (config.currency === "gold") {
         if (player.totalGoldCoins < price) {
-          return res.status(400).json({ error: `Not enough gold. Need: ${price}, have: ${player.totalGoldCoins}` });
+          return failPurchase(400, 'insufficient_gold', `Not enough gold. Need: ${price}, have: ${player.totalGoldCoins}`, {
+            required: price,
+            available: player.totalGoldCoins
+          });
         }
         player.totalGoldCoins -= price;
       } else {
         if (player.totalSilverCoins < price) {
-          return res.status(400).json({ error: `Not enough silver. Need: ${price}, have: ${player.totalSilverCoins}` });
+          return failPurchase(400, 'insufficient_silver', `Not enough silver. Need: ${price}, have: ${player.totalSilverCoins}`, {
+            required: price,
+            available: player.totalSilverCoins
+          });
         }
         player.totalSilverCoins -= price;
       }
@@ -309,7 +355,10 @@ router.post('/buy', writeLimiter, async (req, res) => {
       const price = config.price;
 
       if (player.totalGoldCoins < price) {
-        return res.status(400).json({ error: `Not enough gold. Need: ${price}, have: ${player.totalGoldCoins}` });
+        return failPurchase(400, 'insufficient_gold', `Not enough gold. Need: ${price}, have: ${player.totalGoldCoins}`, {
+          required: price,
+          available: player.totalGoldCoins
+        });
       }
 
       player.totalGoldCoins -= price;
@@ -318,7 +367,7 @@ router.post('/buy', writeLimiter, async (req, res) => {
       logger.info({ wallet: walletLower, ridesBought: config.amount, price, currency: 'gold', paidRidesRemaining: upgrades.paidRidesRemaining }, 'Rides purchased');
 
     } else {
-      return res.status(400).json({ error: 'Unknown upgrade type' });
+      return failPurchase(400, 'unknown_upgrade_type', 'Unknown upgrade type');
     }
 
     // Save
@@ -335,18 +384,7 @@ router.post('/buy', writeLimiter, async (req, res) => {
     const resetAt = upgrades.freeRidesResetAt || nowDate;
     const msUntilReset = Math.max(0, (8 * 60 * 60 * 1000) - (nowDate - resetAt));
 
-    await logSecurityEvent({
-      wallet: walletLower,
-      eventType: 'purchase_attempt',
-      route: req.path,
-      ipAddress: req.ip,
-      details: {
-        requestedUpgradeKey,
-        resolvedUpgradeKey,
-        tier: tier ?? 0,
-        authMode: authMode || 'wallet'
-      }
-    });
+    await logPurchaseResult('success', 'completed');
 
     logger.info({ wallet: walletLower, requestedUpgradeKey, resolvedUpgradeKey, tier: tier ?? 0 }, 'Purchase processed');
 
@@ -371,6 +409,24 @@ router.post('/buy', writeLimiter, async (req, res) => {
     });
 
   } catch (error) {
+    const walletLower = typeof req.body?.wallet === 'string' ? req.body.wallet.toLowerCase() : null;
+    if (walletLower) {
+      await logSecurityEvent({
+        wallet: walletLower,
+        eventType: 'purchase_result',
+        route: req.path,
+        ipAddress: req.ip,
+        details: {
+          requestedUpgradeKey: String(req.body?.upgradeKey || '').trim(),
+          resolvedUpgradeKey: resolveUpgradeKey(String(req.body?.upgradeKey || '').trim()),
+          tier: req.body?.tier ?? 0,
+          authMode: req.body?.authMode || 'wallet',
+          status: 'fail',
+          reason: 'server_error',
+          error: error.message
+        }
+      });
+    }
     logger.error({ err: error }, 'POST /buy error');
     res.status(500).json({ error: 'Server error' });
   }
