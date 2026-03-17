@@ -41,7 +41,9 @@ const gameResultSchema = new mongoose.Schema({
   // ✅ EIP-191 подпись для верификации
   signature: {
     type: String,
-    required: true
+    required: true,
+    unique: true,
+    index: true
   },
   
   // ✅ Timestamp из фронтенда (для защиты от старых результатов)
