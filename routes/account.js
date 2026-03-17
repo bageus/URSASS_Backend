@@ -8,7 +8,7 @@ const {
   resolvePrimaryId
 } = require('../utils/accountManager');
 const { verifySignature } = require('../utils/verifySignature');
-const { readLimiter, writeLimiter } = require('../middleware/rateLimiter');
+const { readLimiter, writeLimiter, verifyTelegramLimiter } = require('../middleware/rateLimiter');
 const Player = require('../models/Player');
 const AccountLink = require('../models/AccountLink');
 const LinkCode = require('../models/LinkCode');
@@ -165,7 +165,7 @@ router.post('/link/request-code', writeLimiter, async (req, res) => {
  * POST /api/account/link/verify-telegram
  * Called by the Telegram bot when user sends a verification code
  */
-router.post('/link/verify-telegram', async (req, res) => {
+router.post('/link/verify-telegram', verifyTelegramLimiter, async (req, res) => {
   try {
     const { telegramId, code, botSecret } = req.body;
 

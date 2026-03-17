@@ -25,6 +25,20 @@ const writeLimiter = rateLimit({
   keyGenerator: getClientIp
 });
 
+// ✅ Более строгий лимит для верификации Telegram-кодов
+const verifyTelegramLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 5,
+  message: '❌ Слишком много попыток подтверждения Telegram-кода. Попробуйте позже.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const clientIp = getClientIp(req);
+    const telegramId = req.body && req.body.telegramId ? String(req.body.telegramId).trim() : 'unknown';
+    return `${clientIp}:${telegramId}`;
+  }
+});
+
 // ✅ Мягкий лимит для GET/чтения
 const readLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
@@ -38,5 +52,6 @@ const readLimiter = rateLimit({
 module.exports = {
   saveResultLimiter,
   writeLimiter,
-  readLimiter
+  readLimiter,
+  verifyTelegramLimiter
 };
