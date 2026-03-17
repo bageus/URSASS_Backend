@@ -9,6 +9,7 @@ const { writeLimiter, readLimiter } = require('../middleware/rateLimiter');
 const SecurityEvent = require('../models/SecurityEvent');
 const logger = require('../utils/logger');
 const { markSuspicious } = require('../middleware/requestMetrics');
+const { logSecurityEvent, normalizeWallet, validateTimestampWindow } = require('../utils/security');
 
 const UPGRADE_KEY_ALIASES = {
   spin_alert: 'alert',
@@ -44,21 +45,13 @@ function normalizeShieldUpgrades(upgrades) {
   return changed;
 }
 
-async function logSecurityEvent({ wallet = null, eventType, route, ipAddress, details = {} }) {
-  try {
-    await SecurityEvent.create({ wallet, eventType, route, ipAddress, details });
-  } catch (error) {
-    logger.warn({ error: error.message, eventType }, 'Failed to persist SecurityEvent');
-  }
-}
-
 /**
  * GET /api/store/upgrades/:wallet
  * Get all upgrades + rides + effects
  */
 router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
   try {
-    const wallet = req.params.wallet.toLowerCase();
+    const wallet = normalizeWallet(req.params.wallet);
 
     if (!wallet || wallet.length < 3) {
       return res.status(400).json({ error: 'Invalid wallet address' });
@@ -173,7 +166,7 @@ router.post('/buy', writeLimiter, async (req, res) => {
       }
     }
 
-    const walletLower = wallet.toLowerCase();
+    const walletLower = normalizeWallet(wallet);
     const purchaseDetails = {
       requestedUpgradeKey,
       resolvedUpgradeKey,
@@ -234,17 +227,19 @@ router.post('/buy', writeLimiter, async (req, res) => {
     }
 
     // Timestamp validation
-    const ts = typeof timestamp === 'number' ? timestamp : parseInt(timestamp, 10);
+    const timestampValidation = validateTimestampWindow(timestamp, { windowMs: 10 * 60 * 1000 });
 
-    if (!ts || isNaN(ts)) {
-      return failPurchase(400, 'invalid_timestamp_format', 'Invalid timestamp format');
+    if (!timestampValidation.valid) {
+      if (timestampValidation.error === 'Invalid timestamp format') {
+        return failPurchase(400, 'invalid_timestamp_format', timestampValidation.error);
+      }
+
+      return failPurchase(400, 'timestamp_out_of_range', timestampValidation.error, {
+        timeDiff: timestampValidation.timeDiff
+      });
     }
 
-    const now = Date.now();
-    const timeDiff = Math.abs(now - ts);
-    if (timeDiff > 10 * 60 * 1000) {
-      return failPurchase(400, 'timestamp_out_of_range', `Invalid timestamp. Diff: ${timeDiff}ms`, { timeDiff });
-    }
+    const { normalizedTs: ts } = timestampValidation;
 
     if (isTelegramAuth) {
       // Verify that the telegramId matches the claimed primaryId (wallet) via AccountLink
@@ -441,7 +436,7 @@ const consumeRideHandler = async (req, res) => {
     const { wallet, rideSessionId } = req.body;
     if (!wallet) return res.status(400).json({ error: 'Missing wallet' });
 
-    const walletLower = wallet.toLowerCase();
+    const walletLower = normalizeWallet(wallet);
     const isLegacyUseRideRoute = req.path === '/use-ride';
 
     let sessionId = null;
@@ -559,7 +554,7 @@ router.post('/use-ride', writeLimiter, consumeRideHandler);
  */
 router.get('/rides/:wallet', readLimiter, async (req, res) => {
   try {
-    const wallet = req.params.wallet.toLowerCase();
+    const wallet = normalizeWallet(req.params.wallet);
 
     let upgrades = await PlayerUpgrades.findOne({ wallet });
     if (!upgrades) {

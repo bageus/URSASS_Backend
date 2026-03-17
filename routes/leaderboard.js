@@ -7,18 +7,9 @@ const GameResult = require('../models/GameResult');
 const AccountLink = require('../models/AccountLink');
 const { verifySignature, createMessageToVerify } = require('../utils/verifySignature');
 const { saveResultLimiter, readLimiter } = require('../middleware/rateLimiter');
-const SecurityEvent = require('../models/SecurityEvent');
 const logger = require('../utils/logger');
 const { markSuspicious } = require('../middleware/requestMetrics');
-
-
-async function logSecurityEvent({ wallet = null, eventType, route, ipAddress, details = {} }) {
-  try {
-    await SecurityEvent.create({ wallet, eventType, route, ipAddress, details });
-  } catch (error) {
-    logger.warn({ error: error.message, eventType }, 'Failed to persist SecurityEvent');
-  }
-}
+const { logSecurityEvent, normalizeWallet, validateTimestampWindow } = require('../utils/security');
 
 /**
  * Build display name for a player based on their AccountLink data.
@@ -157,7 +148,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       }
     }
 
-    const walletLower = wallet.toLowerCase();
+    const walletLower = normalizeWallet(wallet);
 
     // Anti-cheat: validate score, distance, and coin values
     if (typeof score !== 'number' || isNaN(score) || score < 0 || score > 999999) {
@@ -186,24 +177,19 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       silver: Math.floor(silverCoinsVal)
     };
 
-    const tsRaw = typeof timestamp === 'number' ? timestamp : parseInt(timestamp, 10);
-
-    if (!tsRaw || isNaN(tsRaw)) {
-      return res.status(400).json({ error: 'Invalid timestamp format' });
-    }
-
-    // Support both milliseconds and seconds timestamps from clients.
-    // If value looks like unix seconds (10 digits), normalize to ms for validation.
-    const ts = tsRaw < 1e12 ? tsRaw * 1000 : tsRaw;
-
-    const now = Date.now();
-    const ageMs = now - ts;
     const maxPastAge = Number(process.env.MAX_RESULT_TIMESTAMP_AGE_MS || 2 * 60 * 60 * 1000);
     const maxFutureSkew = Number(process.env.MAX_RESULT_FUTURE_SKEW_MS || 3 * 60 * 1000);
+    const timestampValidation = validateTimestampWindow(timestamp, {
+      maxPastAgeMs: maxPastAge,
+      maxFutureSkewMs: maxFutureSkew
+    });
 
-    logger.info({ serverTime: now, clientTimestamp: ts, ageMs }, 'Result timestamp check');
+    if (!timestampValidation.valid) {
+      if (timestampValidation.error === 'Invalid timestamp format') {
+        return res.status(400).json({ error: timestampValidation.error });
+      }
 
-    if (ageMs > maxPastAge || ageMs < -maxFutureSkew) {
+      const { ageMs } = timestampValidation;
       markSuspicious('invalid_timestamp');
       await logSecurityEvent({
         wallet: walletLower,
@@ -214,10 +200,13 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       });
 
       logger.warn({ wallet: walletLower, ageMs, maxPastAge, maxFutureSkew }, 'Timestamp invalid');
-      return res.status(400).json({
-        error: `Invalid timestamp. Age: ${ageMs}ms.`
-      });
+      return res.status(400).json({ error: timestampValidation.error });
     }
+
+    const now = Date.now();
+    const { normalizedTs: ts, ageMs } = timestampValidation;
+
+    logger.info({ serverTime: now, clientTimestamp: ts, ageMs }, 'Result timestamp check');
 
     if (isTelegramAuth) {
       // Verify that the telegramId matches the claimed primaryId (wallet) via AccountLink

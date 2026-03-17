@@ -13,26 +13,9 @@ const Player = require('../models/Player');
 const AccountLink = require('../models/AccountLink');
 const LinkCode = require('../models/LinkCode');
 const logger = require('../utils/logger');
+const { normalizeWallet, validateTimestampWindow } = require('../utils/security');
 
 const WALLET_TIMESTAMP_WINDOW_MS = Number(process.env.WALLET_AUTH_TIMESTAMP_WINDOW_MS || 10 * 60 * 1000);
-
-function normalizeAndValidateTimestamp(timestamp) {
-  const rawTs = typeof timestamp === 'number' ? timestamp : parseInt(timestamp, 10);
-
-  if (!rawTs || Number.isNaN(rawTs)) {
-    return { valid: false, error: 'Invalid timestamp format' };
-  }
-
-  // Support both milliseconds and unix seconds values.
-  const normalizedTs = rawTs < 1e12 ? rawTs * 1000 : rawTs;
-  const timeDiff = Math.abs(Date.now() - normalizedTs);
-
-  if (timeDiff > WALLET_TIMESTAMP_WINDOW_MS) {
-    return { valid: false, error: `Invalid timestamp. Diff: ${timeDiff}ms` };
-  }
-
-  return { valid: true, normalizedTs };
-}
 
 /**
  * Generate a random link code like "BEAR-A3F9K2"
@@ -87,14 +70,14 @@ router.post('/auth/wallet', readLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Missing wallet, signature, or timestamp' });
     }
 
-    const timestampValidation = normalizeAndValidateTimestamp(timestamp);
+    const timestampValidation = validateTimestampWindow(timestamp, { windowMs: WALLET_TIMESTAMP_WINDOW_MS });
     if (!timestampValidation.valid) {
       return res.status(400).json({ error: timestampValidation.error });
     }
 
     const { normalizedTs } = timestampValidation;
 
-    const walletLower = wallet.toLowerCase();
+    const walletLower = normalizeWallet(wallet);
 
     const message = `Auth wallet\nWallet: ${walletLower}\nTimestamp: ${normalizedTs}`;
     const isValid = verifySignature(message, signature, walletLower);
@@ -257,14 +240,14 @@ router.post('/link/wallet', writeLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Missing fields' });
     }
 
-    const timestampValidation = normalizeAndValidateTimestamp(timestamp);
+    const timestampValidation = validateTimestampWindow(timestamp, { windowMs: WALLET_TIMESTAMP_WINDOW_MS });
     if (!timestampValidation.valid) {
       return res.status(400).json({ error: timestampValidation.error });
     }
 
     const { normalizedTs } = timestampValidation;
 
-    const walletLower = wallet.toLowerCase();
+    const walletLower = normalizeWallet(wallet);
 
     const message = `Link wallet\nWallet: ${walletLower}\nPrimaryId: ${primaryId}\nTimestamp: ${normalizedTs}`;
     const isValid = verifySignature(message, signature, walletLower);
