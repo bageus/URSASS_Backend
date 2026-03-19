@@ -8,6 +8,9 @@ const { normalizeWallet } = require('./security');
 const { verifyDonationTransaction } = require('./donationVerifier');
 
 let verifierImpl = verifyDonationTransaction;
+const erc20TransferInterface = new ethers.utils.Interface([
+  'function transfer(address to, uint256 value)'
+]);
 
 function setDonationVerifierForTests(verifier) {
   verifierImpl = verifier || verifyDonationTransaction;
@@ -37,6 +40,28 @@ function buildProductView(config, alreadyPurchased) {
     purchaseLimit: config.purchaseLimit,
     alreadyPurchased,
     canPurchase: config.purchaseLimit === 'once' ? !alreadyPurchased : true
+  };
+}
+
+function buildDonationTxRequest(payment) {
+  const amountRaw = ethers.utils.parseUnits(
+    String(payment.expectedAmount),
+    payment.expectedDecimals
+  ).toHexString();
+
+  return {
+    to: payment.tokenContract,
+    value: '0x0',
+    data: erc20TransferInterface.encodeFunctionData('transfer', [
+      payment.merchantWallet,
+      ethers.BigNumber.from(amountRaw)
+    ]),
+    chainLabel: payment.network,
+    tokenSymbol: payment.tokenSymbol,
+    tokenDecimals: payment.expectedDecimals,
+    transferTo: payment.merchantWallet,
+    transferAmount: payment.expectedAmount,
+    transferAmountRaw: amountRaw
   };
 }
 
@@ -310,7 +335,8 @@ function serializeDonationPayment(payment) {
     txHash: payment.txHash,
     confirmations: payment.confirmations,
     reward: payment.productSnapshot?.grant || { gold: 0, silver: 0 },
-    failureReason: payment.failureReason
+    failureReason: payment.failureReason,
+    txRequest: buildDonationTxRequest(payment)
   };
 }
 
