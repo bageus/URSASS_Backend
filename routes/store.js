@@ -166,8 +166,9 @@ router.get('/donations/:wallet', readLimiter, async (req, res) => {
  */
 router.post('/donations/create-payment', writeLimiter, async (req, res) => {
   try {
-    const { wallet, productKey } = req.body;
-    const payment = await createDonationPayment(wallet, productKey);
+    const { wallet, productKey, donationKey, key, productId } = req.body;
+    const resolvedProductKey = productKey || donationKey || key || productId;
+    const payment = await createDonationPayment(wallet, resolvedProductKey);
 
     await logSecurityEvent({
       wallet: payment.wallet,
