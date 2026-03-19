@@ -404,3 +404,38 @@ test('POST /api/store/donations/create-payment blocks second Starter Pack after 
 
   await server.close();
 });
+
+
+test('GET /api/game/config returns unauth preset built from backend config', async () => {
+  const { server, baseUrl } = await startServer();
+
+  const res = await fetch(`${baseUrl}/api/game/config?mode=unauth`);
+
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.mode, 'unauth');
+  assert.equal(body.saveProgress, false);
+  assert.equal(body.eligibleForLeaderboard, false);
+  assert.equal(body.storeEnabled, false);
+  assert.equal(body.rides.limited, false);
+  assert.equal(body.preset, 'all_improvements_enabled');
+  assert.equal(body.activeEffects.start_with_shield, true);
+  assert.equal(body.activeEffects.start_with_radar, true);
+  assert.equal(body.activeEffects.perfect_spin_enabled, true);
+  assert.equal(body.activeEffects.shield_capacity, 3);
+  assert.equal(body.activeEffects.x2_duration_bonus, 15);
+
+  await server.close();
+});
+
+test('GET /api/game/config rejects unknown mode', async () => {
+  const { server, baseUrl } = await startServer();
+
+  const res = await fetch(`${baseUrl}/api/game/config?mode=unknown`);
+
+  assert.equal(res.status, 404);
+  const body = await res.json();
+  assert.match(body.error, /Unknown game mode config/i);
+
+  await server.close();
+});

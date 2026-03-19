@@ -3,6 +3,7 @@ const cors = require('cors');
 const leaderboardRoutes = require('./routes/leaderboard');
 const storeRoutes = require('./routes/store');
 const accountRoutes = require('./routes/account');
+const gameRoutes = require('./routes/game');
 const logger = require('./utils/logger');
 const { metricsMiddleware, renderMetricsText } = require('./middleware/requestMetrics');
 
@@ -56,10 +57,12 @@ function createApp() {
   app.use('/api/leaderboard', leaderboardRoutes);
   app.use('/api/store', storeRoutes);
   app.use('/api/account', accountRoutes);
+  app.use('/api/game', gameRoutes);
 
   app.use('/api/v1/leaderboard', leaderboardRoutes);
   app.use('/api/v1/store', storeRoutes);
   app.use('/api/v1/account', accountRoutes);
+  app.use('/api/v1/game', gameRoutes);
 
   app.get('/health', (req, res) => {
     res.json({ status: 'OK', timestamp: new Date(), mongodb: 'connected' });

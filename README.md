@@ -19,7 +19,8 @@ URSASS_Backend/
 ├── routes/
 │   ├── leaderboard.js   # Leaderboard & game result routes
 │   ├── store.js         # Upgrades & rides store routes
-│   └── account.js       # Auth & account linking routes
+│   ├── account.js       # Auth & account linking routes
+│   └── game.js          # Runtime game mode configuration routes
 ├── models/
 │   ├── Player.js
 │   ├── PlayerUpgrades.js
@@ -98,7 +99,16 @@ Versioned aliases are also available under `/api/v1/*` (backward-compatible with
 | `POST` | `/api/account/auth/wallet` | Authenticate via wallet (requires EIP-191 signature) |
 | `POST` | `/api/account/link/request-code` | Generate a 6-character code to link Telegram to a wallet |
 | `GET` | `/api/account/info` | Get account info |
+| `GET` | `/api/game/config?mode=unauth` | Get runtime config for non-persistent game modes |
 
+
+
+## Unauthenticated Browser Mode
+
+- Use `GET /api/game/config?mode=unauth` to fetch the runtime preset for browser users who choose not to authenticate.
+- This mode is **non-persistent**: no leaderboard entry, no progress save, no store purchases, and no ride limits are enforced by the config response.
+- The backend returns a ready-to-apply `activeEffects` object built with the same `calculateEffects` logic used for real player upgrades, so the frontend does not need to hardcode a separate improvement set.
+- Current preset: `all_improvements_enabled` (max gameplay improvements enabled for preview/demo sessions).
 
 ## Store Upgrade Semantics
 
