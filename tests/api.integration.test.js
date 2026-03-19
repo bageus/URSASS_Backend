@@ -308,6 +308,10 @@ test('POST /api/store/donations/create-payment creates payment intent', async ()
   assert.equal(body.productKey, 'starter_pack');
   assert.equal(body.amount, '0.02');
   assert.equal(body.currency, 'USDT');
+  assert.equal(body.txRequest.to, '0x55d398326f99059ff775485246999027b3197955');
+  assert.equal(body.txRequest.transferTo, '0x244bcc2721f1037958862825c3feb6a7be6204a7');
+  assert.equal(body.txRequest.transferAmount, '0.02');
+  assert.match(body.txRequest.data, /^0xa9059cbb/i);
 
   await server.close();
 });
@@ -351,6 +355,7 @@ test('POST /api/store/donations/submit-transaction credits player after successf
   const submitted = await submitRes.json();
   assert.equal(submitted.status, 'credited');
   assert.deepEqual(submitted.reward, { gold: 400, silver: 400 });
+  assert.equal(submitted.txRequest.transferAmount, '0.02');
   assert.equal(player.totalGoldCoins, 410);
   assert.equal(player.totalSilverCoins, 420);
 
