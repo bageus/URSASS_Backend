@@ -312,6 +312,37 @@ test('POST /api/store/donations/create-payment creates payment intent', async ()
   assert.equal(body.txRequest.transferTo, '0x244bcc2721f1037958862825c3feb6a7be6204a7');
   assert.equal(body.txRequest.transferAmount, '0.02');
   assert.match(body.txRequest.data, /^0xa9059cbb/i);
+  assert.equal(body.txRequest.walletPayload.method, 'eth_sendTransaction');
+  assert.deepEqual(body.txRequest.walletPayload.params[0], {
+    to: body.txRequest.to,
+    value: '0x0',
+    data: body.txRequest.data
+  });
+
+  await server.close();
+});
+
+
+
+test('POST /api/store/donations/create-payment accepts legacy productId alias', async () => {
+  const wallet = Wallet.createRandom().address.toLowerCase();
+
+  Player.findOne = () => queryResult({
+    wallet,
+    totalGoldCoins: 0,
+    totalSilverCoins: 0
+  });
+
+  const { server, baseUrl } = await startServer();
+  const res = await fetch(`${baseUrl}/api/store/donations/create-payment`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ wallet, productId: 'starter_pack' })
+  });
+
+  assert.equal(res.status, 201);
+  const body = await res.json();
+  assert.equal(body.productKey, 'starter_pack');
 
   await server.close();
 });

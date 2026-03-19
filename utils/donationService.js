@@ -49,19 +49,27 @@ function buildDonationTxRequest(payment) {
     payment.expectedDecimals
   ).toHexString();
 
-  return {
+  const transaction = {
     to: payment.tokenContract,
     value: '0x0',
     data: erc20TransferInterface.encodeFunctionData('transfer', [
       payment.merchantWallet,
       ethers.BigNumber.from(amountRaw)
-    ]),
+    ])
+  };
+
+  return {
+    ...transaction,
     chainLabel: payment.network,
     tokenSymbol: payment.tokenSymbol,
     tokenDecimals: payment.expectedDecimals,
     transferTo: payment.merchantWallet,
     transferAmount: payment.expectedAmount,
-    transferAmountRaw: amountRaw
+    transferAmountRaw: amountRaw,
+    walletPayload: {
+      method: 'eth_sendTransaction',
+      params: [transaction]
+    }
   };
 }
 
