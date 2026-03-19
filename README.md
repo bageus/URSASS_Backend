@@ -107,6 +107,8 @@ The store now contains **two parallel product systems**:
 - `UPGRADES_CONFIG` for gameplay upgrades and rides purchased with in-game `gold` / `silver`
 - `DONATIONS_CONFIG` for real-money style USDT donation packs that credit in-game currencies after on-chain verification
 
+`create-payment` / `payment status` responses also include a prebuilt `txRequest` payload for an ERC-20 `transfer(...)` call, so the frontend can immediately open the connected wallet confirmation instead of manually assembling transaction data.
+
 - `shield` is now a **1-level permanent progression**:
   - level 1 enables `activeEffects.start_with_shield = true`.
 - `shield_capacity` is a separate **2-level permanent progression**:
