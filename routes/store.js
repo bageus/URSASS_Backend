@@ -4,6 +4,7 @@ const Player = require('../models/Player');
 const PlayerUpgrades = require('../models/PlayerUpgrades');
 const AccountLink = require('../models/AccountLink');
 const { UPGRADES_CONFIG, calculateEffects } = require('../utils/upgradesConfig');
+const { listDonationProducts, createDonationPayment, submitDonationTransaction, getDonationPayment, serializeDonationPayment } = require('../utils/donationService');
 const { verifySignature } = require('../utils/verifySignature');
 const { writeLimiter, readLimiter } = require('../middleware/rateLimiter');
 const SecurityEvent = require('../models/SecurityEvent');
@@ -136,6 +137,98 @@ router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
 
   } catch (error) {
     logger.error({ err: error }, 'GET /upgrades error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * GET /api/store/donations/:wallet
+ * Get all USDT donation products for a wallet
+ */
+router.get('/donations/:wallet', readLimiter, async (req, res) => {
+  try {
+    const wallet = normalizeWallet(req.params.wallet);
+
+    if (!wallet || wallet.length < 3) {
+      return res.status(400).json({ error: 'Invalid wallet address' });
+    }
+
+    const payload = await listDonationProducts(wallet);
+    res.json(payload);
+  } catch (error) {
+    logger.error({ err: error }, 'GET /donations error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * POST /api/store/donations/create-payment
+ */
+router.post('/donations/create-payment', writeLimiter, async (req, res) => {
+  try {
+    const { wallet, productKey } = req.body;
+    const payment = await createDonationPayment(wallet, productKey);
+
+    await logSecurityEvent({
+      wallet: payment.wallet,
+      eventType: 'donation_payment_created',
+      route: req.path,
+      ipAddress: req.ip,
+      details: {
+        paymentId: payment.paymentId,
+        productKey: payment.productKey,
+        amount: payment.expectedAmount
+      }
+    });
+
+    res.status(201).json(serializeDonationPayment(payment));
+  } catch (error) {
+    logger.error({ err: error }, 'POST /donations/create-payment error');
+    res.status(error.statusCode || 500).json({ error: error.message || 'Server error' });
+  }
+});
+
+/**
+ * POST /api/store/donations/submit-transaction
+ */
+router.post('/donations/submit-transaction', writeLimiter, async (req, res) => {
+  try {
+    const { wallet, paymentId, txHash } = req.body;
+    const payment = await submitDonationTransaction({ wallet, paymentId, txHash });
+
+    await logSecurityEvent({
+      wallet: payment.wallet,
+      eventType: 'donation_tx_submitted',
+      route: req.path,
+      ipAddress: req.ip,
+      details: {
+        paymentId: payment.paymentId,
+        productKey: payment.productKey,
+        txHash: payment.txHash,
+        status: payment.status
+      }
+    });
+
+    res.json(serializeDonationPayment(payment));
+  } catch (error) {
+    logger.error({ err: error }, 'POST /donations/submit-transaction error');
+    res.status(error.statusCode || 500).json({ error: error.message || 'Server error' });
+  }
+});
+
+/**
+ * GET /api/store/donations/payment/:paymentId
+ */
+router.get('/donations/payment/:paymentId', readLimiter, async (req, res) => {
+  try {
+    const payment = await getDonationPayment(req.params.paymentId);
+    if (!payment) {
+      return res.status(404).json({ error: 'Payment not found' });
+    }
+
+    res.json(serializeDonationPayment(payment));
+  } catch (error) {
+    logger.error({ err: error }, 'GET /donations/payment error');
     res.status(500).json({ error: 'Server error' });
   }
 });

@@ -23,6 +23,7 @@ URSASS_Backend/
 ├── models/
 │   ├── Player.js
 │   ├── PlayerUpgrades.js
+│   ├── DonationPayment.js
 │   ├── GameResult.js
 │   ├── AccountLink.js
 │   └── LinkCode.js
@@ -31,7 +32,10 @@ URSASS_Backend/
 ├── utils/
 │   ├── verifySignature.js
 │   ├── accountManager.js
-│   └── upgradesConfig.js
+│   ├── upgradesConfig.js
+│   ├── donationsConfig.js
+│   ├── donationService.js
+│   └── donationVerifier.js
 ├── .env.example
 └── package.json
 ```
@@ -58,6 +62,16 @@ npm start
 | `CORS_ALLOWED_ORIGINS` | Optional comma-separated list of extra allowed origins |
 | `MAX_RESULT_TIMESTAMP_AGE_MS` | Max allowed age for game result timestamp in the past (default: `7200000`, i.e. 2h) |
 | `MAX_RESULT_FUTURE_SKEW_MS` | Max allowed future clock skew for game result timestamp (default: `180000`, i.e. 3m) |
+| `DONATIONS_PRICE_MODE` | Donation prices mode: `test` or `prod` (default: `test`) |
+| `DONATIONS_NETWORK` | Donation network label (default: `BSC`) |
+| `DONATIONS_TOKEN_SYMBOL` | Donation token symbol (default: `USDT`) |
+| `DONATIONS_TOKEN_DECIMALS` | Donation token decimals (default: `18`) |
+| `DONATIONS_TOKEN_CONTRACT` | USDT contract address used for donation validation |
+| `DONATIONS_MERCHANT_WALLET` | Merchant wallet that receives player transfers |
+| `DONATIONS_TTL_MINUTES` | Payment intent lifetime in minutes (default: `30`) |
+| `DONATIONS_REQUIRED_CONFIRMATIONS` | Required confirmations before crediting (default: `1`) |
+| `DONATIONS_RPC_URL` | JSON-RPC endpoint used to verify donation transactions |
+| `BSC_RPC_URL` | Alias for donation RPC URL |
 
 See `.env.example` for a template.
 
@@ -74,7 +88,11 @@ Versioned aliases are also available under `/api/v1/*` (backward-compatible with
 | `GET` | `/api/leaderboard/player/:wallet` | Get player info and history |
 | `GET` | `/api/leaderboard/verified-results/:wallet` | Get verified game results for a wallet |
 | `GET` | `/api/store/upgrades/:wallet` | Get player upgrades, rides, and balance |
+| `GET` | `/api/store/donations/:wallet` | Get donation products available for a wallet |
 | `POST` | `/api/store/buy` | Buy an upgrade or ride pack (requires EIP-191 signature) |
+| `POST` | `/api/store/donations/create-payment` | Create a USDT donation payment intent |
+| `POST` | `/api/store/donations/submit-transaction` | Submit tx hash for donation payment verification |
+| `GET` | `/api/store/donations/payment/:paymentId` | Get donation payment status |
 | `POST` | `/api/store/consume-ride` | Consume a ride when starting a game (requires unique `rideSessionId`) |
 | `POST` | `/api/account/auth/telegram` | Authenticate via Telegram |
 | `POST` | `/api/account/auth/wallet` | Authenticate via wallet (requires EIP-191 signature) |
@@ -83,6 +101,11 @@ Versioned aliases are also available under `/api/v1/*` (backward-compatible with
 
 
 ## Store Upgrade Semantics
+
+The store now contains **two parallel product systems**:
+
+- `UPGRADES_CONFIG` for gameplay upgrades and rides purchased with in-game `gold` / `silver`
+- `DONATIONS_CONFIG` for real-money style USDT donation packs that credit in-game currencies after on-chain verification
 
 - `shield` is now a **1-level permanent progression**:
   - level 1 enables `activeEffects.start_with_shield = true`.

@@ -8,6 +8,8 @@ const GameResult = require('../models/GameResult');
 const PlayerUpgrades = require('../models/PlayerUpgrades');
 const SecurityEvent = require('../models/SecurityEvent');
 const LinkCode = require('../models/LinkCode');
+const DonationPayment = require('../models/DonationPayment');
+const { setDonationVerifierForTests, resetDonationVerifier } = require('../utils/donationService');
 
 const { createApp } = require('../app');
 
@@ -31,6 +33,7 @@ async function startServer() {
 }
 
 let originalStartSession;
+let donationPayments;
 
 test.before(() => {
   process.env.TELEGRAM_BOT_SECRET = 'test-secret';
@@ -53,6 +56,45 @@ test.beforeEach(() => {
   Player.prototype.save = async function save() { return this; };
   PlayerUpgrades.prototype.save = async function save() { return this; };
   LinkCode.deleteOne = async () => ({ deletedCount: 1 });
+  donationPayments = [];
+  DonationPayment.prototype.save = async function save() {
+    const plain = this.toObject ? this.toObject() : { ...this };
+    const index = donationPayments.findIndex((item) => item.paymentId === plain.paymentId);
+    const stored = {
+      ...plain,
+      save: async function saveSelf() { return this; }
+    };
+    if (index >= 0) {
+      donationPayments[index] = stored;
+    } else {
+      donationPayments.push(stored);
+    }
+    Object.assign(this, stored);
+    return this;
+  };
+  DonationPayment.findOne = async (query = {}) => {
+    const match = donationPayments.find((item) => {
+      return Object.entries(query).every(([key, value]) => {
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+          if ('$in' in value) {
+            return value.$in.includes(item[key]);
+          }
+          if ('$ne' in value) {
+            return item[key] !== value.$ne;
+          }
+        }
+        return item[key] === value;
+      });
+    });
+
+    return match ? { ...match, save: async function saveSelf() {
+      const index = donationPayments.findIndex((item) => item.paymentId === this.paymentId);
+      const updated = { ...this, save: this.save };
+      donationPayments[index] = updated;
+      return this;
+    } } : null;
+  };
+  resetDonationVerifier();
 });
 
 test('POST /api/leaderboard/save rejects invalid signature', async () => {
@@ -218,5 +260,147 @@ test('POST /api/account/link/verify-telegram rejects expired code', async () => 
   assert.equal(res.status, 400);
   const body = await res.json();
   assert.match(body.error, /Code expired/i);
+  await server.close();
+});
+
+test('GET /api/store/donations/:wallet returns donation products with Starter Pack available', async () => {
+  const wallet = Wallet.createRandom().address.toLowerCase();
+
+  Player.findOne = () => queryResult({
+    wallet,
+    totalGoldCoins: 0,
+    totalSilverCoins: 0
+  });
+
+  const { server, baseUrl } = await startServer();
+  const res = await fetch(`${baseUrl}/api/store/donations/${wallet}`);
+
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.network, 'BSC');
+  assert.equal(body.priceMode, 'test');
+  assert.equal(body.products.length, 6);
+  assert.equal(body.products[0].key, 'starter_pack');
+  assert.equal(body.products[0].canPurchase, true);
+
+  await server.close();
+});
+
+test('POST /api/store/donations/create-payment creates payment intent', async () => {
+  const wallet = Wallet.createRandom().address.toLowerCase();
+
+  Player.findOne = () => queryResult({
+    wallet,
+    totalGoldCoins: 0,
+    totalSilverCoins: 0
+  });
+
+  const { server, baseUrl } = await startServer();
+  const res = await fetch(`${baseUrl}/api/store/donations/create-payment`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ wallet, productKey: 'starter_pack' })
+  });
+
+  assert.equal(res.status, 201);
+  const body = await res.json();
+  assert.equal(body.status, 'created');
+  assert.equal(body.productKey, 'starter_pack');
+  assert.equal(body.amount, '0.02');
+  assert.equal(body.currency, 'USDT');
+
+  await server.close();
+});
+
+test('POST /api/store/donations/submit-transaction credits player after successful verification', async () => {
+  const wallet = Wallet.createRandom().address.toLowerCase();
+  const player = {
+    wallet,
+    totalGoldCoins: 10,
+    totalSilverCoins: 20,
+    save: async function save() { return this; }
+  };
+
+  Player.findOne = ({ wallet: requestedWallet }) => queryResult(requestedWallet === wallet ? player : null);
+
+  setDonationVerifierForTests(async () => ({
+    status: 'confirmed',
+    reason: 'confirmed',
+    confirmations: 2,
+    actualFrom: '0xsender',
+    actualTo: '0x244bcc2721f1037958862825c3feb6a7be6204a7',
+    actualAmount: '20000000000000000'
+  }));
+
+  const { server, baseUrl } = await startServer();
+
+  const createRes = await fetch(`${baseUrl}/api/store/donations/create-payment`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ wallet, productKey: 'starter_pack' })
+  });
+  const created = await createRes.json();
+
+  const submitRes = await fetch(`${baseUrl}/api/store/donations/submit-transaction`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ wallet, paymentId: created.paymentId, txHash: '0xtesthash' })
+  });
+
+  assert.equal(submitRes.status, 200);
+  const submitted = await submitRes.json();
+  assert.equal(submitted.status, 'credited');
+  assert.deepEqual(submitted.reward, { gold: 400, silver: 400 });
+  assert.equal(player.totalGoldCoins, 410);
+  assert.equal(player.totalSilverCoins, 420);
+
+  await server.close();
+});
+
+test('POST /api/store/donations/create-payment blocks second Starter Pack after successful credit', async () => {
+  const wallet = Wallet.createRandom().address.toLowerCase();
+  const player = {
+    wallet,
+    totalGoldCoins: 0,
+    totalSilverCoins: 0,
+    save: async function save() { return this; }
+  };
+
+  Player.findOne = () => queryResult(player);
+
+  setDonationVerifierForTests(async () => ({
+    status: 'confirmed',
+    reason: 'confirmed',
+    confirmations: 2,
+    actualFrom: '0xsender',
+    actualTo: '0x244bcc2721f1037958862825c3feb6a7be6204a7',
+    actualAmount: '20000000000000000'
+  }));
+
+  const { server, baseUrl } = await startServer();
+
+  const firstCreate = await fetch(`${baseUrl}/api/store/donations/create-payment`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ wallet, productKey: 'starter_pack' })
+  });
+  const created = await firstCreate.json();
+
+  await fetch(`${baseUrl}/api/store/donations/submit-transaction`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ wallet, paymentId: created.paymentId, txHash: '0xstarterhash' })
+  });
+
+  const secondCreate = await fetch(`${baseUrl}/api/store/donations/create-payment`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ wallet, productKey: 'starter_pack' })
+  });
+
+  assert.equal(secondCreate.status, 409);
+  const body = await secondCreate.json();
+  assert.match(body.error, /already purchased/i);
+
   await server.close();
 });
