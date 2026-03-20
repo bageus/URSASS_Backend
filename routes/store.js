@@ -142,6 +142,20 @@ router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
 });
 
 /**
+ * GET /api/store/donations/history/:wallet
+ * Get donation payment history for a wallet
+ */
+router.get('/donations/history/:wallet', readLimiter, async (req, res) => {
+  try {
+    const payload = await listDonationPayments(req.params.wallet, { limit: req.query.limit });
+    res.json(payload);
+  } catch (error) {
+    logger.error({ err: error }, 'GET /donations/history error');
+    res.status(error.statusCode || 500).json({ error: error.message || 'Server error' });
+  }
+});
+
+/**
  * GET /api/store/donations/:wallet
  * Get all USDT donation products for a wallet
  */
@@ -158,20 +172,6 @@ router.get('/donations/:wallet', readLimiter, async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'GET /donations error');
     res.status(500).json({ error: 'Server error' });
-  }
-});
-
-/**
- * GET /api/store/donations/history/:wallet
- * Get donation payment history for a wallet
- */
-router.get('/donations/history/:wallet', readLimiter, async (req, res) => {
-  try {
-    const payload = await listDonationPayments(req.params.wallet, { limit: req.query.limit });
-    res.json(payload);
-  } catch (error) {
-    logger.error({ err: error }, 'GET /donations/history error');
-    res.status(error.statusCode || 500).json({ error: error.message || 'Server error' });
   }
 });
 
