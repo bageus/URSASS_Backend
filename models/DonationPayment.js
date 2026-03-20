@@ -81,6 +81,18 @@ const donationPaymentSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  verificationReason: {
+    type: String,
+    default: null
+  },
+  providerStatus: {
+    type: String,
+    default: null
+  },
+  lastVerificationAt: {
+    type: Date,
+    default: null
+  },
   expiresAt: {
     type: Date,
     default: null,

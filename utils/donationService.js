@@ -6,6 +6,7 @@ const DonationPayment = require('../models/DonationPayment');
 const { DONATIONS_CONFIG, DONATIONS_PRICE_MODE, getDonationConfig } = require('./donationsConfig');
 const { normalizeWallet } = require('./security');
 const { verifyDonationTransaction } = require('./donationVerifier');
+const logger = require('./logger');
 
 let verifierImpl = verifyDonationTransaction;
 const erc20TransferInterface = new ethers.utils.Interface([
@@ -15,6 +16,10 @@ const SUBMIT_TIMEOUT_MS = 30 * 60 * 1000;
 const INTERNAL_STATUS_AWAITING_TX = 'awaiting_tx';
 const RESPONSELESS_STATUSES = new Set([INTERNAL_STATUS_AWAITING_TX]);
 const FINAL_STATUSES = new Set(['credited', 'failed', 'expired']);
+const DEFAULT_BSC_PUBLIC_RPC_URL = 'https://bsc-dataseed.binance.org/';
+const DONATION_RECHECK_INTERVAL_MS = Math.max(15 * 1000, Number(process.env.DONATIONS_RECHECK_INTERVAL_MS || 60 * 1000));
+const DONATION_RECHECK_BATCH_SIZE = Math.max(1, Number(process.env.DONATIONS_RECHECK_BATCH_SIZE || 25));
+let donationRecheckTimer = null;
 
 function setDonationVerifierForTests(verifier) {
   verifierImpl = verifier || verifyDonationTransaction;
@@ -25,12 +30,27 @@ function resetDonationVerifier() {
 }
 
 function getProvider() {
-  const rpcUrl = process.env.BSC_RPC_URL || process.env.DONATIONS_RPC_URL;
-  if (!rpcUrl) {
-    return null;
-  }
+  const configuredRpcUrl = process.env.BSC_RPC_URL || process.env.DONATIONS_RPC_URL;
+  const rpcUrl = configuredRpcUrl || DEFAULT_BSC_PUBLIC_RPC_URL;
 
-  return new ethers.providers.JsonRpcProvider(rpcUrl);
+  try {
+    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+    return {
+      provider,
+      status: configuredRpcUrl ? 'configured' : 'fallback_public_rpc',
+      rpcUrl,
+      configuredRpcUrl: configuredRpcUrl || null
+    };
+  } catch (error) {
+    logger.error({ err: error, rpcUrl }, 'Failed to initialize donation RPC provider');
+    return {
+      provider: null,
+      status: configuredRpcUrl ? 'configured_error' : 'fallback_public_rpc_error',
+      rpcUrl,
+      configuredRpcUrl: configuredRpcUrl || null,
+      errorMessage: error.message
+    };
+  }
 }
 
 function buildProductView(config, alreadyPurchased) {
@@ -284,6 +304,8 @@ async function recheckDonationPayment(payment) {
     return finalizeExpiredPayment(payment);
   }
 
+  const providerState = getProvider();
+  const verificationStartedAt = new Date();
   const verification = await verifierImpl({
     txHash: payment.txHash,
     expectedAmount: payment.expectedAmount,
@@ -291,12 +313,36 @@ async function recheckDonationPayment(payment) {
     tokenContract: payment.tokenContract,
     merchantWallet: payment.merchantWallet,
     requiredConfirmations: payment.productSnapshot?.requiredConfirmations || 1
-  }, getProvider());
+  }, providerState?.provider || null);
 
   payment.confirmations = verification.confirmations || 0;
   payment.txFrom = verification.actualFrom || payment.txFrom;
   payment.txTo = verification.actualTo || payment.txTo;
   payment.txAmount = verification.actualAmount || payment.txAmount;
+  payment.providerStatus = verification.providerStatus || providerState?.status || 'unknown';
+  payment.verificationReason = verification.reason || null;
+  payment.lastVerificationAt = verificationStartedAt;
+
+  logger.info({
+    paymentId: payment.paymentId,
+    wallet: payment.wallet,
+    txHash: payment.txHash,
+    tokenContract: payment.tokenContract,
+    merchantWallet: payment.merchantWallet,
+    expectedAmount: payment.expectedAmount,
+    expectedDecimals: payment.expectedDecimals,
+    verificationStatus: verification.status,
+    verificationReason: verification.reason,
+    actualFrom: verification.actualFrom || null,
+    actualTo: verification.actualTo || null,
+    actualAmount: verification.actualAmount || null,
+    confirmations: verification.confirmations || 0,
+    providerAvailability: Boolean(providerState?.provider),
+    providerStatus: verification.providerStatus || providerState?.status || 'unknown',
+    providerRpcUrl: providerState?.rpcUrl || null,
+    providerConfiguredRpcUrl: providerState?.configuredRpcUrl || null,
+    providerErrorMessage: verification.errorMessage || providerState?.errorMessage || null
+  }, 'Donation payment verification result');
 
   if (verification.status === 'failed') {
     payment.status = 'failed';
@@ -441,6 +487,12 @@ function serializeDonationPayment(payment, options = {}) {
     confirmations: payment.confirmations,
     reward: payment.productSnapshot?.grant || { gold: 0, silver: 0 },
     failureReason: payment.failureReason,
+    verificationReason: payment.verificationReason || payment.failureReason || null,
+    lastVerificationAt: payment.lastVerificationAt || null,
+    providerStatus: payment.providerStatus || null,
+    txFrom: payment.txFrom || null,
+    txTo: payment.txTo || null,
+    txAmount: payment.txAmount || null,
     createdAt: payment.createdAt || null,
     updatedAt: payment.updatedAt || null,
     submittedAt: payment.submittedAt || null,
@@ -450,6 +502,63 @@ function serializeDonationPayment(payment, options = {}) {
   };
 }
 
+async function processPendingDonationPayments(options = {}) {
+  const limit = Math.max(1, Number(options.limit) || DONATION_RECHECK_BATCH_SIZE);
+  const candidates = await DonationPayment.find({
+    status: { $in: ['submitted', 'confirmed'] },
+    txHash: { $ne: null }
+  })
+    .sort({ updatedAt: 1 })
+    .limit(limit);
+
+  let processed = 0;
+  for (const payment of candidates) {
+    if (!payment?.txHash || FINAL_STATUSES.has(payment.status)) {
+      continue;
+    }
+    await recheckDonationPayment(payment);
+    processed += 1;
+  }
+
+  if (processed > 0) {
+    logger.info({ processed }, 'Processed pending donation payment recheck batch');
+  }
+
+  return { processed };
+}
+
+function startDonationPaymentRecheckLoop() {
+  if (donationRecheckTimer) {
+    return donationRecheckTimer;
+  }
+
+  donationRecheckTimer = setInterval(() => {
+    processPendingDonationPayments().catch((error) => {
+      logger.error({ err: error }, 'Donation payment background recheck failed');
+    });
+  }, DONATION_RECHECK_INTERVAL_MS);
+
+  if (typeof donationRecheckTimer.unref === 'function') {
+    donationRecheckTimer.unref();
+  }
+
+  logger.info({
+    intervalMs: DONATION_RECHECK_INTERVAL_MS,
+    batchSize: DONATION_RECHECK_BATCH_SIZE
+  }, 'Donation payment background recheck loop started');
+
+  return donationRecheckTimer;
+}
+
+function stopDonationPaymentRecheckLoop() {
+  if (!donationRecheckTimer) {
+    return;
+  }
+
+  clearInterval(donationRecheckTimer);
+  donationRecheckTimer = null;
+}
+
 module.exports = {
   listDonationProducts,
   listDonationPayments,
@@ -457,6 +566,9 @@ module.exports = {
   submitDonationTransaction,
   getDonationPayment,
   serializeDonationPayment,
+  processPendingDonationPayments,
+  startDonationPaymentRecheckLoop,
+  stopDonationPaymentRecheckLoop,
   setDonationVerifierForTests,
   resetDonationVerifier
 };

@@ -9,6 +9,14 @@ function normalizeAddress(value) {
   return typeof value === 'string' ? value.toLowerCase() : null;
 }
 
+function buildCandidate(decoded) {
+  return {
+    actualTo: normalizeAddress(decoded.args.to),
+    actualFrom: normalizeAddress(decoded.args.from),
+    actualAmount: decoded.args.value.toString()
+  };
+}
+
 async function verifyDonationTransaction({
   txHash,
   expectedAmount,
@@ -18,61 +26,92 @@ async function verifyDonationTransaction({
   requiredConfirmations = 1
 }, provider) {
   if (!provider) {
-    return { status: 'failed', reason: 'provider_unavailable' };
+    return {
+      status: 'pending',
+      reason: 'provider_unavailable',
+      providerStatus: 'unavailable'
+    };
   }
 
-  const receipt = await provider.getTransactionReceipt(txHash);
+  let receipt;
+  try {
+    receipt = await provider.getTransactionReceipt(txHash);
+  } catch (error) {
+    return {
+      status: 'pending',
+      reason: 'provider_error',
+      providerStatus: 'error',
+      errorMessage: error.message
+    };
+  }
+
   if (!receipt) {
-    return { status: 'pending', reason: 'receipt_not_found' };
+    return { status: 'pending', reason: 'receipt_not_found', providerStatus: 'ok' };
   }
 
   if (receipt.status !== 1) {
-    return { status: 'failed', reason: 'transaction_failed' };
+    return { status: 'failed', reason: 'transaction_failed', providerStatus: 'ok' };
   }
 
-  const currentBlock = await provider.getBlockNumber();
+  let currentBlock;
+  try {
+    currentBlock = await provider.getBlockNumber();
+  } catch (error) {
+    return {
+      status: 'pending',
+      reason: 'provider_error',
+      providerStatus: 'error',
+      errorMessage: error.message
+    };
+  }
+
   const confirmations = typeof receipt.confirmations === 'number'
     ? receipt.confirmations
     : Math.max(0, currentBlock - receipt.blockNumber + 1);
 
   const targetContract = normalizeAddress(tokenContract);
   const targetWallet = normalizeAddress(merchantWallet);
+  const expectedAmountRaw = ethers.utils.parseUnits(String(expectedAmount), expectedDecimals).toString();
 
-  const transferLog = receipt.logs.find((log) =>
+  const transferLogs = receipt.logs.filter((log) =>
     normalizeAddress(log.address) === targetContract &&
     Array.isArray(log.topics) &&
     log.topics[0] === ERC20_TRANSFER_TOPIC
   );
 
-  if (!transferLog) {
-    return { status: 'failed', reason: 'transfer_log_not_found', confirmations };
-  }
-
-  const decoded = ERC20_TRANSFER_IFACE.parseLog(transferLog);
-  const actualTo = normalizeAddress(decoded.args.to);
-  const actualFrom = normalizeAddress(decoded.args.from);
-  const actualAmountRaw = decoded.args.value.toString();
-  const expectedAmountRaw = ethers.utils.parseUnits(String(expectedAmount), expectedDecimals).toString();
-
-  if (actualTo !== targetWallet) {
+  if (!transferLogs.length) {
     return {
       status: 'failed',
-      reason: 'recipient_mismatch',
+      reason: 'transfer_log_not_found',
       confirmations,
-      actualTo,
-      actualFrom,
-      actualAmount: actualAmountRaw
+      providerStatus: 'ok'
     };
   }
 
-  if (actualAmountRaw !== expectedAmountRaw) {
+  const decodedCandidates = transferLogs.map((log) => {
+    const decoded = ERC20_TRANSFER_IFACE.parseLog(log);
+    return buildCandidate(decoded);
+  });
+  const exactMatch = decodedCandidates.find((candidate) =>
+    candidate.actualTo === targetWallet &&
+    candidate.actualAmount === expectedAmountRaw
+  );
+
+  if (!exactMatch) {
+    const recipientMatch = decodedCandidates.find((candidate) => candidate.actualTo === targetWallet);
+    const amountMatch = decodedCandidates.find((candidate) => candidate.actualAmount === expectedAmountRaw);
+    const mismatchCandidate = recipientMatch || amountMatch || decodedCandidates[0];
+
     return {
       status: 'failed',
-      reason: 'amount_mismatch',
+      reason: recipientMatch ? 'amount_mismatch' : amountMatch ? 'recipient_mismatch' : 'transfer_match_not_found',
       confirmations,
-      actualTo,
-      actualFrom,
-      actualAmount: actualAmountRaw
+      providerStatus: 'ok',
+      actualTo: mismatchCandidate?.actualTo || null,
+      actualFrom: mismatchCandidate?.actualFrom || null,
+      actualAmount: mismatchCandidate?.actualAmount || null,
+      expectedAmount: expectedAmountRaw,
+      candidateCount: decodedCandidates.length
     };
   }
 
@@ -81,9 +120,10 @@ async function verifyDonationTransaction({
       status: 'pending',
       reason: 'awaiting_confirmations',
       confirmations,
-      actualTo,
-      actualFrom,
-      actualAmount: actualAmountRaw
+      providerStatus: 'ok',
+      actualTo: exactMatch.actualTo,
+      actualFrom: exactMatch.actualFrom,
+      actualAmount: exactMatch.actualAmount
     };
   }
 
@@ -91,9 +131,10 @@ async function verifyDonationTransaction({
     status: 'confirmed',
     reason: 'confirmed',
     confirmations,
-    actualTo,
-    actualFrom,
-    actualAmount: actualAmountRaw
+    providerStatus: 'ok',
+    actualTo: exactMatch.actualTo,
+    actualFrom: exactMatch.actualFrom,
+    actualAmount: exactMatch.actualAmount
   };
 }
 
