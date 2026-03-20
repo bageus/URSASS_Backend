@@ -24,8 +24,8 @@ const donationPaymentSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['created', 'submitted', 'pending', 'confirmed', 'credited', 'failed', 'expired'],
-    default: 'created',
+    enum: ['awaiting_tx', 'submitted', 'confirmed', 'credited', 'failed', 'expired'],
+    default: 'awaiting_tx',
     index: true
   },
   network: {
@@ -83,7 +83,7 @@ const donationPaymentSchema = new mongoose.Schema({
   },
   expiresAt: {
     type: Date,
-    required: true,
+    default: null,
     index: true
   },
   submittedAt: {
@@ -95,6 +95,10 @@ const donationPaymentSchema = new mongoose.Schema({
     default: null
   },
   creditedAt: {
+    type: Date,
+    default: null
+  },
+  rewardGrantedAt: {
     type: Date,
     default: null
   }

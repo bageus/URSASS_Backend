@@ -11,6 +11,10 @@ let verifierImpl = verifyDonationTransaction;
 const erc20TransferInterface = new ethers.utils.Interface([
   'function transfer(address to, uint256 value)'
 ]);
+const SUBMIT_TIMEOUT_MS = 30 * 60 * 1000;
+const INTERNAL_STATUS_AWAITING_TX = 'awaiting_tx';
+const RESPONSELESS_STATUSES = new Set([INTERNAL_STATUS_AWAITING_TX]);
+const FINAL_STATUSES = new Set(['credited', 'failed', 'expired']);
 
 function setDonationVerifierForTests(verifier) {
   verifierImpl = verifier || verifyDonationTransaction;
@@ -73,6 +77,23 @@ function buildDonationTxRequest(payment) {
   };
 }
 
+function getVerificationDeadline(payment) {
+  if (!payment?.submittedAt) {
+    return null;
+  }
+
+  return new Date(new Date(payment.submittedAt).getTime() + SUBMIT_TIMEOUT_MS);
+}
+
+function hasVerificationTimedOut(payment, now = new Date()) {
+  const deadline = getVerificationDeadline(payment);
+  return !!deadline && deadline <= now;
+}
+
+function getPublicStatus(status) {
+  return RESPONSELESS_STATUSES.has(status) ? null : status;
+}
+
 async function hasSuccessfulDonation(wallet, productKey) {
   const existing = await DonationPayment.findOne({
     wallet,
@@ -124,9 +145,14 @@ async function listDonationPayments(wallet, options = {}) {
     .sort({ createdAt: -1 })
     .limit(limit);
 
+  const refreshedPayments = [];
+  for (const payment of payments) {
+    refreshedPayments.push(await getDonationPayment(payment.paymentId, { wallet: normalizedWallet }));
+  }
+
   return {
     wallet: normalizedWallet,
-    payments: payments.map((payment) => serializeDonationPayment(payment, { includeTxRequest: false }))
+    payments: refreshedPayments.map((payment) => serializeDonationPayment(payment, { includeTxRequest: false }))
   };
 }
 
@@ -146,7 +172,6 @@ async function createDonationPayment(wallet, productKey) {
     throw err;
   }
 
-  const now = new Date();
   const payment = new DonationPayment({
     paymentId: crypto.randomUUID(),
     wallet: normalizedWallet,
@@ -161,23 +186,26 @@ async function createDonationPayment(wallet, productKey) {
       requiredConfirmations: config.requiredConfirmations,
       purchaseLimit: config.purchaseLimit
     },
-    status: 'created',
+    status: INTERNAL_STATUS_AWAITING_TX,
     network: config.network,
     tokenSymbol: config.currency,
     tokenContract: config.tokenContract,
     merchantWallet: config.merchantWallet,
     expectedAmount: config.price,
     expectedDecimals: config.tokenDecimals,
-    expiresAt: new Date(now.getTime() + (config.ttlMinutes * 60 * 1000))
+    expiresAt: null
   });
 
   await payment.save();
   return payment;
 }
 
-
 async function creditDonationPayment(payment) {
-  if (payment.status === 'credited') {
+  if (!payment) {
+    return null;
+  }
+
+  if (payment.status === 'credited' || payment.rewardGrantedAt) {
     return payment;
   }
 
@@ -189,20 +217,53 @@ async function creditDonationPayment(payment) {
     return payment;
   }
 
+  const rewardGrantedAt = new Date();
+  const rewardUpdate = await DonationPayment.findOneAndUpdate(
+    {
+      paymentId: payment.paymentId,
+      rewardGrantedAt: null,
+      status: { $in: ['confirmed', 'credited'] }
+    },
+    {
+      $set: {
+        status: 'credited',
+        rewardGrantedAt,
+        creditedAt: rewardGrantedAt,
+        confirmedAt: payment.confirmedAt || rewardGrantedAt,
+        failureReason: null
+      }
+    },
+    { new: true }
+  );
+
+  if (!rewardUpdate) {
+    return DonationPayment.findOne({ paymentId: payment.paymentId });
+  }
+
   const { gold = 0, silver = 0 } = payment.productSnapshot?.grant || {};
   player.totalGoldCoins += gold;
   player.totalSilverCoins += silver;
-  player.updatedAt = new Date();
-
+  player.updatedAt = rewardGrantedAt;
   await player.save();
 
-  payment.status = 'credited';
-  payment.creditedAt = new Date();
-  if (!payment.confirmedAt) {
-    payment.confirmedAt = new Date();
-  }
-  await payment.save();
+  payment.status = rewardUpdate.status;
+  payment.rewardGrantedAt = rewardUpdate.rewardGrantedAt;
+  payment.creditedAt = rewardUpdate.creditedAt;
+  payment.confirmedAt = rewardUpdate.confirmedAt;
+  payment.failureReason = rewardUpdate.failureReason;
 
+  return rewardUpdate;
+}
+
+async function finalizeExpiredPayment(payment) {
+  if (!payment || FINAL_STATUSES.has(payment.status) || !hasVerificationTimedOut(payment)) {
+    return payment;
+  }
+
+  payment.status = 'failed';
+  payment.failureReason = payment.failureReason || 'merchant_confirmation_timeout';
+  payment.expiresAt = getVerificationDeadline(payment);
+  await payment.save();
   return payment;
 }
 
@@ -211,7 +272,7 @@ async function recheckDonationPayment(payment) {
     return null;
   }
 
-  if (payment.status === 'credited' || payment.status === 'failed' || payment.status === 'expired') {
+  if (FINAL_STATUSES.has(payment.status)) {
     return payment;
   }
 
@@ -219,11 +280,8 @@ async function recheckDonationPayment(payment) {
     return payment;
   }
 
-  if (payment.expiresAt <= new Date()) {
-    payment.status = 'expired';
-    payment.failureReason = 'payment_expired';
-    await payment.save();
-    return payment;
+  if (hasVerificationTimedOut(payment)) {
+    return finalizeExpiredPayment(payment);
   }
 
   const verification = await verifierImpl({
@@ -240,16 +298,18 @@ async function recheckDonationPayment(payment) {
   payment.txTo = verification.actualTo || payment.txTo;
   payment.txAmount = verification.actualAmount || payment.txAmount;
 
-  if (verification.status === 'pending') {
-    payment.status = 'pending';
-    payment.failureReason = verification.reason || null;
+  if (verification.status === 'failed') {
+    payment.status = 'failed';
+    payment.failureReason = verification.reason || 'verification_failed';
+    payment.expiresAt = getVerificationDeadline(payment);
     await payment.save();
     return payment;
   }
 
-  if (verification.status === 'failed') {
-    payment.status = 'failed';
-    payment.failureReason = verification.reason || 'verification_failed';
+  if (verification.status === 'pending') {
+    payment.status = 'submitted';
+    payment.failureReason = null;
+    payment.expiresAt = getVerificationDeadline(payment);
     await payment.save();
     return payment;
   }
@@ -257,6 +317,7 @@ async function recheckDonationPayment(payment) {
   payment.status = 'confirmed';
   payment.failureReason = null;
   payment.confirmedAt = payment.confirmedAt || new Date();
+  payment.expiresAt = getVerificationDeadline(payment);
   await payment.save();
 
   return creditDonationPayment(payment);
@@ -285,10 +346,12 @@ async function submitDonationTransaction({ wallet, paymentId, txHash }) {
     throw err;
   }
 
-  if (payment.expiresAt <= new Date()) {
-    payment.status = 'expired';
-    payment.failureReason = 'payment_expired';
-    await payment.save();
+  if (FINAL_STATUSES.has(payment.status)) {
+    if (payment.txHash && payment.txHash !== normalizedHash) {
+      const err = new Error('Payment already finalized with another transaction hash');
+      err.statusCode = 409;
+      throw err;
+    }
     return payment;
   }
 
@@ -299,10 +362,19 @@ async function submitDonationTransaction({ wallet, paymentId, txHash }) {
     throw err;
   }
 
-  payment.txHash = normalizedHash;
-  payment.submittedAt = new Date();
+  if (payment.txHash && payment.txHash !== normalizedHash) {
+    const err = new Error('Payment already linked to a different transaction hash');
+    err.statusCode = 409;
+    throw err;
+  }
+
+  if (!payment.txHash) {
+    payment.txHash = normalizedHash;
+  }
+  payment.submittedAt = payment.submittedAt || new Date();
   payment.status = 'submitted';
   payment.failureReason = null;
+  payment.expiresAt = getVerificationDeadline(payment);
   await payment.save();
 
   return recheckDonationPayment(payment);
@@ -314,7 +386,7 @@ async function getDonationPayment(paymentId, options = {}) {
     return null;
   }
 
-    const normalizedWallet = options.wallet ? normalizeWallet(options.wallet) : null;
+  const normalizedWallet = options.wallet ? normalizeWallet(options.wallet) : null;
   const normalizedHash = typeof options.txHash === 'string' ? options.txHash.trim() : '';
 
   if (normalizedWallet && payment.wallet !== normalizedWallet) {
@@ -323,7 +395,7 @@ async function getDonationPayment(paymentId, options = {}) {
     throw err;
   }
 
-  if (normalizedHash && !payment.txHash && payment.status === 'created') {
+  if (normalizedHash && !payment.txHash) {
     const existingHash = await DonationPayment.findOne({ txHash: normalizedHash, paymentId: { $ne: paymentId } });
     if (existingHash) {
       const err = new Error('Transaction hash already used');
@@ -335,20 +407,15 @@ async function getDonationPayment(paymentId, options = {}) {
     payment.submittedAt = payment.submittedAt || new Date();
     payment.status = 'submitted';
     payment.failureReason = null;
+    payment.expiresAt = getVerificationDeadline(payment);
     await payment.save();
   }
 
-  if (payment.status === 'submitted' || payment.status === 'pending') {
+  if (payment.txHash && !FINAL_STATUSES.has(payment.status)) {
     return recheckDonationPayment(payment);
   }
 
-  if (payment.status === 'created' && payment.expiresAt <= new Date()) {
-    payment.status = 'expired';
-    payment.failureReason = 'payment_expired';
-    await payment.save();
-  }
-
-  return payment;
+  return finalizeExpiredPayment(payment);
 }
 
 function serializeDonationPayment(payment, options = {}) {
@@ -360,15 +427,16 @@ function serializeDonationPayment(payment, options = {}) {
   return {
     paymentId: payment.paymentId,
     wallet: payment.wallet,
-    status: payment.status,
+    status: getPublicStatus(payment.status),
     productKey: payment.productKey,
+    productTitle: payment.productSnapshot?.title || null,
     title: payment.productSnapshot?.title || null,
     amount: payment.expectedAmount,
     currency: payment.tokenSymbol,
     network: payment.network,
     tokenContract: payment.tokenContract,
     merchantWallet: payment.merchantWallet,
-    expiresAt: payment.expiresAt,
+    expiresAt: payment.expiresAt || getVerificationDeadline(payment),
     txHash: payment.txHash,
     confirmations: payment.confirmations,
     reward: payment.productSnapshot?.grant || { gold: 0, silver: 0 },
