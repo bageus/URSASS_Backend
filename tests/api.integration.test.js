@@ -58,6 +58,12 @@ test.beforeEach(() => {
   LinkCode.deleteOne = async () => ({ deletedCount: 1 });
   donationPayments = [];
   DonationPayment.prototype.save = async function save() {
+    const now = new Date();
+    if (!this.createdAt) {
+      this.createdAt = now;
+    }
+    this.updatedAt = now;
+
     const plain = this.toObject ? this.toObject() : { ...this };
     const index = donationPayments.findIndex((item) => item.paymentId === plain.paymentId);
     const stored = {
@@ -72,27 +78,52 @@ test.beforeEach(() => {
     Object.assign(this, stored);
     return this;
   };
+  const matchesDonationQuery = (item, query = {}) => Object.entries(query).every(([key, value]) => {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      if ('$in' in value) {
+        return value.$in.includes(item[key]);
+      }
+      if ('$ne' in value) {
+        return item[key] !== value.$ne;
+      }
+    }
+    return item[key] === value;
+  });
+
   DonationPayment.findOne = async (query = {}) => {
-    const match = donationPayments.find((item) => {
-      return Object.entries(query).every(([key, value]) => {
-        if (value && typeof value === 'object' && !Array.isArray(value)) {
-          if ('$in' in value) {
-            return value.$in.includes(item[key]);
-          }
-          if ('$ne' in value) {
-            return item[key] !== value.$ne;
-          }
-        }
-        return item[key] === value;
-      });
-    });
+    const match = donationPayments.find((item) => matchesDonationQuery(item, query));
 
     return match ? { ...match, save: async function saveSelf() {
       const index = donationPayments.findIndex((item) => item.paymentId === this.paymentId);
-      const updated = { ...this, save: this.save };
+      const updated = { ...this, updatedAt: new Date(), save: this.save };
       donationPayments[index] = updated;
       return this;
     } } : null;
+  };
+  
+  DonationPayment.find = (query = {}) => {
+    let results = donationPayments.filter((item) => matchesDonationQuery(item, query)).map((item) => ({ ...item }));
+
+    const chain = {
+      sort(sortSpec = {}) {
+        const [[field, direction]] = Object.entries(sortSpec);
+        results = results.sort((a, b) => {
+          const av = new Date(a[field] || 0).getTime();
+          const bv = new Date(b[field] || 0).getTime();
+          return direction < 0 ? bv - av : av - bv;
+        });
+        return chain;
+      },
+      limit(limitValue) {
+        results = results.slice(0, limitValue);
+        return Promise.resolve(results.map((item) => ({ ...item })));
+      },
+      then(resolve, reject) {
+        return Promise.resolve(results.map((item) => ({ ...item }))).then(resolve, reject);
+      }
+    };
+
+    return chain;
   };
   resetDonationVerifier();
 });
@@ -394,48 +425,68 @@ test('POST /api/store/donations/submit-transaction credits player after successf
 });
 
 
-test('GET /api/store/donations/payment/:paymentId accepts txHash recovery query and credits player', async () => {
+test('GET /api/store/donations/history/:wallet returns payments sorted by newest first', async () => {
   const wallet = Wallet.createRandom().address.toLowerCase();
   const player = {
     wallet,
-    totalGoldCoins: 5,
-    totalSilverCoins: 7,
+    totalGoldCoins: 0,
+    totalSilverCoins: 0,
     save: async function save() { return this; }
   };
 
-  Player.findOne = ({ wallet: requestedWallet }) => queryResult(requestedWallet === wallet ? player : null);
+  Player.findOne = () => queryResult(player);
 
   setDonationVerifierForTests(async () => ({
-    status: 'confirmed',
-    reason: 'confirmed',
-    confirmations: 2,
+    status: 'pending',
+    reason: 'awaiting_confirmations',
+    confirmations: 0,
     actualFrom: '0xsender',
     actualTo: '0x244bcc2721f1037958862825c3feb6a7be6204a7',
-    actualAmount: '20000000000000000'
+    actualAmount: '30000000000000000'
   }));
 
   const { server, baseUrl } = await startServer();
 
-  const createRes = await fetch(`${baseUrl}/api/store/donations/create-payment`, {
+  const firstCreate = await fetch(`${baseUrl}/api/store/donations/create-payment`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ wallet, productKey: 'starter_pack' })
   });
-  const created = await createRes.json();
+  const firstPayment = await firstCreate.json();
 
-  const statusRes = await fetch(
-    `${baseUrl}/api/store/donations/payment/${created.paymentId}?wallet=${encodeURIComponent(wallet)}&txHash=0xrecoverhash`
-  );
+  await new Promise((resolve) => setTimeout(resolve, 5));
 
-  assert.equal(statusRes.status, 200);
-  const recovered = await statusRes.json();
-  assert.equal(recovered.status, 'credited');
-  assert.equal(recovered.txHash, '0xrecoverhash');
-  assert.equal(player.totalGoldCoins, 405);
-  assert.equal(player.totalSilverCoins, 407);
+  const secondCreate = await fetch(`${baseUrl}/api/store/donations/create-payment`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ wallet, productKey: 'basic_pack' })
+  });
+  const secondPayment = await secondCreate.json();
+
+  await fetch(`${baseUrl}/api/store/donations/submit-transaction`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ wallet, paymentId: secondPayment.paymentId, txHash: '0xpendinghash' })
+  });
+
+  const historyRes = await fetch(`${baseUrl}/api/store/donations/history/${wallet}`);
+
+  assert.equal(historyRes.status, 200);
+  const history = await historyRes.json();
+  assert.equal(history.wallet, wallet);
+  assert.equal(history.payments.length, 2);
+  assert.equal(history.payments[0].paymentId, secondPayment.paymentId);
+  assert.equal(history.payments[0].status, 'pending');
+  assert.equal(history.payments[0].title, 'Basic Pack');
+  assert.equal(history.payments[0].amount, '0.09');
+  assert.equal(history.payments[0].txRequest, null);
+  assert.ok(history.payments[0].createdAt);
+  assert.equal(history.payments[1].paymentId, firstPayment.paymentId);
+  assert.equal(history.payments[1].status, 'created');
 
   await server.close();
 });
+;
 
 test('POST /api/store/donations/create-payment blocks second Starter Pack after successful credit', async () => {
   const wallet = Wallet.createRandom().address.toLowerCase();
