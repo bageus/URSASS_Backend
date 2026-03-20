@@ -393,6 +393,50 @@ test('POST /api/store/donations/submit-transaction credits player after successf
   await server.close();
 });
 
+
+test('GET /api/store/donations/payment/:paymentId accepts txHash recovery query and credits player', async () => {
+  const wallet = Wallet.createRandom().address.toLowerCase();
+  const player = {
+    wallet,
+    totalGoldCoins: 5,
+    totalSilverCoins: 7,
+    save: async function save() { return this; }
+  };
+
+  Player.findOne = ({ wallet: requestedWallet }) => queryResult(requestedWallet === wallet ? player : null);
+
+  setDonationVerifierForTests(async () => ({
+    status: 'confirmed',
+    reason: 'confirmed',
+    confirmations: 2,
+    actualFrom: '0xsender',
+    actualTo: '0x244bcc2721f1037958862825c3feb6a7be6204a7',
+    actualAmount: '20000000000000000'
+  }));
+
+  const { server, baseUrl } = await startServer();
+
+  const createRes = await fetch(`${baseUrl}/api/store/donations/create-payment`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ wallet, productKey: 'starter_pack' })
+  });
+  const created = await createRes.json();
+
+  const statusRes = await fetch(
+    `${baseUrl}/api/store/donations/payment/${created.paymentId}?wallet=${encodeURIComponent(wallet)}&txHash=0xrecoverhash`
+  );
+
+  assert.equal(statusRes.status, 200);
+  const recovered = await statusRes.json();
+  assert.equal(recovered.status, 'credited');
+  assert.equal(recovered.txHash, '0xrecoverhash');
+  assert.equal(player.totalGoldCoins, 405);
+  assert.equal(player.totalSilverCoins, 407);
+
+  await server.close();
+});
+
 test('POST /api/store/donations/create-payment blocks second Starter Pack after successful credit', async () => {
   const wallet = Wallet.createRandom().address.toLowerCase();
   const player = {

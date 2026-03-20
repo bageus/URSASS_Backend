@@ -222,7 +222,8 @@ router.post('/donations/submit-transaction', writeLimiter, async (req, res) => {
  */
 router.get('/donations/payment/:paymentId', readLimiter, async (req, res) => {
   try {
-    const payment = await getDonationPayment(req.params.paymentId);
+    const { wallet, txHash } = req.query;
+    const payment = await getDonationPayment(req.params.paymentId, { wallet, txHash });
     if (!payment) {
       return res.status(404).json({ error: 'Payment not found' });
     }
@@ -230,7 +231,7 @@ router.get('/donations/payment/:paymentId', readLimiter, async (req, res) => {
     res.json(serializeDonationPayment(payment));
   } catch (error) {
     logger.error({ err: error }, 'GET /donations/payment error');
-    res.status(500).json({ error: 'Server error' });
+    res.status(error.statusCode || 500).json({ error: error.message || 'Server error' });
   }
 });
 

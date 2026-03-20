@@ -304,10 +304,34 @@ async function submitDonationTransaction({ wallet, paymentId, txHash }) {
   return recheckDonationPayment(payment);
 }
 
-async function getDonationPayment(paymentId) {
+async function getDonationPayment(paymentId, options = {}) {
   const payment = await DonationPayment.findOne({ paymentId });
   if (!payment) {
     return null;
+  }
+
+  const normalizedWallet = options.wallet ? normalizeWallet(options.wallet) : null;
+  const normalizedHash = typeof options.txHash === 'string' ? options.txHash.trim() : '';
+
+  if (normalizedWallet && payment.wallet !== normalizedWallet) {
+    const err = new Error('Payment does not belong to this wallet');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  if (normalizedHash && !payment.txHash && payment.status === 'created') {
+    const existingHash = await DonationPayment.findOne({ txHash: normalizedHash, paymentId: { $ne: paymentId } });
+    if (existingHash) {
+      const err = new Error('Transaction hash already used');
+      err.statusCode = 409;
+      throw err;
+    }
+
+    payment.txHash = normalizedHash;
+    payment.submittedAt = payment.submittedAt || new Date();
+    payment.status = 'submitted';
+    payment.failureReason = null;
+    await payment.save();
   }
 
   if (payment.status === 'submitted' || payment.status === 'pending') {
