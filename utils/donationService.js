@@ -110,9 +110,8 @@ async function listDonationProducts(wallet) {
   };
 }
 
-async function createDonationPayment(wallet, productKey) {
+async function listDonationPayments(wallet, options = {}) {
   const normalizedWallet = normalizeWallet(wallet);
-  const config = getDonationConfig(productKey);
 
   if (!normalizedWallet) {
     const err = new Error('Invalid wallet address');
@@ -120,57 +119,17 @@ async function createDonationPayment(wallet, productKey) {
     throw err;
   }
 
-  if (!config) {
-    const err = new Error(`Unknown donation product: ${productKey}`);
-    err.statusCode = 400;
-    throw err;
-  }
+  const limit = Math.max(1, Math.min(100, Number(options.limit) || 20));
+  const payments = await DonationPayment.find({ wallet: normalizedWallet })
+    .sort({ createdAt: -1 })
+    .limit(limit);
 
-  const player = await Player.findOne({ wallet: normalizedWallet });
-  if (!player) {
-    const err = new Error('Player not found. Play at least one game first.');
-    err.statusCode = 404;
-    throw err;
-  }
-
-  if (config.purchaseLimit === 'once') {
-    const alreadyPurchased = await hasSuccessfulDonation(normalizedWallet, config.key);
-    if (alreadyPurchased) {
-      const err = new Error('This donation product is already purchased');
-      err.statusCode = 409;
-      throw err;
-    }
-  }
-
-  const now = new Date();
-  const expiresAt = new Date(now.getTime() + (config.ttlMinutes * 60 * 1000));
-  const payment = new DonationPayment({
-    paymentId: `pay_${crypto.randomBytes(12).toString('hex')}`,
+  return {
     wallet: normalizedWallet,
-    productKey: config.key,
-    productSnapshot: {
-      key: config.key,
-      title: config.title,
-      price: config.price,
-      currency: config.currency,
-      grant: config.grant,
-      purchaseLimit: config.purchaseLimit,
-      requiredConfirmations: config.requiredConfirmations
-    },
-    status: 'created',
-    network: config.network,
-    tokenSymbol: config.currency,
-    tokenContract: config.tokenContract,
-    merchantWallet: config.merchantWallet,
-    expectedAmount: config.price,
-    expectedDecimals: config.tokenDecimals,
-    expiresAt
-  });
-
-  await payment.save();
-
-  return payment;
+    payments: payments.map((payment) => serializeDonationPayment(payment, { includeTxRequest: false }))
+  };
 }
+
 
 async function creditDonationPayment(payment) {
   if (payment.status === 'credited') {
@@ -310,7 +269,7 @@ async function getDonationPayment(paymentId, options = {}) {
     return null;
   }
 
-  const normalizedWallet = options.wallet ? normalizeWallet(options.wallet) : null;
+    const normalizedWallet = options.wallet ? normalizeWallet(options.wallet) : null;
   const normalizedHash = typeof options.txHash === 'string' ? options.txHash.trim() : '';
 
   if (normalizedWallet && payment.wallet !== normalizedWallet) {
@@ -347,10 +306,11 @@ async function getDonationPayment(paymentId, options = {}) {
   return payment;
 }
 
-function serializeDonationPayment(payment) {
+function serializeDonationPayment(payment, options = {}) {
   if (!payment) {
     return null;
   }
+  const includeTxRequest = options.includeTxRequest !== false;
 
   return {
     paymentId: payment.paymentId,
@@ -368,12 +328,18 @@ function serializeDonationPayment(payment) {
     confirmations: payment.confirmations,
     reward: payment.productSnapshot?.grant || { gold: 0, silver: 0 },
     failureReason: payment.failureReason,
-    txRequest: buildDonationTxRequest(payment)
+    createdAt: payment.createdAt || null,
+    updatedAt: payment.updatedAt || null,
+    submittedAt: payment.submittedAt || null,
+    confirmedAt: payment.confirmedAt || null,
+    creditedAt: payment.creditedAt || null,
+    txRequest: includeTxRequest ? buildDonationTxRequest(payment) : null
   };
 }
 
 module.exports = {
   listDonationProducts,
+  listDonationPayments,
   createDonationPayment,
   submitDonationTransaction,
   getDonationPayment,
