@@ -93,7 +93,7 @@ Versioned aliases are also available under `/api/v1/*` (backward-compatible with
 | `POST` | `/api/store/buy` | Buy an upgrade or ride pack (requires EIP-191 signature) |
 | `POST` | `/api/store/donations/create-payment` | Create a USDT donation payment intent |
 | `POST` | `/api/store/donations/submit-transaction` | Submit tx hash for donation payment verification |
-| `GET` | `/api/store/donations/payment/:paymentId` | Get donation payment status |
+| `GET` | `/api/store/donations/payment/:paymentId` | Get donation payment status; optional `wallet` + `txHash` query can recover verification if wallet send succeeded but submit call was lost |
 | `POST` | `/api/store/consume-ride` | Consume a ride when starting a game (requires unique `rideSessionId`) |
 | `POST` | `/api/account/auth/telegram` | Authenticate via Telegram |
 | `POST` | `/api/account/auth/wallet` | Authenticate via wallet (requires EIP-191 signature) |
