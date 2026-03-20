@@ -110,6 +110,26 @@ async function listDonationProducts(wallet) {
   };
 }
 
+async function listDonationPayments(wallet, options = {}) {
+  const normalizedWallet = normalizeWallet(wallet);
+
+  if (!normalizedWallet) {
+    const err = new Error('Invalid wallet address');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const limit = Math.max(1, Math.min(100, Number(options.limit) || 20));
+  const payments = await DonationPayment.find({ wallet: normalizedWallet })
+    .sort({ createdAt: -1 })
+    .limit(limit);
+
+  return {
+    wallet: normalizedWallet,
+    payments: payments.map((payment) => serializeDonationPayment(payment, { includeTxRequest: false }))
+  };
+}
+
 async function createDonationPayment(wallet, productKey) {
   const normalizedWallet = normalizeWallet(wallet);
   const config = getDonationConfig(productKey);
@@ -304,10 +324,34 @@ async function submitDonationTransaction({ wallet, paymentId, txHash }) {
   return recheckDonationPayment(payment);
 }
 
-async function getDonationPayment(paymentId) {
+async function getDonationPayment(paymentId, options = {}) {
   const payment = await DonationPayment.findOne({ paymentId });
   if (!payment) {
     return null;
+  }
+
+  const normalizedWallet = options.wallet ? normalizeWallet(options.wallet) : null;
+  const normalizedHash = typeof options.txHash === 'string' ? options.txHash.trim() : '';
+
+  if (normalizedWallet && payment.wallet !== normalizedWallet) {
+    const err = new Error('Payment does not belong to this wallet');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  if (normalizedHash && !payment.txHash && payment.status === 'created') {
+    const existingHash = await DonationPayment.findOne({ txHash: normalizedHash, paymentId: { $ne: paymentId } });
+    if (existingHash) {
+      const err = new Error('Transaction hash already used');
+      err.statusCode = 409;
+      throw err;
+    }
+
+    payment.txHash = normalizedHash;
+    payment.submittedAt = payment.submittedAt || new Date();
+    payment.status = 'submitted';
+    payment.failureReason = null;
+    await payment.save();
   }
 
   if (payment.status === 'submitted' || payment.status === 'pending') {
@@ -323,10 +367,12 @@ async function getDonationPayment(paymentId) {
   return payment;
 }
 
-function serializeDonationPayment(payment) {
+function serializeDonationPayment(payment, options = {}) {
   if (!payment) {
     return null;
   }
+
+  const includeTxRequest = options.includeTxRequest !== false;
 
   return {
     paymentId: payment.paymentId,
@@ -344,12 +390,18 @@ function serializeDonationPayment(payment) {
     confirmations: payment.confirmations,
     reward: payment.productSnapshot?.grant || { gold: 0, silver: 0 },
     failureReason: payment.failureReason,
-    txRequest: buildDonationTxRequest(payment)
+    createdAt: payment.createdAt || null,
+    updatedAt: payment.updatedAt || null,
+    submittedAt: payment.submittedAt || null,
+    confirmedAt: payment.confirmedAt || null,
+    creditedAt: payment.creditedAt || null,
+    txRequest: includeTxRequest ? buildDonationTxRequest(payment) : null
   };
 }
 
 module.exports = {
   listDonationProducts,
+  listDonationPayments,
   createDonationPayment,
   submitDonationTransaction,
   getDonationPayment,

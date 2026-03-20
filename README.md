@@ -91,6 +91,7 @@ Versioned aliases are also available under `/api/v1/*` (backward-compatible with
 | `GET` | `/api/store/upgrades/:wallet` | Get player upgrades, rides, and balance |
 | `GET` | `/api/store/donations/:wallet` | Get donation products available for a wallet |
 | `POST` | `/api/store/buy` | Buy an upgrade or ride pack (requires EIP-191 signature) |
+| `GET` | `/api/store/donations/history/:wallet` | Get donation payment history for a wallet (for purchases history UI) |
 | `POST` | `/api/store/donations/create-payment` | Create a USDT donation payment intent |
 | `POST` | `/api/store/donations/submit-transaction` | Submit tx hash for donation payment verification |
 | `GET` | `/api/store/donations/payment/:paymentId` | Get donation payment status |

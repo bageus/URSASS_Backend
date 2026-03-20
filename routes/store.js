@@ -4,7 +4,7 @@ const Player = require('../models/Player');
 const PlayerUpgrades = require('../models/PlayerUpgrades');
 const AccountLink = require('../models/AccountLink');
 const { UPGRADES_CONFIG, calculateEffects } = require('../utils/upgradesConfig');
-const { listDonationProducts, createDonationPayment, submitDonationTransaction, getDonationPayment, serializeDonationPayment } = require('../utils/donationService');
+const { listDonationProducts, listDonationPayments, createDonationPayment, submitDonationTransaction, getDonationPayment, serializeDonationPayment } = require('../utils/donationService');
 const { verifySignature } = require('../utils/verifySignature');
 const { writeLimiter, readLimiter } = require('../middleware/rateLimiter');
 const SecurityEvent = require('../models/SecurityEvent');
@@ -162,6 +162,20 @@ router.get('/donations/:wallet', readLimiter, async (req, res) => {
 });
 
 /**
+ * GET /api/store/donations/history/:wallet
+ * Get donation payment history for a wallet
+ */
+router.get('/donations/history/:wallet', readLimiter, async (req, res) => {
+  try {
+    const payload = await listDonationPayments(req.params.wallet, { limit: req.query.limit });
+    res.json(payload);
+  } catch (error) {
+    logger.error({ err: error }, 'GET /donations/history error');
+    res.status(error.statusCode || 500).json({ error: error.message || 'Server error' });
+  }
+});
+
+/**
  * POST /api/store/donations/create-payment
  */
 router.post('/donations/create-payment', writeLimiter, async (req, res) => {
@@ -222,7 +236,8 @@ router.post('/donations/submit-transaction', writeLimiter, async (req, res) => {
  */
 router.get('/donations/payment/:paymentId', readLimiter, async (req, res) => {
   try {
-    const payment = await getDonationPayment(req.params.paymentId);
+    const { wallet, txHash } = req.query;
+    const payment = await getDonationPayment(req.params.paymentId, { wallet, txHash });
     if (!payment) {
       return res.status(404).json({ error: 'Payment not found' });
     }
@@ -230,7 +245,7 @@ router.get('/donations/payment/:paymentId', readLimiter, async (req, res) => {
     res.json(serializeDonationPayment(payment));
   } catch (error) {
     logger.error({ err: error }, 'GET /donations/payment error');
-    res.status(500).json({ error: 'Server error' });
+    res.status(error.statusCode || 500).json({ error: error.message || 'Server error' });
   }
 });
 
