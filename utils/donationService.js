@@ -130,6 +130,51 @@ async function listDonationPayments(wallet, options = {}) {
   };
 }
 
+async function createDonationPayment(wallet, productKey) {
+  const normalizedWallet = normalizeWallet(wallet);
+  const config = getDonationConfig(productKey);
+
+  if (!normalizedWallet || !config) {
+    const err = new Error(!normalizedWallet ? 'Invalid wallet address' : 'Unknown donation product');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  if (config.purchaseLimit === 'once' && await hasSuccessfulDonation(normalizedWallet, config.key)) {
+    const err = new Error(`${config.title} already purchased`);
+    err.statusCode = 409;
+    throw err;
+  }
+
+  const now = new Date();
+  const payment = new DonationPayment({
+    paymentId: crypto.randomUUID(),
+    wallet: normalizedWallet,
+    productKey: config.key,
+    productSnapshot: {
+      key: config.key,
+      title: config.title,
+      grant: config.grant,
+      price: config.price,
+      currency: config.currency,
+      network: config.network,
+      requiredConfirmations: config.requiredConfirmations,
+      purchaseLimit: config.purchaseLimit
+    },
+    status: 'created',
+    network: config.network,
+    tokenSymbol: config.currency,
+    tokenContract: config.tokenContract,
+    merchantWallet: config.merchantWallet,
+    expectedAmount: config.price,
+    expectedDecimals: config.tokenDecimals,
+    expiresAt: new Date(now.getTime() + (config.ttlMinutes * 60 * 1000))
+  });
+
+  await payment.save();
+  return payment;
+}
+
 
 async function creditDonationPayment(payment) {
   if (payment.status === 'credited') {
