@@ -9,7 +9,10 @@ const PlayerUpgrades = require('../models/PlayerUpgrades');
 const SecurityEvent = require('../models/SecurityEvent');
 const LinkCode = require('../models/LinkCode');
 const DonationPayment = require('../models/DonationPayment');
+const AccountLink = require('../models/AccountLink');
 const { setDonationVerifierForTests, resetDonationVerifier } = require('../utils/donationService');
+const { setTelegramStarsClientForTests } = require('../utils/telegramStarsService');
+const crypto = require('crypto');
 
 const { createApp } = require('../app');
 
@@ -56,6 +59,22 @@ test.beforeEach(() => {
   Player.prototype.save = async function save() { return this; };
   PlayerUpgrades.prototype.save = async function save() { return this; };
   LinkCode.deleteOne = async () => ({ deletedCount: 1 });
+  AccountLink.prototype.save = async function save() { return this; };
+  const accountLinks = [];
+  const matchesSimple = (item, query = {}) => Object.entries(query).every(([key, value]) => item[key] === value);
+  AccountLink.findOne = async (query = {}) => accountLinks.find((item) => matchesSimple(item, query)) || null;
+  const originalAccountLinkSave = AccountLink.prototype.save;
+  AccountLink.prototype.save = async function saveAccountLink() {
+    const plain = this.toObject ? this.toObject() : { ...this };
+    const idx = accountLinks.findIndex((item) => item.primaryId === plain.primaryId || (plain.telegramId && item.telegramId === plain.telegramId) || (plain.wallet && item.wallet === plain.wallet));
+    if (idx >= 0) accountLinks[idx] = plain; else accountLinks.push(plain);
+    Object.assign(this, plain);
+    return this;
+  };
+  setTelegramStarsClientForTests({
+    async createInvoiceLink(payload) { return `https://t.me/invoice/${JSON.parse(payload.payload).orderId}`; },
+    async answerPreCheckoutQuery() { return true; }
+  });
   donationPayments = [];
   DonationPayment.prototype.save = async function save() {
     const now = new Date();
@@ -684,6 +703,113 @@ test('GET /api/game/config rejects unknown mode', async () => {
   assert.equal(res.status, 404);
   const body = await res.json();
   assert.match(body.error, /Unknown game mode config/i);
+
+  await server.close();
+});
+
+
+function buildTelegramInitData(user, botToken) {
+  const authDate = Math.floor(Date.now() / 1000);
+  const params = new URLSearchParams();
+  params.set('auth_date', String(authDate));
+  params.set('query_id', 'test-query');
+  params.set('user', JSON.stringify(user));
+  const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
+  const dataCheckString = [...params.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}=${v}`).join('\n');
+  const hash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
+  params.set('hash', hash);
+  return params.toString();
+}
+
+test('POST /api/donations/stars/create creates Telegram Stars order and returns invoiceUrl', async () => {
+  process.env.TELEGRAM_BOT_TOKEN = '123456:stars-token';
+  const { server, baseUrl } = await startServer();
+  const initData = buildTelegramInitData({ id: 777001, first_name: 'Stars' }, process.env.TELEGRAM_BOT_TOKEN);
+
+  Player.findOne = ({ wallet }) => queryResult(wallet === 'tg_777001' ? null : null);
+  Player.prototype.save = async function save() { return this; };
+  PlayerUpgrades.findOne = () => queryResult(null);
+
+  const res = await fetch(`${baseUrl}/api/donations/stars/create`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ productKey: 'basic_pack', telegramInitData: initData })
+  });
+
+  assert.equal(res.status, 201);
+  const body = await res.json();
+  assert.ok(body.orderId);
+  assert.match(body.invoiceUrl, /https:\/\/t\.me\/invoice\//);
+
+  const created = donationPayments.find((item) => item.paymentId === body.orderId);
+  assert.equal(created.paymentMethod, 'telegram_stars');
+  assert.equal(created.status, 'created');
+  assert.equal(created.telegramUserId, '777001');
+  assert.equal(created.starsAmount, 9);
+  assert.equal(created.currency, 'XTR');
+
+  await server.close();
+});
+
+test('POST /api/telegram/webhook processes successful_payment idempotently', async () => {
+  process.env.TELEGRAM_BOT_TOKEN = '123456:stars-token';
+  const { server, baseUrl } = await startServer();
+  const initData = buildTelegramInitData({ id: 888002, first_name: 'Buyer' }, process.env.TELEGRAM_BOT_TOKEN);
+
+  let player = { wallet: 'tg_888002', totalGoldCoins: 0, totalSilverCoins: 0, save: async function save() { return this; } };
+  Player.findOne = ({ wallet }) => queryResult(wallet === 'tg_888002' ? player : null);
+  Player.prototype.save = async function save() { player = this; return this; };
+  PlayerUpgrades.findOne = () => queryResult(null);
+
+  const createRes = await fetch(`${baseUrl}/api/donations/stars/create`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ productKey: 'starter_pack', telegramInitData: initData })
+  });
+  const created = await createRes.json();
+  const payment = donationPayments.find((item) => item.paymentId === created.orderId);
+
+  const webhookPayload = {
+    update_id: 1,
+    message: {
+      successful_payment: {
+        currency: 'XTR',
+        total_amount: payment.starsAmount,
+        invoice_payload: payment.invoicePayload,
+        telegram_payment_charge_id: 'tg-charge-1'
+      }
+    }
+  };
+
+  const first = await fetch(`${baseUrl}/api/telegram/webhook`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(webhookPayload)
+  });
+  assert.equal(first.status, 200);
+
+  const second = await fetch(`${baseUrl}/api/telegram/webhook`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(webhookPayload)
+  });
+  assert.equal(second.status, 200);
+
+  const updated = donationPayments.find((item) => item.paymentId === created.orderId);
+  assert.equal(updated.status, 'paid');
+  assert.equal(updated.telegramPaymentChargeId, 'tg-charge-1');
+  assert.ok(updated.paidAt);
+  assert.ok(updated.rewardGrantedAt);
+  assert.equal(player.totalGoldCoins, 400);
+  assert.equal(player.totalSilverCoins, 400);
+
+  const historyRes = await fetch(`${baseUrl}/api/store/donations/history/tg_888002`);
+  assert.equal(historyRes.status, 200);
+  const history = await historyRes.json();
+  assert.equal(history.payments[0].paymentMethod, 'telegram_stars');
+  assert.equal(history.payments[0].status, 'paid');
+  assert.equal(history.payments[0].starsAmount, 2);
+  assert.equal(history.payments[0].currency, 'XTR');
 
   await server.close();
 });
