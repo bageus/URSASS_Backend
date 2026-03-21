@@ -3,10 +3,13 @@ const { ethers } = require('ethers');
 
 const Player = require('../models/Player');
 const DonationPayment = require('../models/DonationPayment');
+const AccountLink = require('../models/AccountLink');
 const { DONATIONS_CONFIG, DONATIONS_PRICE_MODE, getDonationConfig } = require('./donationsConfig');
 const { normalizeWallet } = require('./security');
 const { verifyDonationTransaction } = require('./donationVerifier');
 const logger = require('./logger');
+const { getOrCreateTelegramAccount } = require('./accountManager');
+const { createTelegramStarsInvoiceLink, answerTelegramPreCheckoutQuery } = require('./telegramStarsService');
 
 let verifierImpl = verifyDonationTransaction;
 const erc20TransferInterface = new ethers.utils.Interface([
@@ -15,7 +18,8 @@ const erc20TransferInterface = new ethers.utils.Interface([
 const SUBMIT_TIMEOUT_MS = 30 * 60 * 1000;
 const INTERNAL_STATUS_AWAITING_TX = 'awaiting_tx';
 const RESPONSELESS_STATUSES = new Set([INTERNAL_STATUS_AWAITING_TX]);
-const FINAL_STATUSES = new Set(['credited', 'failed', 'expired']);
+const FINAL_STATUSES = new Set(['credited', 'paid', 'failed', 'expired']);
+const REWARDABLE_STATUSES = new Set(['confirmed', 'credited', 'paid']);
 const DEFAULT_BSC_PUBLIC_RPC_URL = 'https://bsc-dataseed.binance.org/';
 const DONATION_RECHECK_INTERVAL_MS = Math.max(15 * 1000, Number(process.env.DONATIONS_RECHECK_INTERVAL_MS || 60 * 1000));
 const DONATION_RECHECK_BATCH_SIZE = Math.max(1, Number(process.env.DONATIONS_RECHECK_BATCH_SIZE || 25));
@@ -58,6 +62,7 @@ function buildProductView(config, alreadyPurchased) {
     key: config.key,
     title: config.title,
     price: config.price,
+    starsAmount: config.starsAmount,
     currency: config.currency,
     network: config.network,
     grant: config.grant,
@@ -118,7 +123,7 @@ async function hasSuccessfulDonation(wallet, productKey) {
   const existing = await DonationPayment.findOne({
     wallet,
     productKey,
-    status: { $in: ['confirmed', 'credited'] }
+    status: { $in: ['confirmed', 'credited', 'paid'] }
   });
 
   return !!existing;
@@ -195,12 +200,14 @@ async function createDonationPayment(wallet, productKey) {
   const payment = new DonationPayment({
     paymentId: crypto.randomUUID(),
     wallet: normalizedWallet,
+    paymentMethod: 'crypto',
     productKey: config.key,
     productSnapshot: {
       key: config.key,
       title: config.title,
       grant: config.grant,
       price: config.price,
+      starsAmount: config.starsAmount,
       currency: config.currency,
       network: config.network,
       requiredConfirmations: config.requiredConfirmations,
@@ -213,6 +220,7 @@ async function createDonationPayment(wallet, productKey) {
     merchantWallet: config.merchantWallet,
     expectedAmount: config.price,
     expectedDecimals: config.tokenDecimals,
+    currency: config.currency,
     expiresAt: null
   });
 
@@ -220,12 +228,81 @@ async function createDonationPayment(wallet, productKey) {
   return payment;
 }
 
-async function creditDonationPayment(payment) {
+function buildStarsInvoicePayload({ payment, telegramUserId, config }) {
+  return JSON.stringify({
+    version: 1,
+    orderId: payment.paymentId,
+    telegramUserId: String(telegramUserId),
+    productKey: config.key,
+    starsAmount: config.starsAmount
+  });
+}
+
+async function createTelegramStarsPayment({ telegramUserId, productKey }) {
+  const tgId = String(telegramUserId || '').trim();
+  const config = getDonationConfig(productKey);
+
+  if (!tgId || !config) {
+    const err = new Error(!tgId ? 'Missing Telegram user id' : 'Unknown donation product');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const account = await getOrCreateTelegramAccount(tgId);
+  if (config.purchaseLimit === 'once' && await hasSuccessfulDonation(account.primaryId, config.key)) {
+    const err = new Error(`${config.title} already purchased`);
+    err.statusCode = 409;
+    throw err;
+  }
+
+  const payment = new DonationPayment({
+    paymentId: crypto.randomUUID(),
+    wallet: account.primaryId,
+    paymentMethod: 'telegram_stars',
+    telegramUserId: tgId,
+    productKey: config.key,
+    productSnapshot: {
+      key: config.key,
+      title: config.title,
+      grant: config.grant,
+      price: config.price,
+      starsAmount: config.starsAmount,
+      currency: 'XTR',
+      network: 'telegram',
+      requiredConfirmations: 1,
+      purchaseLimit: config.purchaseLimit
+    },
+    status: 'created',
+    network: 'telegram',
+    tokenSymbol: 'XTR',
+    tokenContract: 'telegram-stars',
+    merchantWallet: 'telegram-stars',
+    expectedAmount: String(config.starsAmount),
+    expectedDecimals: 0,
+    starsAmount: config.starsAmount,
+    currency: 'XTR'
+  });
+
+  payment.invoicePayload = buildStarsInvoicePayload({ payment, telegramUserId: tgId, config });
+
+  const invoiceUrl = await createTelegramStarsInvoiceLink({
+    title: config.title,
+    description: `${config.title} donation purchase`,
+    payload: payment.invoicePayload,
+    currency: 'XTR',
+    prices: [{ label: config.title, amount: config.starsAmount }]
+  });
+
+  await payment.save();
+  return { payment, invoiceUrl };
+}
+
+async function creditDonationPayment(payment, options = {}) {
   if (!payment) {
     return null;
   }
 
-  if (payment.status === 'credited' || payment.rewardGrantedAt) {
+  if (payment.rewardGrantedAt) {
     return payment;
   }
 
@@ -238,17 +315,19 @@ async function creditDonationPayment(payment) {
   }
 
   const rewardGrantedAt = new Date();
+  const finalStatus = options.finalStatus || (payment.paymentMethod === 'telegram_stars' ? 'paid' : 'credited');
   const rewardUpdate = await DonationPayment.findOneAndUpdate(
     {
       paymentId: payment.paymentId,
       rewardGrantedAt: null,
-      status: { $in: ['confirmed', 'credited'] }
+      status: { $in: [...REWARDABLE_STATUSES] }
     },
     {
       $set: {
-        status: 'credited',
+        status: finalStatus,
         rewardGrantedAt,
-        creditedAt: rewardGrantedAt,
+        creditedAt: finalStatus === 'credited' ? rewardGrantedAt : (payment.creditedAt || null),
+        paidAt: finalStatus === 'paid' ? (payment.paidAt || rewardGrantedAt) : (payment.paidAt || null),
         confirmedAt: payment.confirmedAt || rewardGrantedAt,
         failureReason: null
       }
@@ -265,12 +344,6 @@ async function creditDonationPayment(payment) {
   player.totalSilverCoins += silver;
   player.updatedAt = rewardGrantedAt;
   await player.save();
-
-  payment.status = rewardUpdate.status;
-  payment.rewardGrantedAt = rewardUpdate.rewardGrantedAt;
-  payment.creditedAt = rewardUpdate.creditedAt;
-  payment.confirmedAt = rewardUpdate.confirmedAt;
-  payment.failureReason = rewardUpdate.failureReason;
 
   return rewardUpdate;
 }
@@ -366,7 +439,7 @@ async function recheckDonationPayment(payment) {
   payment.expiresAt = getVerificationDeadline(payment);
   await payment.save();
 
-  return creditDonationPayment(payment);
+  return creditDonationPayment(payment, { finalStatus: 'credited' });
 }
 
 async function submitDonationTransaction({ wallet, paymentId, txHash }) {
@@ -441,6 +514,10 @@ async function getDonationPayment(paymentId, options = {}) {
     throw err;
   }
 
+  if (payment.paymentMethod === 'telegram_stars') {
+    return payment;
+  }
+
   if (normalizedHash && !payment.txHash) {
     const existingHash = await DonationPayment.findOne({ txHash: normalizedHash, paymentId: { $ne: paymentId } });
     if (existingHash) {
@@ -469,19 +546,27 @@ function serializeDonationPayment(payment, options = {}) {
     return null;
   }
   const includeTxRequest = options.includeTxRequest !== false;
+  const isStars = payment.paymentMethod === 'telegram_stars';
 
   return {
     paymentId: payment.paymentId,
+    orderId: payment.paymentId,
     wallet: payment.wallet,
+    paymentMethod: payment.paymentMethod || 'crypto',
+    telegramUserId: payment.telegramUserId || null,
     status: getPublicStatus(payment.status),
     productKey: payment.productKey,
     productTitle: payment.productSnapshot?.title || null,
     title: payment.productSnapshot?.title || null,
-    amount: payment.expectedAmount,
-    currency: payment.tokenSymbol,
+    amount: isStars ? (payment.starsAmount ?? null) : payment.expectedAmount,
+    cryptoAmount: isStars ? null : payment.expectedAmount,
+    starsAmount: payment.starsAmount ?? payment.productSnapshot?.starsAmount ?? null,
+    currency: isStars ? 'XTR' : payment.tokenSymbol,
     network: payment.network,
     tokenContract: payment.tokenContract,
     merchantWallet: payment.merchantWallet,
+    invoicePayload: payment.invoicePayload || null,
+    telegramPaymentChargeId: payment.telegramPaymentChargeId || null,
     expiresAt: payment.expiresAt || getVerificationDeadline(payment),
     txHash: payment.txHash,
     confirmations: payment.confirmations,
@@ -497,10 +582,140 @@ function serializeDonationPayment(payment, options = {}) {
     updatedAt: payment.updatedAt || null,
     submittedAt: payment.submittedAt || null,
     confirmedAt: payment.confirmedAt || null,
+    paidAt: payment.paidAt || null,
     creditedAt: payment.creditedAt || null,
-    txRequest: includeTxRequest ? buildDonationTxRequest(payment) : null
+    rewardGrantedAt: payment.rewardGrantedAt || null,
+    txRequest: !isStars && includeTxRequest ? buildDonationTxRequest(payment) : null
   };
 }
+
+function parseStarsPayload(payload) {
+  try {
+    return JSON.parse(payload);
+  } catch (error) {
+    return null;
+  }
+}
+
+async function handleTelegramPreCheckoutQuery(update) {
+  const query = update?.pre_checkout_query;
+  if (!query?.id) {
+    return { ok: false, reason: 'missing_pre_checkout_query' };
+  }
+
+  const parsedPayload = parseStarsPayload(query.invoice_payload);
+  const orderId = parsedPayload?.orderId;
+  const order = orderId ? await DonationPayment.findOne({ paymentId: orderId }) : null;
+
+  let ok = true;
+  let errorMessage;
+
+  if (!parsedPayload || !order) {
+    ok = false;
+    errorMessage = 'Order not found';
+  } else if (FINAL_STATUSES.has(order.status) || order.rewardGrantedAt) {
+    ok = false;
+    errorMessage = 'Order already finalized';
+  } else if (order.paymentMethod !== 'telegram_stars') {
+    ok = false;
+    errorMessage = 'Invalid payment method';
+  } else if (String(order.telegramUserId) !== String(query.from?.id || parsedPayload.telegramUserId)) {
+    ok = false;
+    errorMessage = 'Telegram user mismatch';
+  } else if (query.currency !== 'XTR') {
+    ok = false;
+    errorMessage = 'Invalid currency';
+  } else if (Number(query.total_amount) !== Number(order.starsAmount)) {
+    ok = false;
+    errorMessage = 'Invalid amount';
+  } else if (parsedPayload.productKey !== order.productKey) {
+    ok = false;
+    errorMessage = 'Invalid product';
+  }
+
+  await answerTelegramPreCheckoutQuery(query.id, ok, errorMessage);
+  logger.info({ preCheckoutQueryId: query.id, orderId, ok, errorMessage }, 'Telegram pre-checkout processed');
+  return { ok, orderId, errorMessage };
+}
+
+async function handleTelegramSuccessfulPayment(update) {
+  const successfulPayment = update?.message?.successful_payment;
+  if (!successfulPayment) {
+    return { ok: false, reason: 'missing_successful_payment' };
+  }
+
+  const parsedPayload = parseStarsPayload(successfulPayment.invoice_payload);
+  const orderId = parsedPayload?.orderId;
+  if (!orderId) {
+    const err = new Error('Missing order id in invoice payload');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  let order = await DonationPayment.findOne({ paymentId: orderId });
+  if (!order) {
+    const err = new Error('Order not found');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  if (order.telegramPaymentChargeId && order.telegramPaymentChargeId === successfulPayment.telegram_payment_charge_id) {
+    logger.info({ orderId, telegramPaymentChargeId: order.telegramPaymentChargeId }, 'Telegram successful_payment duplicate ignored');
+    return { ok: true, order: await getDonationPayment(orderId) };
+  }
+
+  if (successfulPayment.currency !== 'XTR') {
+    const err = new Error('Invalid Telegram Stars currency');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  if (Number(successfulPayment.total_amount) !== Number(order.starsAmount)) {
+    const err = new Error('Invalid Telegram Stars amount');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  if (String(parsedPayload.telegramUserId) !== String(order.telegramUserId)) {
+    const err = new Error('Telegram user mismatch');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  order.status = 'paid';
+  order.paidAt = order.paidAt || new Date();
+  order.telegramPaymentChargeId = successfulPayment.telegram_payment_charge_id;
+  order.failureReason = null;
+  await order.save();
+
+  order = await creditDonationPayment(order, { finalStatus: 'paid' });
+  logger.info({
+    orderId,
+    telegramUserId: order.telegramUserId,
+    telegramPaymentChargeId: successfulPayment.telegram_payment_charge_id,
+    totalAmount: successfulPayment.total_amount,
+    rewardGrantedAt: order.rewardGrantedAt || null
+  }, 'Telegram successful_payment processed');
+
+  return { ok: true, order };
+}
+
+module.exports = {
+  listDonationProducts,
+  listDonationPayments,
+  createDonationPayment,
+  createTelegramStarsPayment,
+  submitDonationTransaction,
+  getDonationPayment,
+  serializeDonationPayment,
+  processPendingDonationPayments,
+  startDonationPaymentRecheckLoop,
+  stopDonationPaymentRecheckLoop,
+  setDonationVerifierForTests,
+  resetDonationVerifier,
+  handleTelegramPreCheckoutQuery,
+  handleTelegramSuccessfulPayment
+};
 
 async function processPendingDonationPayments(options = {}) {
   const limit = Math.max(1, Number(options.limit) || DONATION_RECHECK_BATCH_SIZE);
@@ -558,17 +773,3 @@ function stopDonationPaymentRecheckLoop() {
   clearInterval(donationRecheckTimer);
   donationRecheckTimer = null;
 }
-
-module.exports = {
-  listDonationProducts,
-  listDonationPayments,
-  createDonationPayment,
-  submitDonationTransaction,
-  getDonationPayment,
-  serializeDonationPayment,
-  processPendingDonationPayments,
-  startDonationPaymentRecheckLoop,
-  stopDonationPaymentRecheckLoop,
-  setDonationVerifierForTests,
-  resetDonationVerifier
-};

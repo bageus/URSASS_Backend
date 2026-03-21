@@ -22,9 +22,43 @@ const donationPaymentSchema = new mongoose.Schema({
     type: Object,
     required: true
   },
+
+  paymentMethod: {
+    type: String,
+    enum: ['crypto', 'telegram_stars'],
+    default: 'crypto',
+    index: true
+  },
+  telegramUserId: {
+    type: String,
+    default: null,
+    index: true
+  },
+  starsAmount: {
+    type: Number,
+    default: null
+  },
+  currency: {
+    type: String,
+    default: null
+  },
+  invoicePayload: {
+    type: String,
+    default: null
+  },
+  telegramPaymentChargeId: {
+    type: String,
+    default: null,
+    sparse: true,
+    unique: true
+  },
+  paidAt: {
+    type: Date,
+    default: null
+  },
   status: {
     type: String,
-    enum: ['awaiting_tx', 'submitted', 'confirmed', 'credited', 'failed', 'expired'],
+    enum: ['created', 'awaiting_tx', 'submitted', 'confirmed', 'credited', 'paid', 'failed', 'expired'],
     default: 'awaiting_tx',
     index: true
   },
