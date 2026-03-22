@@ -551,23 +551,50 @@ async function getDonationPayment(paymentId, options = {}) {
   return finalizeExpiredPayment(payment);
 }
 
+
+function getPaymentShape(payment) {
+  const isStars = payment.paymentMethod === 'telegram_stars';
+  const method = isStars ? 'telegram-stars' : 'wallet';
+  const provider = isStars ? 'telegram' : 'wallet';
+  const category = isStars ? 'stars' : 'crypto';
+  const amount = isStars ? (payment.starsAmount ?? payment.productSnapshot?.starsAmount ?? null) : payment.expectedAmount;
+  const currency = isStars ? 'STARS' : (payment.currency || payment.tokenSymbol || payment.productSnapshot?.currency || null);
+  const legacyPaymentMethod = payment.paymentMethod || 'crypto';
+
+  return {
+    isStars,
+    method,
+    provider,
+    category,
+    amount,
+    currency,
+    legacyPaymentMethod
+  };
+}
+
 function serializeDonationPayment(payment, options = {}) {
   if (!payment) {
     return null;
   }
   const includeTxRequest = options.includeTxRequest !== false;
-  const isStars = payment.paymentMethod === 'telegram_stars';
-  const normalizedPaymentMethod = payment.paymentMethod || 'crypto';
-  const amount = isStars ? (payment.starsAmount ?? payment.productSnapshot?.starsAmount ?? null) : payment.expectedAmount;
-  const currency = isStars ? 'XTR' : (payment.currency || payment.tokenSymbol || payment.productSnapshot?.currency || null);
+  const {
+    isStars,
+    method,
+    provider,
+    category,
+    amount,
+    currency,
+    legacyPaymentMethod
+  } = getPaymentShape(payment);
 
   return {
     paymentId: payment.paymentId,
     orderId: payment.paymentId,
     wallet: payment.wallet,
-    paymentMethod: normalizedPaymentMethod,
-    paymentProvider: isStars ? 'telegram' : 'wallet',
-    paymentCategory: isStars ? 'stars' : 'crypto',
+    paymentMethod: method,
+    paymentProvider: provider,
+    paymentCategory: category,
+    paymentMethodLegacy: legacyPaymentMethod,
     telegramUserId: payment.telegramUserId || null,
     status: getPublicStatus(payment.status),
     productKey: payment.productKey,
@@ -579,13 +606,18 @@ function serializeDonationPayment(payment, options = {}) {
     starsAmount: payment.starsAmount ?? payment.productSnapshot?.starsAmount ?? null,
     currency,
     payment: {
-      method: normalizedPaymentMethod,
-      provider: isStars ? 'telegram' : 'wallet',
-      category: isStars ? 'stars' : 'crypto',
+      method,
+      provider,
+      category,
       amount,
       amountValue: amount == null ? null : String(amount),
-      currency
+      currency,
+      amountByMethod: amount,
+      unit: currency
     },
+    amountByMethod: amount,
+    paymentAmount: amount,
+    unit: currency,
     network: payment.network,
     tokenContract: payment.tokenContract,
     merchantWallet: payment.merchantWallet,

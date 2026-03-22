@@ -513,20 +513,24 @@ test('GET /api/store/donations/history/:wallet returns payments sorted by newest
   assert.equal(history.payments.length, 2);
   assert.equal(history.payments[0].paymentId, secondPayment.paymentId);
   assert.equal(history.payments[0].status, 'submitted');
-  assert.equal(history.payments[0].paymentMethod, 'crypto');
+  assert.equal(history.payments[0].paymentMethod, 'wallet');
   assert.equal(history.payments[0].paymentProvider, 'wallet');
   assert.equal(history.payments[0].paymentCategory, 'crypto');
   assert.equal(history.payments[0].title, 'Basic Pack');
   assert.equal(history.payments[0].amount, '0.09');
+  assert.equal(history.payments[0].paymentAmount, '0.09');
   assert.equal(history.payments[0].amountValue, '0.09');
   assert.equal(history.payments[0].currency, 'USDT');
+  assert.equal(history.payments[0].paymentMethodLegacy, 'crypto');
   assert.deepEqual(history.payments[0].payment, {
-    method: 'crypto',
+    method: 'wallet',
     provider: 'wallet',
     category: 'crypto',
     amount: '0.09',
     amountValue: '0.09',
-    currency: 'USDT'
+    currency: 'USDT',
+    amountByMethod: '0.09',
+    unit: 'USDT'
   });
   assert.equal(history.payments[0].txRequest, null);
   assert.ok(history.payments[0].createdAt);
@@ -734,6 +738,26 @@ function buildTelegramInitData(user, botToken) {
   return params.toString();
 }
 
+test('OPTIONS /api/donations/stars/create allows Telegram Mini App header in CORS preflight', async () => {
+  const { server, baseUrl } = await startServer();
+
+  const res = await fetch(`${baseUrl}/api/donations/stars/create`, {
+    method: 'OPTIONS',
+    headers: {
+      Origin: 'https://ursass-tube.vercel.app',
+      'Access-Control-Request-Method': 'POST',
+      'Access-Control-Request-Headers': 'content-type,x-telegram-init-data'
+    }
+  });
+
+  assert.equal(res.status, 204);
+  assert.equal(res.headers.get('access-control-allow-origin'), 'https://ursass-tube.vercel.app');
+  assert.match(res.headers.get('access-control-allow-headers') || '', /x-telegram-init-data/i);
+  assert.match(res.headers.get('access-control-allow-methods') || '', /POST/i);
+
+  await server.close();
+});
+
 test('POST /api/donations/stars/create creates Telegram Stars order and returns invoiceUrl', async () => {
   process.env.TELEGRAM_BOT_TOKEN = '123456:stars-token';
   const { server, baseUrl } = await startServer();
@@ -868,22 +892,26 @@ test('POST /api/telegram/webhook processes successful_payment idempotently', asy
   const historyRes = await fetch(`${baseUrl}/api/store/donations/history/tg_888002`);
   assert.equal(historyRes.status, 200);
   const history = await historyRes.json();
-  assert.equal(history.payments[0].paymentMethod, 'telegram_stars');
+  assert.equal(history.payments[0].paymentMethod, 'telegram-stars');
   assert.equal(history.payments[0].paymentProvider, 'telegram');
   assert.equal(history.payments[0].paymentCategory, 'stars');
   assert.equal(history.payments[0].status, 'paid');
   assert.equal(history.payments[0].starsAmount, 2);
   assert.equal(history.payments[0].amount, 2);
+  assert.equal(history.payments[0].paymentAmount, 2);
   assert.equal(history.payments[0].amountValue, '2');
-  assert.equal(history.payments[0].currency, 'XTR');
+  assert.equal(history.payments[0].currency, 'STARS');
   assert.deepEqual(history.payments[0].payment, {
-    method: 'telegram_stars',
+    method: 'telegram-stars',
     provider: 'telegram',
     category: 'stars',
     amount: 2,
     amountValue: '2',
-    currency: 'XTR'
+    currency: 'STARS',
+    amountByMethod: 2,
+    unit: 'STARS'
   });
+  assert.equal(history.payments[0].paymentMethodLegacy, 'telegram_stars');
 
   await server.close();
 });
