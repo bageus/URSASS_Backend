@@ -26,7 +26,7 @@ function createApp() {
     ...extraAllowedOrigins
   ];
 
-  app.use(cors({
+  const corsOptions = {
     origin: function(origin, callback) {
       if (!origin) {
         callback(null, true);
@@ -48,10 +48,11 @@ function createApp() {
     },
     credentials: true,
     methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'X-Wallet', 'X-Primary-Id']
-  }));
+    allowedHeaders: ['Content-Type', 'X-Wallet', 'X-Primary-Id', 'X-Telegram-Init-Data', 'x-telegram-init-data']
+  };
 
-  app.options('*', cors());
+  app.use(cors(corsOptions));
+  app.options('*', cors(corsOptions));
   app.use(express.json({ limit: '1mb' }));
   app.use(metricsMiddleware);
 
