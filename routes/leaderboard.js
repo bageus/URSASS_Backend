@@ -46,6 +46,21 @@ function buildDisplayName(link, primaryId) {
   return primaryId || 'Unknown';
 }
 
+function buildLeaderboardEntry(player, displayName, position) {
+  return {
+    position,
+    wallet: player.wallet,
+    displayName,
+    bestScore: player.bestScore,
+    averageScore: player.averageScore || 0,
+    scoreToAverageRatio: player.scoreToAverageRatio || null,
+    bestDistance: player.bestDistance,
+    totalGoldCoins: player.totalGoldCoins,
+    totalSilverCoins: player.totalSilverCoins,
+    gamesPlayed: player.gamesPlayed
+  };
+}
+
 // ✅ GET: Top 10 players
 router.get('/top', readLimiter, async (req, res) => {
   try {
@@ -75,49 +90,29 @@ router.get('/top', readLimiter, async (req, res) => {
             bestScore: { $gt: playerData.bestScore }
           });
 
-          playerPosition = {
-            position: position + 1,
-            wallet: playerData.wallet,
-            displayName: buildDisplayName(playerLink, playerData.wallet),
-            bestScore: playerData.bestScore,
-            averageScore: playerData.averageScore || 0,
-            scoreToAverageRatio: playerData.scoreToAverageRatio || null,
-            bestDistance: playerData.bestDistance,
-            totalGoldCoins: playerData.totalGoldCoins,
-            totalSilverCoins: playerData.totalSilverCoins,
-            gamesPlayed: playerData.gamesPlayed
-          };
+          playerPosition = buildLeaderboardEntry(
+            playerData,
+            buildDisplayName(playerLink, playerData.wallet),
+            position + 1
+          );
         } else {
-          // Player has 0 score — no position
-          playerPosition = {
-            position: null,
-            wallet: playerData.wallet,
-            displayName: buildDisplayName(playerLink, playerData.wallet),
-            bestScore: playerData.bestScore,
-            averageScore: playerData.averageScore || 0,
-            scoreToAverageRatio: playerData.scoreToAverageRatio || null,
-            bestDistance: playerData.bestDistance,
-            totalGoldCoins: playerData.totalGoldCoins,
-            totalSilverCoins: playerData.totalSilverCoins,
-            gamesPlayed: playerData.gamesPlayed
-          };
+          playerPosition = buildLeaderboardEntry(
+            playerData,
+            buildDisplayName(playerLink, playerData.wallet),
+            null
+          );
         }
       }
     }
 
     res.json({
-      leaderboard: topPlayers.map((player, index) => ({
-        position: index + 1,
-        wallet: player.wallet,
-        displayName: buildDisplayName(linkMap[player.wallet], player.wallet),
-        bestScore: player.bestScore,
-        averageScore: player.averageScore || 0,
-        scoreToAverageRatio: player.scoreToAverageRatio || null,
-        bestDistance: player.bestDistance,
-        totalGoldCoins: player.totalGoldCoins,
-        totalSilverCoins: player.totalSilverCoins,
-        gamesPlayed: player.gamesPlayed
-      })),
+      leaderboard: topPlayers.map((player, index) => (
+        buildLeaderboardEntry(
+          player,
+          buildDisplayName(linkMap[player.wallet], player.wallet),
+          index + 1
+        )
+      )),
       playerPosition
     });
 

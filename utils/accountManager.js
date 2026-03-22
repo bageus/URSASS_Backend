@@ -3,6 +3,139 @@ const Player = require('../models/Player');
 const PlayerUpgrades = require('../models/PlayerUpgrades');
 const logger = require('./logger');
 
+const UPGRADE_LEVEL_FIELDS = [
+  'x2_duration',
+  'score_plus_300_mult',
+  'score_plus_500_mult',
+  'score_minus_300_mult',
+  'score_minus_500_mult',
+  'invert_score',
+  'speed_up_mult',
+  'speed_down_mult',
+  'magnet_duration',
+  'spin_cooldown',
+  'shield',
+  'shield_capacity',
+  'radar',
+  'alert'
+];
+
+function buildNewPlayer(primaryId) {
+  return new Player({
+    wallet: primaryId,
+    bestScore: 0,
+    bestDistance: 0,
+    totalGoldCoins: 0,
+    totalSilverCoins: 0,
+    gamesPlayed: 0,
+    gameHistory: []
+  });
+}
+
+function buildAccountLink({ primaryId, telegramId = null, wallet = null }) {
+  return new AccountLink({
+    telegramId,
+    wallet,
+    primaryId,
+    masterSource: null,
+    linkedAt: null
+  });
+}
+
+function buildAccountSummary({ primaryId, telegramId = null, wallet = null, isLinked = false }) {
+  return {
+    primaryId,
+    telegramId,
+    wallet,
+    isLinked
+  };
+}
+
+async function ensurePlayerExists(primaryId) {
+  let player = await Player.findOne({ wallet: primaryId });
+  if (!player) {
+    player = buildNewPlayer(primaryId);
+    await player.save();
+  }
+  return player;
+}
+
+async function ensureUpgradesExist(primaryId) {
+  let upgrades = await PlayerUpgrades.findOne({ wallet: primaryId });
+  if (!upgrades) {
+    upgrades = new PlayerUpgrades({ wallet: primaryId });
+    await upgrades.save();
+  }
+  return upgrades;
+}
+
+async function ensureAccountResources(primaryId) {
+  await ensurePlayerExists(primaryId);
+  await ensureUpgradesExist(primaryId);
+}
+
+function resetPlayerState(player) {
+  player.bestScore = 0;
+  player.bestDistance = 0;
+  player.totalGoldCoins = 0;
+  player.totalSilverCoins = 0;
+  player.gamesPlayed = 0;
+  player.gameHistory = [];
+}
+
+function resetUpgradesState(upgrades) {
+  for (const field of UPGRADE_LEVEL_FIELDS) {
+    upgrades[field] = 0;
+  }
+
+  upgrades.freeRidesRemaining = 0;
+  upgrades.paidRidesRemaining = 0;
+  upgrades.recentRideSessionIds = [];
+  upgrades.freeRidesResetAt = new Date();
+}
+
+function mergePlayerState(masterPlayer, slavePlayer) {
+  masterPlayer.bestScore = Math.max(masterPlayer.bestScore || 0, slavePlayer.bestScore || 0);
+  masterPlayer.bestDistance = Math.max(masterPlayer.bestDistance || 0, slavePlayer.bestDistance || 0);
+  masterPlayer.totalGoldCoins = (masterPlayer.totalGoldCoins || 0) + (slavePlayer.totalGoldCoins || 0);
+  masterPlayer.totalSilverCoins = (masterPlayer.totalSilverCoins || 0) + (slavePlayer.totalSilverCoins || 0);
+  masterPlayer.gamesPlayed = (masterPlayer.gamesPlayed || 0) + (slavePlayer.gamesPlayed || 0);
+
+  const masterHistory = Array.isArray(masterPlayer.gameHistory) ? masterPlayer.gameHistory : [];
+  const slaveHistory = Array.isArray(slavePlayer.gameHistory) ? slavePlayer.gameHistory : [];
+  masterPlayer.gameHistory = [...masterHistory, ...slaveHistory]
+    .sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0))
+    .slice(0, 100);
+
+  if (masterPlayer.gamesPlayed > 0) {
+    const totalScore = masterPlayer.gameHistory.reduce((sum, game) => sum + (game.score || 0), 0);
+    masterPlayer.averageScore = totalScore / masterPlayer.gamesPlayed;
+
+    if (masterPlayer.averageScore > 0) {
+      masterPlayer.scoreToAverageRatio = masterPlayer.bestScore / masterPlayer.averageScore;
+    } else {
+      masterPlayer.scoreToAverageRatio = null;
+    }
+  }
+}
+
+function mergeUpgradesState(masterUpgrades, slaveUpgrades) {
+  if (!masterUpgrades || !slaveUpgrades) {
+    return;
+  }
+
+  for (const field of UPGRADE_LEVEL_FIELDS) {
+    masterUpgrades[field] = Math.max(masterUpgrades[field] || 0, slaveUpgrades[field] || 0);
+  }
+
+  masterUpgrades.freeRidesRemaining = Math.max(masterUpgrades.freeRidesRemaining || 0, slaveUpgrades.freeRidesRemaining || 0);
+  masterUpgrades.paidRidesRemaining = (masterUpgrades.paidRidesRemaining || 0) + (slaveUpgrades.paidRidesRemaining || 0);
+
+  const masterRecentSessions = Array.isArray(masterUpgrades.recentRideSessionIds) ? masterUpgrades.recentRideSessionIds : [];
+  const slaveRecentSessions = Array.isArray(slaveUpgrades.recentRideSessionIds) ? slaveUpgrades.recentRideSessionIds : [];
+  masterUpgrades.recentRideSessionIds = [...new Set([...masterRecentSessions, ...slaveRecentSessions])].slice(-30);
+}
+
 /**
  * Получить или создать primaryId для Telegram пользователя
  */
@@ -13,53 +146,22 @@ async function getOrCreateTelegramAccount(telegramId) {
   let link = await AccountLink.findOne({ telegramId: tgIdStr });
 
   if (link) {
-    return {
+    return buildAccountSummary({
       primaryId: link.primaryId,
       telegramId: link.telegramId,
       wallet: link.wallet,
       isLinked: !!link.wallet
-    };
+    });
   }
 
   // Создаём новую
   const primaryId = `tg_${tgIdStr}`;
-  link = new AccountLink({
-    telegramId: tgIdStr,
-    wallet: null,
-    primaryId: primaryId,
-    masterSource: null,
-    linkedAt: null
-  });
+  link = buildAccountLink({ primaryId, telegramId: tgIdStr });
   await link.save();
 
-  // Создаём пустого игрока
-  let player = await Player.findOne({ wallet: primaryId });
-  if (!player) {
-    player = new Player({
-      wallet: primaryId,
-      bestScore: 0,
-      bestDistance: 0,
-      totalGoldCoins: 0,
-      totalSilverCoins: 0,
-      gamesPlayed: 0,
-      gameHistory: []
-    });
-    await player.save();
-  }
+  await ensureAccountResources(primaryId);
 
-  // Создаём пустые апгрейды
-  let upgrades = await PlayerUpgrades.findOne({ wallet: primaryId });
-  if (!upgrades) {
-    upgrades = new PlayerUpgrades({ wallet: primaryId });
-    await upgrades.save();
-  }
-
-  return {
-    primaryId,
-    telegramId: tgIdStr,
-    wallet: null,
-    isLinked: false
-  };
+  return buildAccountSummary({ primaryId, telegramId: tgIdStr });
 }
 
 /**
@@ -71,52 +173,22 @@ async function getOrCreateWalletAccount(walletAddress) {
   let link = await AccountLink.findOne({ wallet });
 
   if (link) {
-    return {
+    return buildAccountSummary({
       primaryId: link.primaryId,
       telegramId: link.telegramId,
       wallet: link.wallet,
       isLinked: !!link.telegramId
-    };
+    });
   }
 
   // Создаём новую связку — primaryId = адрес кошелька
   const primaryId = wallet;
-  link = new AccountLink({
-    telegramId: null,
-    wallet: wallet,
-    primaryId: primaryId,
-    masterSource: null,
-    linkedAt: null
-  });
+  link = buildAccountLink({ primaryId, wallet });
   await link.save();
 
-  // Проверяем/создаём игрока (может уже существовать от старого кода)
-  let player = await Player.findOne({ wallet: primaryId });
-  if (!player) {
-    player = new Player({
-      wallet: primaryId,
-      bestScore: 0,
-      bestDistance: 0,
-      totalGoldCoins: 0,
-      totalSilverCoins: 0,
-      gamesPlayed: 0,
-      gameHistory: []
-    });
-    await player.save();
-  }
+  await ensureAccountResources(primaryId);
 
-  let upgrades = await PlayerUpgrades.findOne({ wallet: primaryId });
-  if (!upgrades) {
-    upgrades = new PlayerUpgrades({ wallet: primaryId });
-    await upgrades.save();
-  }
-
-  return {
-    primaryId,
-    telegramId: null,
-    wallet,
-    isLinked: false
-  };
+  return buildAccountSummary({ primaryId, wallet });
 }
 
 /**
@@ -254,40 +326,30 @@ async function mergeAccounts(primaryIdA, primaryIdB) {
 
   masterLink.linkedAt = new Date();
   masterLink.updatedAt = new Date();
-  masterLink.masterSource = masterLink.primaryId === primaryIdA ? 'a' : 'b';
+  masterLink.masterSource = String(masterLink.primaryId || '').startsWith('tg_') ? 'telegram' : 'wallet';
 
-  // Переносим апгрейды мастера (slave обнуляется)
+  // Объединяем player/upgrades данные в master, затем обнуляем slave
   const masterUpgrades = await PlayerUpgrades.findOne({ wallet: masterLink.primaryId });
   const slaveUpgrades = await PlayerUpgrades.findOne({ wallet: slaveLink.primaryId });
 
+  mergePlayerState(masterPlayer, slavePlayer);
+  masterPlayer.updatedAt = new Date();
+  await masterPlayer.save();
+
+  if (masterUpgrades && slaveUpgrades) {
+    mergeUpgradesState(masterUpgrades, slaveUpgrades);
+    masterUpgrades.updatedAt = new Date();
+    await masterUpgrades.save();
+  }
+
   // Обнуляем slave
   if (slavePlayer) {
-    slavePlayer.bestScore = 0;
-    slavePlayer.bestDistance = 0;
-    slavePlayer.totalGoldCoins = 0;
-    slavePlayer.totalSilverCoins = 0;
-    slavePlayer.gamesPlayed = 0;
-    slavePlayer.gameHistory = [];
+    resetPlayerState(slavePlayer);
     await slavePlayer.save();
   }
 
   if (slaveUpgrades) {
-    slaveUpgrades.x2_duration = 0;
-    slaveUpgrades.score_plus_300_mult = 0;
-    slaveUpgrades.score_plus_500_mult = 0;
-    slaveUpgrades.score_minus_300_mult = 0;
-    slaveUpgrades.score_minus_500_mult = 0;
-    slaveUpgrades.invert_score = 0;
-    slaveUpgrades.speed_up_mult = 0;
-    slaveUpgrades.speed_down_mult = 0;
-    slaveUpgrades.magnet_duration = 0;
-    slaveUpgrades.spin_cooldown = 0;
-    slaveUpgrades.shield = 0;
-    slaveUpgrades.shield_capacity = 0;
-    slaveUpgrades.radar = 0;
-    slaveUpgrades.alert = 0;
-    slaveUpgrades.freeRidesRemaining = 0;
-    slaveUpgrades.paidRidesRemaining = 0;
+    resetUpgradesState(slaveUpgrades);
     await slaveUpgrades.save();
   }
 

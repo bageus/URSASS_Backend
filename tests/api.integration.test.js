@@ -191,6 +191,28 @@ test('POST /api/leaderboard/save rejects invalid signature', async () => {
   await server.close();
 });
 
+test('GET /health reports actual mongoose connection state', async () => {
+  const originalReadyState = mongoose.connection.readyState;
+
+  try {
+    mongoose.connection.readyState = 2;
+
+    const { server, baseUrl } = await startServer();
+    const res = await fetch(`${baseUrl}/health`);
+
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.status, 'DEGRADED');
+    assert.equal(body.mongodb, 'connecting');
+    assert.equal(body.mongodbDetails.readyState, 2);
+    assert.equal(body.mongodbDetails.status, 'connecting');
+
+    await server.close();
+  } finally {
+    mongoose.connection.readyState = originalReadyState;
+  }
+});
+
 test('POST /api/leaderboard/save accepts valid signature and blocks replay', async () => {
   const wallet = Wallet.createRandom();
   const seenSignatures = new Set();

@@ -23,6 +23,10 @@ function resolveUpgradeKey(upgradeKey) {
   return UPGRADE_KEY_ALIASES[upgradeKey] || upgradeKey;
 }
 
+function isLevelUpgradeType(type) {
+  return type === 'tiered' || type === 'permanent';
+}
+
 function normalizeShieldUpgrades(upgrades) {
   let changed = false;
   const legacyShieldLevel = upgrades.shield || 0;
@@ -46,6 +50,177 @@ function normalizeShieldUpgrades(upgrades) {
   return changed;
 }
 
+async function getOrCreatePlayerUpgrades(wallet) {
+  let upgrades = await PlayerUpgrades.findOne({ wallet });
+  if (!upgrades) {
+    upgrades = new PlayerUpgrades({ wallet });
+    await upgrades.save();
+  }
+  return upgrades;
+}
+
+async function prepareUpgrades(upgrades, { persist = false } = {}) {
+  const ridesChanged = upgrades.refreshFreeRides();
+  const shieldChanged = normalizeShieldUpgrades(upgrades);
+
+  if (persist && (ridesChanged || shieldChanged)) {
+    await upgrades.save();
+  }
+
+  return upgrades;
+}
+
+function buildRidesData(upgrades, options = {}) {
+  const now = new Date();
+  const resetAt = upgrades.freeRidesResetAt || now;
+  const msUntilReset = Math.max(0, (8 * 60 * 60 * 1000) - (now - resetAt));
+  const resetInMs = options.resetInMs ?? (upgrades.freeRidesRemaining < 3 ? msUntilReset : 0);
+
+  return {
+    freeRides: options.freeRides ?? upgrades.freeRidesRemaining,
+    paidRides: options.paidRides ?? upgrades.paidRidesRemaining,
+    totalRides: options.totalRides ?? upgrades.getTotalRides(),
+    maxFreeRides: 3,
+    resetInMs,
+    resetInFormatted: options.resetInFormatted ?? formatTimeLeft(resetInMs)
+  };
+}
+
+async function spendPlayerCurrency(player, currency, amount, failPurchase) {
+  const balanceField = currency === 'silver' ? 'totalSilverCoins' : 'totalGoldCoins';
+  const label = currency === 'silver' ? 'silver' : 'gold';
+  const available = player[balanceField];
+
+  if (available < amount) {
+    return failPurchase(
+      400,
+      `insufficient_${label}`,
+      `Not enough ${label}. Need: ${amount}, have: ${available}`,
+      { required: amount, available }
+    );
+  }
+
+  player[balanceField] -= amount;
+  return null;
+}
+
+async function applyLevelUpgrade({
+  upgrades,
+  upgradeKey,
+  nextLevel,
+  maxLevel,
+  price,
+  currency,
+  wallet,
+  player,
+  failPurchase
+}) {
+  const insufficientFundsResponse = await spendPlayerCurrency(player, currency, price, failPurchase);
+  if (insufficientFundsResponse) {
+    return insufficientFundsResponse;
+  }
+
+  upgrades[upgradeKey] = nextLevel;
+  logger.info({ wallet, upgradeKey, tier: nextLevel, maxLevel, price, currency }, 'Upgrade purchased');
+  return null;
+}
+
+async function validateLevelPurchase({ tier, currentLevel, maxLevel, failPurchase }) {
+  if (tier !== currentLevel) {
+    return failPurchase(
+      400,
+      'tier_mismatch',
+      `Must buy tier ${currentLevel}. Current: ${currentLevel}, requested: ${tier}`,
+      { currentLevel }
+    );
+  }
+
+  if (currentLevel >= maxLevel) {
+    return failPurchase(400, 'max_level_reached', 'Already at max level');
+  }
+
+  return null;
+}
+
+function createPurchaseAudit({ wallet, req, res, purchaseDetails }) {
+  const logPurchaseResult = async (status, reason, details = {}) => {
+    await logSecurityEvent({
+      wallet,
+      eventType: 'purchase_result',
+      route: req.path,
+      ipAddress: req.ip,
+      details: {
+        ...purchaseDetails,
+        status,
+        reason,
+        ...details
+      }
+    });
+  };
+
+  const failPurchase = async (statusCode, reason, message, details = {}) => {
+    await logPurchaseResult('fail', reason, details);
+    return res.status(statusCode).json({ error: message });
+  };
+
+  const logPurchaseAttempt = async () => {
+    const recentBuyCount = await SecurityEvent.countDocuments({
+      wallet,
+      eventType: 'purchase_attempt',
+      createdAt: { $gte: new Date(Date.now() - 2 * 60 * 1000) }
+    });
+
+    if (recentBuyCount >= 12) {
+      markSuspicious('rapid_purchases');
+      await logSecurityEvent({
+        wallet,
+        eventType: 'suspicious_rapid_purchases',
+        route: req.path,
+        ipAddress: req.ip,
+        details: { recentBuyCount }
+      });
+      logger.warn({ wallet, recentBuyCount }, 'Suspicious rapid purchase pattern');
+    }
+
+    await logSecurityEvent({
+      wallet,
+      eventType: 'purchase_attempt',
+      route: req.path,
+      ipAddress: req.ip,
+      details: purchaseDetails
+    });
+  };
+
+  const logServerError = async (requestBody, error) => {
+    if (!wallet) {
+      return;
+    }
+
+    await logSecurityEvent({
+      wallet,
+      eventType: 'purchase_result',
+      route: req.path,
+      ipAddress: req.ip,
+      details: {
+        requestedUpgradeKey: String(requestBody?.upgradeKey || '').trim(),
+        resolvedUpgradeKey: resolveUpgradeKey(String(requestBody?.upgradeKey || '').trim()),
+        tier: requestBody?.tier ?? 0,
+        authMode: requestBody?.authMode || 'wallet',
+        status: 'fail',
+        reason: 'server_error',
+        error: error.message
+      }
+    });
+  };
+
+  return {
+    failPurchase,
+    logPurchaseResult,
+    logPurchaseAttempt,
+    logServerError
+  };
+}
+
 /**
  * GET /api/store/upgrades/:wallet
  * Get all upgrades + rides + effects
@@ -58,18 +233,8 @@ router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Invalid wallet address' });
     }
 
-    let upgrades = await PlayerUpgrades.findOne({ wallet });
-    if (!upgrades) {
-      upgrades = new PlayerUpgrades({ wallet });
-      await upgrades.save();
-    }
-
-    // Refresh free rides + normalize legacy shield progression
-    const changed = upgrades.refreshFreeRides();
-    const shieldChanged = normalizeShieldUpgrades(upgrades);
-    if (changed || shieldChanged) {
-      await upgrades.save();
-    }
+    const upgrades = await getOrCreatePlayerUpgrades(wallet);
+    await prepareUpgrades(upgrades, { persist: true });
 
     const player = await Player.findOne({ wallet });
     const gold = player ? player.totalGoldCoins : 0;
@@ -113,25 +278,11 @@ router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
       upgradesData.start_with_radar = { ...upgradesData.radar };
     }
 
-    // Rides data
-    const now = new Date();
-    const resetAt = upgrades.freeRidesResetAt || now;
-    const msUntilReset = Math.max(0, (8 * 60 * 60 * 1000) - (now - resetAt));
-
-    const ridesData = {
-      freeRides: upgrades.freeRidesRemaining,
-      paidRides: upgrades.paidRidesRemaining,
-      totalRides: upgrades.getTotalRides(),
-      maxFreeRides: 3,
-      resetInMs: upgrades.freeRidesRemaining < 3 ? msUntilReset : 0,
-      resetInFormatted: formatTimeLeft(msUntilReset)
-    };
-
     res.json({
       wallet,
       balance: { gold, silver },
       upgrades: upgradesData,
-      rides: ridesData,
+      rides: buildRidesData(upgrades),
       activeEffects: effects
     });
 
@@ -282,52 +433,19 @@ router.post('/buy', writeLimiter, async (req, res) => {
       tier: tier ?? 0,
       authMode: authMode || 'wallet'
     };
-
-    const logPurchaseResult = async (status, reason, details = {}) => {
-      await logSecurityEvent({
-        wallet: walletLower,
-        eventType: 'purchase_result',
-        route: req.path,
-        ipAddress: req.ip,
-        details: {
-          ...purchaseDetails,
-          status,
-          reason,
-          ...details
-        }
-      });
-    };
-
-    const failPurchase = async (statusCode, reason, message, details = {}) => {
-      await logPurchaseResult('fail', reason, details);
-      return res.status(statusCode).json({ error: message });
-    };
-
-    const recentBuyCount = await SecurityEvent.countDocuments({
-          wallet: walletLower,
-          eventType: 'purchase_attempt',
-          createdAt: { $gte: new Date(Date.now() - 2 * 60 * 1000) }
-        });
-    
-        if (recentBuyCount >= 12) {
-          markSuspicious('rapid_purchases');
-          await logSecurityEvent({
-            wallet: walletLower,
-            eventType: 'suspicious_rapid_purchases',
-            route: req.path,
-            ipAddress: req.ip,
-            details: { recentBuyCount }
-          });
-          logger.warn({ wallet: walletLower, recentBuyCount }, 'Suspicious rapid purchase pattern');
-        }
-
-    await logSecurityEvent({
+    const {
+      failPurchase,
+      logPurchaseResult,
+      logPurchaseAttempt,
+      logServerError
+    } = createPurchaseAudit({
       wallet: walletLower,
-      eventType: 'purchase_attempt',
-      route: req.path,
-      ipAddress: req.ip,
-      details: purchaseDetails
+      req,
+      res,
+      purchaseDetails
     });
+
+    await logPurchaseAttempt();
 
     
     const config = UPGRADES_CONFIG[resolvedUpgradeKey];
@@ -372,100 +490,46 @@ router.post('/buy', writeLimiter, async (req, res) => {
       return failPurchase(404, 'player_not_found', 'Player not found. Play at least one game first.');
     }
 
-    let upgrades = await PlayerUpgrades.findOne({ wallet: walletLower });
-    if (!upgrades) {
-      upgrades = new PlayerUpgrades({ wallet: walletLower });
-    }
-
-    // Refresh free rides + normalize legacy shield progression
-    upgrades.refreshFreeRides();
-    normalizeShieldUpgrades(upgrades);
+    const upgrades = await getOrCreatePlayerUpgrades(walletLower);
+    await prepareUpgrades(upgrades);
 
     // === PURCHASE LOGIC BY TYPE ===
 
-    if (config.type === "tiered") {
+    if (isLevelUpgradeType(config.type)) {
       const currentLevel = upgrades[resolvedUpgradeKey] || 0;
-
-      if (tier !== currentLevel) {
-        return failPurchase(400, 'tier_mismatch', `Must buy tier ${currentLevel}. Current: ${currentLevel}, requested: ${tier}`, {
-          currentLevel
-        });
+      const validationFailure = await validateLevelPurchase({
+        tier,
+        currentLevel,
+        maxLevel: config.maxLevel,
+        failPurchase
+      });
+      if (validationFailure) {
+        return validationFailure;
       }
 
-      if (currentLevel >= config.maxLevel) {
-        return failPurchase(400, 'max_level_reached', 'Already at max level');
+      const priceIndex = config.type === 'tiered' ? tier : currentLevel;
+      const price = config.prices[priceIndex];
+      const failure = await applyLevelUpgrade({
+        upgrades,
+        upgradeKey: resolvedUpgradeKey,
+        nextLevel: currentLevel + 1,
+        maxLevel: config.maxLevel,
+        price,
+        currency: config.currency,
+        wallet: walletLower,
+        player,
+        failPurchase
+      });
+      if (failure) {
+        return failure;
       }
-
-      const price = config.prices[tier];
-
-      if (config.currency === "silver") {
-        if (player.totalSilverCoins < price) {
-          return failPurchase(400, 'insufficient_silver', `Not enough silver. Need: ${price}, have: ${player.totalSilverCoins}`, {
-            required: price,
-            available: player.totalSilverCoins
-          });
-        }
-        player.totalSilverCoins -= price;
-      } else {
-        if (player.totalGoldCoins < price) {
-          return failPurchase(400, 'insufficient_gold', `Not enough gold. Need: ${price}, have: ${player.totalGoldCoins}`, {
-            required: price,
-            available: player.totalGoldCoins
-          });
-        }
-        player.totalGoldCoins -= price;
-      }
-
-      upgrades[resolvedUpgradeKey] = currentLevel + 1;
-      logger.info({ wallet: walletLower, upgradeKey: resolvedUpgradeKey, tier: currentLevel + 1, maxLevel: config.maxLevel, price, currency: config.currency }, 'Upgrade purchased');
-
-    } else if (config.type === "permanent") {
-      const currentLevel = upgrades[resolvedUpgradeKey] || 0;
-
-      if (tier !== currentLevel) {
-        return failPurchase(400, 'tier_mismatch', `Must buy tier ${currentLevel}. Current: ${currentLevel}, requested: ${tier}`, {
-          currentLevel
-        });
-      }
-
-      if (currentLevel >= config.maxLevel) {
-        return failPurchase(400, 'max_level_reached', 'Already at max level');
-      }
-
-      const price = config.prices[currentLevel];
-
-      if (config.currency === "gold") {
-        if (player.totalGoldCoins < price) {
-          return failPurchase(400, 'insufficient_gold', `Not enough gold. Need: ${price}, have: ${player.totalGoldCoins}`, {
-            required: price,
-            available: player.totalGoldCoins
-          });
-        }
-        player.totalGoldCoins -= price;
-      } else {
-        if (player.totalSilverCoins < price) {
-          return failPurchase(400, 'insufficient_silver', `Not enough silver. Need: ${price}, have: ${player.totalSilverCoins}`, {
-            required: price,
-            available: player.totalSilverCoins
-          });
-        }
-        player.totalSilverCoins -= price;
-      }
-
-      upgrades[resolvedUpgradeKey] = currentLevel + 1;
-      logger.info({ wallet: walletLower, upgradeKey: resolvedUpgradeKey, tier: currentLevel + 1, maxLevel: config.maxLevel, price, currency: config.currency }, 'Upgrade purchased');
 
     } else if (config.type === "rides") {
       const price = config.price;
-
-      if (player.totalGoldCoins < price) {
-        return failPurchase(400, 'insufficient_gold', `Not enough gold. Need: ${price}, have: ${player.totalGoldCoins}`, {
-          required: price,
-          available: player.totalGoldCoins
-        });
+      const failure = await spendPlayerCurrency(player, 'gold', price, failPurchase);
+      if (failure) {
+        return failure;
       }
-
-      player.totalGoldCoins -= price;
       upgrades.paidRidesRemaining += config.amount;
 
       logger.info({ wallet: walletLower, ridesBought: config.amount, price, currency: 'gold', paidRidesRemaining: upgrades.paidRidesRemaining }, 'Rides purchased');
@@ -483,11 +547,6 @@ router.post('/buy', writeLimiter, async (req, res) => {
 
     const effects = calculateEffects(upgrades);
 
-    // Rides data
-    const nowDate = new Date();
-    const resetAt = upgrades.freeRidesResetAt || nowDate;
-    const msUntilReset = Math.max(0, (8 * 60 * 60 * 1000) - (nowDate - resetAt));
-
     await logPurchaseResult('success', 'completed');
 
     logger.info({ wallet: walletLower, requestedUpgradeKey, resolvedUpgradeKey, tier: tier ?? 0 }, 'Purchase processed');
@@ -502,35 +561,24 @@ router.post('/buy', writeLimiter, async (req, res) => {
         gold: player.totalGoldCoins,
         silver: player.totalSilverCoins
       },
-      rides: {
-        freeRides: upgrades.freeRidesRemaining,
-        paidRides: upgrades.paidRidesRemaining,
-        totalRides: upgrades.getTotalRides(),
-        resetInMs: upgrades.freeRidesRemaining < 3 ? msUntilReset : 0,
-        resetInFormatted: formatTimeLeft(msUntilReset)
-      },
+      rides: buildRidesData(upgrades),
       activeEffects: effects
     });
 
   } catch (error) {
     const walletLower = typeof req.body?.wallet === 'string' ? req.body.wallet.toLowerCase() : null;
-    if (walletLower) {
-      await logSecurityEvent({
-        wallet: walletLower,
-        eventType: 'purchase_result',
-        route: req.path,
-        ipAddress: req.ip,
-        details: {
-          requestedUpgradeKey: String(req.body?.upgradeKey || '').trim(),
-          resolvedUpgradeKey: resolveUpgradeKey(String(req.body?.upgradeKey || '').trim()),
-          tier: req.body?.tier ?? 0,
-          authMode: req.body?.authMode || 'wallet',
-          status: 'fail',
-          reason: 'server_error',
-          error: error.message
-        }
-      });
-    }
+    const purchaseAudit = createPurchaseAudit({
+      wallet: walletLower,
+      req,
+      res,
+      purchaseDetails: {
+        requestedUpgradeKey: String(req.body?.upgradeKey || '').trim(),
+        resolvedUpgradeKey: resolveUpgradeKey(String(req.body?.upgradeKey || '').trim()),
+        tier: req.body?.tier ?? 0,
+        authMode: req.body?.authMode || 'wallet'
+      }
+    });
+    await purchaseAudit.logServerError(req.body, error);
     logger.error({ err: error }, 'POST /buy error');
     res.status(500).json({ error: 'Server error' });
   }
@@ -557,14 +605,8 @@ const consumeRideHandler = async (req, res) => {
         details: 'Pass a unique rideSessionId for every game start to enable anti-cheat duplicate protection.'
       });
     }
-    let upgrades = await PlayerUpgrades.findOne({ wallet: walletLower });
-    if (!upgrades) {
-      upgrades = new PlayerUpgrades({ wallet: walletLower });
-    }
-
-    // Refresh free rides + normalize legacy shield progression
-    upgrades.refreshFreeRides();
-    normalizeShieldUpgrades(upgrades);
+    const upgrades = await getOrCreatePlayerUpgrades(walletLower);
+    await prepareUpgrades(upgrades);
     
     upgrades.recentRideSessionIds = upgrades.recentRideSessionIds || [];
 
@@ -581,11 +623,7 @@ const consumeRideHandler = async (req, res) => {
       return res.status(409).json({
         error: 'Ride already consumed for this session',
         antiCheatTriggered: true,
-        rides: {
-          freeRides: upgrades.freeRidesRemaining,
-          paidRides: upgrades.paidRidesRemaining,
-          totalRides: upgrades.getTotalRides()
-        }
+        rides: buildRidesData(upgrades)
       });
     }
 
@@ -597,13 +635,13 @@ const consumeRideHandler = async (req, res) => {
 
       return res.status(403).json({
         error: 'No rides remaining',
-        rides: {
+        rides: buildRidesData(upgrades, {
           freeRides: 0,
           paidRides: 0,
           totalRides: 0,
           resetInMs: msUntilReset,
           resetInFormatted: formatTimeLeft(msUntilReset)
-        }
+        })
       });
     }
 
@@ -619,15 +657,8 @@ const consumeRideHandler = async (req, res) => {
         upgrades.recentRideSessionIds = upgrades.recentRideSessionIds.slice(-30);
       }
     }
-
-
-
     upgrades.updatedAt = new Date();
     await upgrades.save();
-
-    const nowDate = new Date();
-    const resetAt = upgrades.freeRidesResetAt || nowDate;
-    const msUntilReset = Math.max(0, (8 * 60 * 60 * 1000) - (nowDate - resetAt));
 
     logger.info({ wallet: walletLower, freeRidesRemaining: upgrades.freeRidesRemaining, paidRidesRemaining: upgrades.paidRidesRemaining }, 'Ride consumed');
     
@@ -639,13 +670,7 @@ const consumeRideHandler = async (req, res) => {
     res.json({
       success: true,
       antiCheat,
-      rides: {
-        freeRides: upgrades.freeRidesRemaining,
-        paidRides: upgrades.paidRidesRemaining,
-        totalRides: upgrades.getTotalRides(),
-        resetInMs: upgrades.freeRidesRemaining < 3 ? msUntilReset : 0,
-        resetInFormatted: formatTimeLeft(msUntilReset)
-      }
+      rides: buildRidesData(upgrades)
     });
 
   } catch (error) {
@@ -665,26 +690,11 @@ router.get('/rides/:wallet', readLimiter, async (req, res) => {
   try {
     const wallet = normalizeWallet(req.params.wallet);
 
-    let upgrades = await PlayerUpgrades.findOne({ wallet });
-    if (!upgrades) {
-      upgrades = new PlayerUpgrades({ wallet });
-      await upgrades.save();
-    }
-
-    upgrades.refreshFreeRides();
-    await upgrades.save();
-
-    const nowDate = new Date();
-    const resetAt = upgrades.freeRidesResetAt || nowDate;
-    const msUntilReset = Math.max(0, (8 * 60 * 60 * 1000) - (nowDate - resetAt));
+    const upgrades = await getOrCreatePlayerUpgrades(wallet);
+    await prepareUpgrades(upgrades, { persist: true });
 
     res.json({
-      freeRides: upgrades.freeRidesRemaining,
-      paidRides: upgrades.paidRidesRemaining,
-      totalRides: upgrades.getTotalRides(),
-      maxFreeRides: 3,
-      resetInMs: upgrades.freeRidesRemaining < 3 ? msUntilReset : 0,
-      resetInFormatted: formatTimeLeft(msUntilReset)
+      ...buildRidesData(upgrades)
     });
     
 } catch (error) {
