@@ -5,6 +5,15 @@ let restartTimer = null;
 
 
 function registerHandlers(currentBot) {
+  currentBot.on('pre_checkout_query', async (query) => {
+    try {
+      const { handleTelegramPreCheckoutQuery } = require('./utils/donationService');
+      await handleTelegramPreCheckoutQuery({ pre_checkout_query: query });
+    } catch (error) {
+      console.error('❌ Bot pre_checkout_query handling failed:', error.message || error);
+    }
+  });
+
   // /start
   currentBot.onText(/\/start/, (msg) => {
     currentBot.sendMessage(msg.chat.id,
@@ -83,6 +92,16 @@ function registerHandlers(currentBot) {
 
   // Handle 6-char verification codes
   currentBot.on('message', async (msg) => {
+    if (msg.successful_payment) {
+      try {
+        const { handleTelegramSuccessfulPayment } = require('./utils/donationService');
+        await handleTelegramSuccessfulPayment({ message: msg });
+      } catch (error) {
+        console.error('❌ Bot successful_payment handling failed:', error.message || error);
+      }
+      return;
+    }
+
     const text = (msg.text || '').trim().toUpperCase();
 
     if (text.startsWith('/')) return;
