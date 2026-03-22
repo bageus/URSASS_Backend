@@ -686,7 +686,7 @@ async function handleTelegramPreCheckoutQuery(update) {
   } else if (Number(query.total_amount) !== Number(order.starsAmount)) {
     ok = false;
     errorMessage = 'Invalid amount';
-  } else if (parsedPayload.productKey !== order.productKey) {
+  } else if (parsedPayload.productKey && parsedPayload.productKey !== order.productKey) {
     ok = false;
     errorMessage = 'Invalid product';
   }
