@@ -842,6 +842,56 @@ test('POST /api/donations/stars/create returns Telegram setup errors instead of 
 
   await server.close();
 });
+test('POST /api/donations/stars/confirm credits Telegram Stars order from Mini App callback when webhook is missing', async () => {
+  process.env.TELEGRAM_BOT_TOKEN = '123456:stars-token';
+  const { server, baseUrl } = await startServer();
+  const initData = buildTelegramInitData({ id: 777005, first_name: 'Recover' }, process.env.TELEGRAM_BOT_TOKEN);
+
+  let player = { wallet: 'tg_777005', totalGoldCoins: 0, totalSilverCoins: 0, save: async function save() { return this; } };
+  Player.findOne = ({ wallet }) => queryResult(wallet === 'tg_777005' ? player : null);
+  Player.prototype.save = async function save() { player = this; return this; };
+  PlayerUpgrades.findOne = () => queryResult(null);
+
+  const createRes = await fetch(`${baseUrl}/api/donations/stars/create`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.51' },
+    body: JSON.stringify({ productKey: 'starter_pack', telegramInitData: initData })
+  });
+  assert.equal(createRes.status, 201);
+  const created = await createRes.json();
+
+  const confirmRes = await fetch(`${baseUrl}/api/donations/stars/confirm`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.52' },
+    body: JSON.stringify({
+      orderId: created.orderId,
+      totalAmount: 2,
+      currency: 'XTR',
+      telegramInitData: initData
+    })
+  });
+
+  assert.equal(confirmRes.status, 200);
+  const confirmed = await confirmRes.json();
+  assert.equal(confirmed.ok, true);
+  assert.equal(confirmed.order.status, 'paid');
+  assert.ok(confirmed.order.rewardGrantedAt);
+
+  const updated = donationPayments.find((item) => item.paymentId === created.orderId);
+  assert.equal(updated.status, 'paid');
+  assert.equal(updated.providerStatus, 'telegram_invoice_callback');
+  assert.ok(updated.rewardGrantedAt);
+  assert.equal(player.totalGoldCoins, 400);
+  assert.equal(player.totalSilverCoins, 400);
+
+  const historyRes = await fetch(`${baseUrl}/api/store/donations/history/tg_777005`);
+  assert.equal(historyRes.status, 200);
+  const history = await historyRes.json();
+  assert.equal(history.payments[0].status, 'paid');
+
+  await server.close();
+});
+
 test('POST /api/telegram/webhook accepts pre_checkout_query for compact Stars payload', async () => {
   process.env.TELEGRAM_BOT_TOKEN = '123456:stars-token';
   const { server, baseUrl } = await startServer();
@@ -853,7 +903,7 @@ test('POST /api/telegram/webhook accepts pre_checkout_query for compact Stars pa
 
   const createRes = await fetch(`${baseUrl}/api/donations/stars/create`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.53' },
     body: JSON.stringify({ productKey: 'basic_pack', telegramInitData: initData })
   });
 

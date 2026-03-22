@@ -696,6 +696,75 @@ async function handleTelegramPreCheckoutQuery(update) {
   return { ok, orderId, errorMessage };
 }
 
+async function confirmTelegramStarsPayment({ orderId, telegramUserId, telegramPaymentChargeId = null, totalAmount = null, currency = 'XTR', source = 'client_confirm' }) {
+  if (!orderId) {
+    const err = new Error('Missing order id');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  let order = await DonationPayment.findOne({ paymentId: orderId });
+  if (!order) {
+    const err = new Error('Order not found');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  if (order.paymentMethod !== 'telegram_stars') {
+    const err = new Error('Invalid payment method');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  if (telegramUserId != null && String(telegramUserId) !== String(order.telegramUserId)) {
+    const err = new Error('Telegram user mismatch');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  if (currency != null && String(currency).trim().toUpperCase() !== 'XTR') {
+    const err = new Error('Invalid Telegram Stars currency');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  if (totalAmount != null && Number(totalAmount) !== Number(order.starsAmount)) {
+    const err = new Error('Invalid Telegram Stars amount');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  if (order.telegramPaymentChargeId && telegramPaymentChargeId && order.telegramPaymentChargeId !== telegramPaymentChargeId) {
+    const err = new Error('Telegram payment charge mismatch');
+    err.statusCode = 409;
+    throw err;
+  }
+
+  if (FINAL_STATUSES.has(order.status) && order.status !== 'paid' && !order.rewardGrantedAt) {
+    return { ok: false, order, recovered: false, reason: 'order_already_finalized' };
+  }
+
+  order.status = 'paid';
+  order.paidAt = order.paidAt || new Date();
+  order.telegramPaymentChargeId = order.telegramPaymentChargeId || telegramPaymentChargeId || null;
+  order.providerStatus = source;
+  order.failureReason = null;
+  await order.save();
+
+  order = await creditDonationPayment(order, { finalStatus: 'paid' });
+
+  logger.info({
+    orderId,
+    telegramUserId: order.telegramUserId,
+    telegramPaymentChargeId: order.telegramPaymentChargeId || null,
+    totalAmount: totalAmount == null ? null : Number(totalAmount),
+    source,
+    rewardGrantedAt: order.rewardGrantedAt || null
+  }, 'Telegram Stars payment confirmed');
+
+  return { ok: true, order, recovered: true };
+}
+
 async function handleTelegramSuccessfulPayment(update) {
   const successfulPayment = update?.message?.successful_payment;
   if (!successfulPayment) {
@@ -710,56 +779,16 @@ async function handleTelegramSuccessfulPayment(update) {
     throw err;
   }
 
-  let order = await DonationPayment.findOne({ paymentId: orderId });
-  if (!order) {
-    const err = new Error('Order not found');
-    err.statusCode = 404;
-    throw err;
-  }
+  const successfulPaymentUserId = update?.message?.from?.id || parsedPayload?.telegramUserId;
 
-  if (order.telegramPaymentChargeId && order.telegramPaymentChargeId === successfulPayment.telegram_payment_charge_id) {
-    logger.info({ orderId, telegramPaymentChargeId: order.telegramPaymentChargeId }, 'Telegram successful_payment duplicate ignored');
-    return { ok: true, order: await getDonationPayment(orderId) };
-  }
-
-  if (successfulPayment.currency !== 'XTR') {
-    const err = new Error('Invalid Telegram Stars currency');
-    err.statusCode = 400;
-    throw err;
-  }
-
-  if (Number(successfulPayment.total_amount) !== Number(order.starsAmount)) {
-    const err = new Error('Invalid Telegram Stars amount');
-    err.statusCode = 400;
-    throw err;
-  }
-
-  const successfulPaymentUserId = update?.message?.from?.id
-    || parsedPayload?.telegramUserId
-    || order.telegramUserId;
-
-  if (String(successfulPaymentUserId) !== String(order.telegramUserId)) {
-    const err = new Error('Telegram user mismatch');
-    err.statusCode = 400;
-    throw err;
-  }
-
-  order.status = 'paid';
-  order.paidAt = order.paidAt || new Date();
-  order.telegramPaymentChargeId = successfulPayment.telegram_payment_charge_id;
-  order.failureReason = null;
-  await order.save();
-
-  order = await creditDonationPayment(order, { finalStatus: 'paid' });
-  logger.info({
+  return confirmTelegramStarsPayment({
     orderId,
-    telegramUserId: order.telegramUserId,
+    telegramUserId: successfulPaymentUserId,
     telegramPaymentChargeId: successfulPayment.telegram_payment_charge_id,
     totalAmount: successfulPayment.total_amount,
-    rewardGrantedAt: order.rewardGrantedAt || null
-  }, 'Telegram successful_payment processed');
-
-  return { ok: true, order };
+    currency: successfulPayment.currency,
+    source: 'telegram_successful_payment'
+  });
 }
 
 module.exports = {
@@ -776,7 +805,8 @@ module.exports = {
   setDonationVerifierForTests,
   resetDonationVerifier,
   handleTelegramPreCheckoutQuery,
-  handleTelegramSuccessfulPayment
+  handleTelegramSuccessfulPayment,
+  confirmTelegramStarsPayment
 };
 
 async function processPendingDonationPayments(options = {}) {
