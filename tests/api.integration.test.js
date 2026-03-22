@@ -842,6 +842,50 @@ test('POST /api/donations/stars/create returns Telegram setup errors instead of 
 
   await server.close();
 });
+test('POST /api/telegram/webhook accepts pre_checkout_query for compact Stars payload', async () => {
+  process.env.TELEGRAM_BOT_TOKEN = '123456:stars-token';
+  const { server, baseUrl } = await startServer();
+  const initData = buildTelegramInitData({ id: 777004, first_name: 'Checkout' }, process.env.TELEGRAM_BOT_TOKEN);
+
+  Player.findOne = ({ wallet }) => queryResult(wallet === 'tg_777004' ? null : null);
+  Player.prototype.save = async function save() { return this; };
+  PlayerUpgrades.findOne = () => queryResult(null);
+
+  const createRes = await fetch(`${baseUrl}/api/donations/stars/create`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ productKey: 'basic_pack', telegramInitData: initData })
+  });
+
+  assert.equal(createRes.status, 201);
+  const created = await createRes.json();
+  const payment = donationPayments.find((item) => item.paymentId === created.orderId);
+
+  const webhookPayload = {
+    update_id: 2,
+    pre_checkout_query: {
+      id: 'pre-checkout-1',
+      from: { id: 777004 },
+      currency: 'XTR',
+      total_amount: payment.starsAmount,
+      invoice_payload: payment.invoicePayload
+    }
+  };
+
+  const res = await fetch(`${baseUrl}/api/telegram/webhook`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(webhookPayload)
+  });
+
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.type, 'pre_checkout_query');
+  assert.equal(body.result.ok, true);
+  assert.equal(body.result.orderId, created.orderId);
+
+  await server.close();
+});
 
 test('POST /api/telegram/webhook processes successful_payment idempotently', async () => {
   process.env.TELEGRAM_BOT_TOKEN = '123456:stars-token';
@@ -855,7 +899,10 @@ test('POST /api/telegram/webhook processes successful_payment idempotently', asy
 
   const createRes = await fetch(`${baseUrl}/api/donations/stars/create`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      'x-forwarded-for': '203.0.113.22'
+    },
     body: JSON.stringify({ productKey: 'starter_pack', telegramInitData: initData })
   });
   const created = await createRes.json();
