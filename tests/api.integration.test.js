@@ -513,8 +513,21 @@ test('GET /api/store/donations/history/:wallet returns payments sorted by newest
   assert.equal(history.payments.length, 2);
   assert.equal(history.payments[0].paymentId, secondPayment.paymentId);
   assert.equal(history.payments[0].status, 'submitted');
+  assert.equal(history.payments[0].paymentMethod, 'crypto');
+  assert.equal(history.payments[0].paymentProvider, 'wallet');
+  assert.equal(history.payments[0].paymentCategory, 'crypto');
   assert.equal(history.payments[0].title, 'Basic Pack');
   assert.equal(history.payments[0].amount, '0.09');
+  assert.equal(history.payments[0].amountValue, '0.09');
+  assert.equal(history.payments[0].currency, 'USDT');
+  assert.deepEqual(history.payments[0].payment, {
+    method: 'crypto',
+    provider: 'wallet',
+    category: 'crypto',
+    amount: '0.09',
+    amountValue: '0.09',
+    currency: 'USDT'
+  });
   assert.equal(history.payments[0].txRequest, null);
   assert.ok(history.payments[0].createdAt);
   assert.equal(history.payments[1].paymentId, firstPayment.paymentId);
@@ -751,6 +764,55 @@ test('POST /api/donations/stars/create creates Telegram Stars order and returns 
   await server.close();
 });
 
+test('POST /api/donations/stars/create returns controlled 503 for Telegram bot token misconfiguration', async () => {
+  process.env.TELEGRAM_BOT_TOKEN = 'bad-token';
+  const { server, baseUrl } = await startServer();
+  const initData = buildTelegramInitData({ id: 777002, first_name: 'Broken' }, 'bad-token');
+
+  const res = await fetch(`${baseUrl}/api/donations/stars/create`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ productKey: 'basic_pack', telegramInitData: initData })
+  });
+
+  assert.equal(res.status, 503);
+  const body = await res.json();
+  assert.equal(body.code, 'telegram_stars_invalid_bot_token');
+  assert.match(body.error, /TELEGRAM_BOT_TOKEN format is invalid/i);
+
+  await server.close();
+});
+
+test('POST /api/donations/stars/create returns Telegram setup errors instead of opaque 502 body', async () => {
+  process.env.TELEGRAM_BOT_TOKEN = '123456:stars-token';
+  setTelegramStarsClientForTests({
+    async createInvoiceLink() {
+      const error = new Error('Telegram Stars invoice creation failed: Bad Request: STARS_INVOICE_INVALID');
+      error.statusCode = 502;
+      error.code = 'telegram_stars_upstream_rejected';
+      error.details = { operation: 'createInvoiceLink', responseStatus: 400, description: 'Bad Request: STARS_INVOICE_INVALID' };
+      throw error;
+    },
+    async answerPreCheckoutQuery() { return true; }
+  });
+
+  const { server, baseUrl } = await startServer();
+  const initData = buildTelegramInitData({ id: 777003, first_name: 'Upstream' }, process.env.TELEGRAM_BOT_TOKEN);
+
+  const res = await fetch(`${baseUrl}/api/donations/stars/create`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ productKey: 'basic_pack', telegramInitData: initData })
+  });
+
+  assert.equal(res.status, 502);
+  const body = await res.json();
+  assert.equal(body.code, 'telegram_stars_upstream_rejected');
+  assert.equal(body.details.description, 'Bad Request: STARS_INVOICE_INVALID');
+
+  await server.close();
+});
+
 test('POST /api/telegram/webhook processes successful_payment idempotently', async () => {
   process.env.TELEGRAM_BOT_TOKEN = '123456:stars-token';
   const { server, baseUrl } = await startServer();
@@ -807,9 +869,21 @@ test('POST /api/telegram/webhook processes successful_payment idempotently', asy
   assert.equal(historyRes.status, 200);
   const history = await historyRes.json();
   assert.equal(history.payments[0].paymentMethod, 'telegram_stars');
+  assert.equal(history.payments[0].paymentProvider, 'telegram');
+  assert.equal(history.payments[0].paymentCategory, 'stars');
   assert.equal(history.payments[0].status, 'paid');
   assert.equal(history.payments[0].starsAmount, 2);
+  assert.equal(history.payments[0].amount, 2);
+  assert.equal(history.payments[0].amountValue, '2');
   assert.equal(history.payments[0].currency, 'XTR');
+  assert.deepEqual(history.payments[0].payment, {
+    method: 'telegram_stars',
+    provider: 'telegram',
+    category: 'stars',
+    amount: 2,
+    amountValue: '2',
+    currency: 'XTR'
+  });
 
   await server.close();
 });

@@ -57,8 +57,12 @@ router.post('/donations/stars/create', writeLimiter, async (req, res) => {
       invoiceUrl
     });
   } catch (error) {
-    logger.error({ err: error }, 'POST /donations/stars/create error');
-    res.status(error.statusCode || 500).json({ error: error.message || 'Server error' });
+    logger.error({ err: error, code: error.code, details: error.details || null }, 'POST /donations/stars/create error');
+    res.status(error.statusCode || 500).json({
+      error: error.message || 'Server error',
+      code: error.code || 'server_error',
+      ...(error.details ? { details: error.details } : {})
+    });
   }
 });
 
