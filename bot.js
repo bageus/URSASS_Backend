@@ -3,9 +3,22 @@ const TelegramBot = require('node-telegram-bot-api');
 let bot = null;
 let restartTimer = null;
 
+async function processSuccessfulPaymentMessage(message) {
+  const paymentMessage = message?.successful_payment ? message : message?.message;
+  if (!paymentMessage?.successful_payment) {
+    return;
+  }
+
+  try {
+    const { handleTelegramSuccessfulPayment } = require('./utils/donationService');
+    await handleTelegramSuccessfulPayment({ message: paymentMessage });
+  } catch (error) {
+    console.error('❌ Bot successful_payment handling failed:', error.message || error);
+  }
+}
 
 function registerHandlers(currentBot) {
-  currentBot.on('pre_checkout_query', async (query) => {
+   currentBot.on('pre_checkout_query', async (query) => {
     try {
       const { handleTelegramPreCheckoutQuery } = require('./utils/donationService');
       await handleTelegramPreCheckoutQuery({ pre_checkout_query: query });
@@ -13,6 +26,8 @@ function registerHandlers(currentBot) {
       console.error('❌ Bot pre_checkout_query handling failed:', error.message || error);
     }
   });
+
+  currentBot.on('successful_payment', processSuccessfulPaymentMessage);
 
   // /start
   currentBot.onText(/\/start/, (msg) => {
@@ -93,12 +108,7 @@ function registerHandlers(currentBot) {
   // Handle 6-char verification codes
   currentBot.on('message', async (msg) => {
     if (msg.successful_payment) {
-      try {
-        const { handleTelegramSuccessfulPayment } = require('./utils/donationService');
-        await handleTelegramSuccessfulPayment({ message: msg });
-      } catch (error) {
-        console.error('❌ Bot successful_payment handling failed:', error.message || error);
-      }
+      await processSuccessfulPaymentMessage(msg);
       return;
     }
 
@@ -243,4 +253,4 @@ function scheduleBotRestart(delayMs = 5000) {
   }
 }
 
-module.exports = { initBot };
+module.exports = { initBot, registerHandlers };
