@@ -9,7 +9,7 @@ const { normalizeWallet } = require('./security');
 const { verifyDonationTransaction } = require('./donationVerifier');
 const logger = require('./logger');
 const { getOrCreateTelegramAccount } = require('./accountManager');
-const { createTelegramStarsInvoiceLink, answerTelegramPreCheckoutQuery } = require('./telegramStarsService');
+const { createTelegramStarsInvoiceLink, answerTelegramPreCheckoutQuery, getTelegramBotToken, createTelegramStarsError } = require('./telegramStarsService');
 
 let verifierImpl = verifyDonationTransaction;
 const erc20TransferInterface = new ethers.utils.Interface([
@@ -239,6 +239,8 @@ function buildStarsInvoicePayload({ payment, telegramUserId, config }) {
 }
 
 async function createTelegramStarsPayment({ telegramUserId, productKey }) {
+  getTelegramBotToken();
+
   const tgId = String(telegramUserId || '').trim();
   const config = getDonationConfig(productKey);
 
@@ -246,6 +248,14 @@ async function createTelegramStarsPayment({ telegramUserId, productKey }) {
     const err = new Error(!tgId ? 'Missing Telegram user id' : 'Unknown donation product');
     err.statusCode = 400;
     throw err;
+  }
+
+  if (!Number.isInteger(config.starsAmount) || config.starsAmount <= 0) {
+    throw createTelegramStarsError(`Telegram Stars product configuration is invalid for ${config.key}.`, {
+      statusCode: 500,
+      code: 'telegram_stars_invalid_product_config',
+      details: { productKey: config.key, starsAmount: config.starsAmount }
+    });
   }
 
   const account = await getOrCreateTelegramAccount(tgId);
@@ -547,21 +557,35 @@ function serializeDonationPayment(payment, options = {}) {
   }
   const includeTxRequest = options.includeTxRequest !== false;
   const isStars = payment.paymentMethod === 'telegram_stars';
+  const normalizedPaymentMethod = payment.paymentMethod || 'crypto';
+  const amount = isStars ? (payment.starsAmount ?? payment.productSnapshot?.starsAmount ?? null) : payment.expectedAmount;
+  const currency = isStars ? 'XTR' : (payment.currency || payment.tokenSymbol || payment.productSnapshot?.currency || null);
 
   return {
     paymentId: payment.paymentId,
     orderId: payment.paymentId,
     wallet: payment.wallet,
-    paymentMethod: payment.paymentMethod || 'crypto',
+    paymentMethod: normalizedPaymentMethod,
+    paymentProvider: isStars ? 'telegram' : 'wallet',
+    paymentCategory: isStars ? 'stars' : 'crypto',
     telegramUserId: payment.telegramUserId || null,
     status: getPublicStatus(payment.status),
     productKey: payment.productKey,
     productTitle: payment.productSnapshot?.title || null,
     title: payment.productSnapshot?.title || null,
-    amount: isStars ? (payment.starsAmount ?? null) : payment.expectedAmount,
+    amount,
+    amountValue: amount == null ? null : String(amount),
     cryptoAmount: isStars ? null : payment.expectedAmount,
     starsAmount: payment.starsAmount ?? payment.productSnapshot?.starsAmount ?? null,
-    currency: isStars ? 'XTR' : payment.tokenSymbol,
+    currency,
+    payment: {
+      method: normalizedPaymentMethod,
+      provider: isStars ? 'telegram' : 'wallet',
+      category: isStars ? 'stars' : 'crypto',
+      amount,
+      amountValue: amount == null ? null : String(amount),
+      currency
+    },
     network: payment.network,
     tokenContract: payment.tokenContract,
     merchantWallet: payment.merchantWallet,

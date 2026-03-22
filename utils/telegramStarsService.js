@@ -1,55 +1,144 @@
 const logger = require('./logger');
 
-let telegramStarsClient = {
-  async createInvoiceLink(payload) {
-    const token = process.env.TELEGRAM_BOT_TOKEN;
-    if (!token) {
-      const error = new Error('Telegram bot token is not configured');
-      error.statusCode = 500;
-      throw error;
+function createTelegramStarsError(message, options = {}) {
+  const error = new Error(message);
+  error.statusCode = options.statusCode || 500;
+  error.code = options.code || 'telegram_stars_error';
+  error.details = options.details || null;
+  error.expose = options.expose !== false;
+  return error;
+}
+
+function getTelegramBotToken() {
+  const token = String(process.env.TELEGRAM_BOT_TOKEN || '').trim();
+  if (!token) {
+    throw createTelegramStarsError('Telegram Stars payments are not configured: TELEGRAM_BOT_TOKEN is missing.', {
+      statusCode: 503,
+      code: 'telegram_stars_not_configured'
+    });
+  }
+
+  if (!/^\d{3,}:[A-Za-z0-9_-]{5,}$/.test(token)) {
+    throw createTelegramStarsError('Telegram Stars payments are not configured correctly: TELEGRAM_BOT_TOKEN format is invalid.', {
+      statusCode: 503,
+      code: 'telegram_stars_invalid_bot_token'
+    });
+  }
+
+  return token;
+}
+
+function classifyTelegramApiError(responseStatus, description, operation) {
+  const normalized = String(description || '').toLowerCase();
+  const details = {
+    operation,
+    responseStatus: responseStatus || null,
+    description: description || null
+  };
+
+  if (responseStatus === 401 || normalized.includes('unauthorized') || normalized.includes('bot token')) {
+    return createTelegramStarsError('Telegram Stars payments are unavailable: the bot token is invalid or rejected by Telegram.', {
+      statusCode: 503,
+      code: 'telegram_stars_invalid_bot_token',
+      details
+    });
+  }
+
+  if (
+    normalized.includes('payment')
+    || normalized.includes('invoice')
+    || normalized.includes('provider')
+    || normalized.includes('currency')
+    || normalized.includes('xtr')
+    || normalized.includes('stars')
+  ) {
+    return createTelegramStarsError(`Telegram Stars invoice creation failed: ${description || 'Telegram rejected the invoice request.'}`, {
+      statusCode: 502,
+      code: 'telegram_stars_upstream_rejected',
+      details
+    });
+  }
+
+  return createTelegramStarsError(`Telegram API request failed during ${operation}: ${description || 'Unknown Telegram error.'}`, {
+    statusCode: 502,
+    code: 'telegram_api_error',
+    details
+  });
+}
+
+async function parseTelegramResponse(response, operation) {
+  const contentType = response.headers.get('content-type') || '';
+
+  try {
+    if (contentType.includes('application/json')) {
+      return await response.json();
     }
 
-    const response = await fetch(`https://api.telegram.org/bot${token}/createInvoiceLink`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload)
+    const text = await response.text();
+    return { ok: false, description: text || `Telegram returned non-JSON response for ${operation}` };
+  } catch (error) {
+    logger.error({ err: error, operation }, 'Failed to parse Telegram Bot API response');
+    throw createTelegramStarsError(`Telegram API returned an unreadable response during ${operation}.`, {
+      statusCode: 502,
+      code: 'telegram_api_invalid_response'
     });
+  }
+}
 
-    const data = await response.json();
+let telegramStarsClient = {
+  async createInvoiceLink(payload) {
+    const token = getTelegramBotToken();
+
+    let response;
+    try {
+      response = await fetch(`https://api.telegram.org/bot${token}/createInvoiceLink`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    } catch (error) {
+      logger.error({ err: error }, 'Telegram createInvoiceLink network failure');
+      throw createTelegramStarsError('Telegram Stars invoice service is temporarily unavailable.', {
+        statusCode: 502,
+        code: 'telegram_stars_network_error'
+      });
+    }
+
+    const data = await parseTelegramResponse(response, 'createInvoiceLink');
     if (!response.ok || !data.ok || !data.result) {
-      logger.error({ status: response.status, response: data }, 'Telegram createInvoiceLink failed');
-      const error = new Error(data.description || 'Failed to create Telegram invoice link');
-      error.statusCode = 502;
-      throw error;
+      logger.error({ status: response.status, response: data, payload }, 'Telegram createInvoiceLink failed');
+      throw classifyTelegramApiError(response.status, data.description, 'createInvoiceLink');
     }
 
     return data.result;
   },
 
   async answerPreCheckoutQuery(preCheckoutQueryId, ok, errorMessage = undefined) {
-    const token = process.env.TELEGRAM_BOT_TOKEN;
-    if (!token) {
-      const error = new Error('Telegram bot token is not configured');
-      error.statusCode = 500;
-      throw error;
+    const token = getTelegramBotToken();
+
+    let response;
+    try {
+      response = await fetch(`https://api.telegram.org/bot${token}/answerPreCheckoutQuery`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          pre_checkout_query_id: preCheckoutQueryId,
+          ok,
+          ...(ok ? {} : { error_message: errorMessage || 'Payment validation failed' })
+        })
+      });
+    } catch (error) {
+      logger.error({ err: error, preCheckoutQueryId, ok }, 'Telegram answerPreCheckoutQuery network failure');
+      throw createTelegramStarsError('Telegram payment validation service is temporarily unavailable.', {
+        statusCode: 502,
+        code: 'telegram_stars_network_error'
+      });
     }
 
-    const response = await fetch(`https://api.telegram.org/bot${token}/answerPreCheckoutQuery`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        pre_checkout_query_id: preCheckoutQueryId,
-        ok,
-        ...(ok ? {} : { error_message: errorMessage || 'Payment validation failed' })
-      })
-    });
-
-    const data = await response.json();
+    const data = await parseTelegramResponse(response, 'answerPreCheckoutQuery');
     if (!response.ok || !data.ok) {
       logger.error({ status: response.status, response: data, preCheckoutQueryId, ok }, 'Telegram answerPreCheckoutQuery failed');
-      const error = new Error(data.description || 'Failed to answer Telegram pre-checkout query');
-      error.statusCode = 502;
-      throw error;
+      throw classifyTelegramApiError(response.status, data.description, 'answerPreCheckoutQuery');
     }
 
     return true;
@@ -76,5 +165,7 @@ module.exports = {
   createTelegramStarsInvoiceLink,
   answerTelegramPreCheckoutQuery,
   setTelegramStarsClientForTests,
-  resetTelegramStarsClient
+  resetTelegramStarsClient,
+  getTelegramBotToken,
+  createTelegramStarsError
 };
