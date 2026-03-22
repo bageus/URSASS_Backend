@@ -9,10 +9,7 @@ const saveResultLimiter = rateLimit({
   message: '❌ Слишком много попыток отправки результатов. Подождите минуту.',
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: getClientIp,
-  skip: (req) => {
-    return req.path === '/health';
-  }
+  keyGenerator: getClientIp
 });
 
 // ✅ Умеренный лимит для write-операций, не связанных с сохранением результата

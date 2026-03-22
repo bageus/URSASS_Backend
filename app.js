@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const mongoose = require('mongoose');
 const leaderboardRoutes = require('./routes/leaderboard');
 const storeRoutes = require('./routes/store');
 const accountRoutes = require('./routes/account');
@@ -69,7 +70,24 @@ function createApp() {
   app.use('/api/v1', donationsRoutes);
 
   app.get('/health', (req, res) => {
-    res.json({ status: 'OK', timestamp: new Date(), mongodb: 'connected' });
+    const mongoStates = {
+      0: 'disconnected',
+      1: 'connected',
+      2: 'connecting',
+      3: 'disconnecting'
+    };
+    const readyState = mongoose.connection?.readyState;
+    const mongoStatus = mongoStates[readyState] || 'unknown';
+
+    res.json({
+      status: readyState === 1 ? 'OK' : 'DEGRADED',
+      timestamp: new Date(),
+      mongodb: mongoStatus,
+      mongodbDetails: {
+        readyState,
+        status: mongoStatus
+      }
+    });
   });
 
   app.get('/metrics', (req, res) => {
