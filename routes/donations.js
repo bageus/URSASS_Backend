@@ -5,7 +5,8 @@ const { getOrCreateTelegramAccount } = require('../utils/accountManager');
 const {
   createTelegramStarsPayment,
   handleTelegramPreCheckoutQuery,
-  handleTelegramSuccessfulPayment
+  handleTelegramSuccessfulPayment,
+  confirmTelegramStarsPayment
 } = require('../utils/donationService');
 const { validateTelegramInitData } = require('../utils/telegramAuth');
 const { writeLimiter, readLimiter } = require('../middleware/rateLimiter');
@@ -58,6 +59,64 @@ router.post('/donations/stars/create', writeLimiter, async (req, res) => {
     });
   } catch (error) {
     logger.error({ err: error, code: error.code, details: error.details || null }, 'POST /donations/stars/create error');
+    res.status(error.statusCode || 500).json({
+      error: error.message || 'Server error',
+      code: error.code || 'server_error',
+      ...(error.details ? { details: error.details } : {})
+    });
+  }
+});
+
+
+router.post('/donations/stars/confirm', writeLimiter, async (req, res) => {
+  try {
+    const { orderId, paymentId, totalAmount, currency } = req.body || {};
+    const initData = resolveInitData(req);
+    const validation = validateTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN);
+
+    if (!validation.valid) {
+      return res.status(401).json({ error: validation.error });
+    }
+
+    const account = await getOrCreateTelegramAccount(validation.user.id);
+    if (account.telegramId !== String(validation.user.id)) {
+      return res.status(403).json({ error: 'Telegram session mismatch' });
+    }
+
+    const result = await confirmTelegramStarsPayment({
+      orderId: orderId || paymentId,
+      telegramUserId: validation.user.id,
+      totalAmount,
+      currency,
+      source: 'telegram_invoice_callback'
+    });
+
+    await logSecurityEvent({
+      wallet: result.order.wallet,
+      eventType: 'donation_stars_order_confirmed',
+      route: req.path,
+      ipAddress: req.ip,
+      details: {
+        orderId: result.order.paymentId,
+        telegramUserId: result.order.telegramUserId,
+        productKey: result.order.productKey,
+        starsAmount: result.order.starsAmount,
+        recovered: result.recovered
+      }
+    });
+
+    res.json({
+      ok: result.ok,
+      recovered: result.recovered,
+      order: result.order ? {
+        orderId: result.order.paymentId,
+        paymentId: result.order.paymentId,
+        status: result.order.status,
+        rewardGrantedAt: result.order.rewardGrantedAt || null
+      } : null
+    });
+  } catch (error) {
+    logger.error({ err: error, code: error.code, details: error.details || null }, 'POST /donations/stars/confirm error');
     res.status(error.statusCode || 500).json({
       error: error.message || 'Server error',
       code: error.code || 'server_error',
