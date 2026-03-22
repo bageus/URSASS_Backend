@@ -228,14 +228,8 @@ async function createDonationPayment(wallet, productKey) {
   return payment;
 }
 
-function buildStarsInvoicePayload({ payment, telegramUserId, config }) {
-  return JSON.stringify({
-    version: 1,
-    orderId: payment.paymentId,
-    telegramUserId: String(telegramUserId),
-    productKey: config.key,
-    starsAmount: config.starsAmount
-  });
+function buildStarsInvoicePayload({ payment }) {
+  return `v1:${payment.paymentId}`;
 }
 
 async function createTelegramStarsPayment({ telegramUserId, productKey }) {
@@ -646,6 +640,14 @@ function serializeDonationPayment(payment, options = {}) {
 }
 
 function parseStarsPayload(payload) {
+  if (typeof payload === 'string') {
+    const trimmed = payload.trim();
+    if (trimmed.startsWith('v1:')) {
+      const orderId = trimmed.slice(3).trim();
+      return orderId ? { version: 1, orderId } : null;
+    }
+  }
+
   try {
     return JSON.parse(payload);
   } catch (error) {
@@ -732,7 +734,11 @@ async function handleTelegramSuccessfulPayment(update) {
     throw err;
   }
 
-  if (String(parsedPayload.telegramUserId) !== String(order.telegramUserId)) {
+  const successfulPaymentUserId = update?.message?.from?.id
+    || parsedPayload?.telegramUserId
+    || order.telegramUserId;
+
+  if (String(successfulPaymentUserId) !== String(order.telegramUserId)) {
     const err = new Error('Telegram user mismatch');
     err.statusCode = 400;
     throw err;

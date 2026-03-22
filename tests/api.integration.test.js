@@ -72,7 +72,11 @@ test.beforeEach(() => {
     return this;
   };
   setTelegramStarsClientForTests({
-    async createInvoiceLink(payload) { return `https://t.me/invoice/${JSON.parse(payload.payload).orderId}`; },
+    async createInvoiceLink(payload) {
+      const rawPayload = String(payload.payload || '');
+      const orderId = rawPayload.startsWith('v1:') ? rawPayload.slice(3) : JSON.parse(rawPayload).orderId;
+      return `https://t.me/invoice/${orderId}`;
+    },
     async answerPreCheckoutQuery() { return true; }
   });
   donationPayments = [];
@@ -784,6 +788,8 @@ test('POST /api/donations/stars/create creates Telegram Stars order and returns 
   assert.equal(created.telegramUserId, '777001');
   assert.equal(created.starsAmount, 9);
   assert.equal(created.currency, 'XTR');
+  assert.equal(created.invoicePayload, `v1:${body.orderId}`);
+  assert.ok(Buffer.byteLength(created.invoicePayload, 'utf8') <= 128);
 
   await server.close();
 });
