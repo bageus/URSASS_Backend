@@ -399,11 +399,11 @@ test('POST /api/store/donations/create-payment creates payment intent', async ()
   const body = await res.json();
   assert.equal(body.status, null);
   assert.equal(body.productKey, 'starter_pack');
-  assert.equal(body.amount, '0.02');
+  assert.equal(body.amount, '2');
   assert.equal(body.currency, 'USDT');
   assert.equal(body.txRequest.to, '0x55d398326f99059ff775485246999027b3197955');
   assert.equal(body.txRequest.transferTo, '0x244bcc2721f1037958862825c3feb6a7be6204a7');
-  assert.equal(body.txRequest.transferAmount, '0.02');
+  assert.equal(body.txRequest.transferAmount, '2');
   assert.match(body.txRequest.data, /^0xa9059cbb/i);
   assert.equal(body.txRequest.walletPayload.method, 'eth_sendTransaction');
   assert.deepEqual(body.txRequest.walletPayload.params[0], {
@@ -457,7 +457,7 @@ test('POST /api/store/donations/submit-transaction credits player after successf
     confirmations: 2,
     actualFrom: '0xsender',
     actualTo: '0x244bcc2721f1037958862825c3feb6a7be6204a7',
-    actualAmount: '20000000000000000'
+    actualAmount: '2000000000000000000'
   }));
 
   const { server, baseUrl } = await startServer();
@@ -479,7 +479,7 @@ test('POST /api/store/donations/submit-transaction credits player after successf
   const submitted = await submitRes.json();
   assert.equal(submitted.status, 'credited');
   assert.deepEqual(submitted.reward, { gold: 400, silver: 400 });
-  assert.equal(submitted.txRequest.transferAmount, '0.02');
+  assert.equal(submitted.txRequest.transferAmount, '2');
   assert.equal(player.totalGoldCoins, 410);
   assert.equal(player.totalSilverCoins, 420);
 
@@ -504,7 +504,7 @@ test('GET /api/store/donations/history/:wallet returns payments sorted by newest
     confirmations: 0,
     actualFrom: '0xsender',
     actualTo: '0x244bcc2721f1037958862825c3feb6a7be6204a7',
-    actualAmount: '30000000000000000'
+    actualAmount: '3000000000000000000'
   }));
 
   const { server, baseUrl } = await startServer();
@@ -543,19 +543,19 @@ test('GET /api/store/donations/history/:wallet returns payments sorted by newest
   assert.equal(history.payments[0].paymentProvider, 'wallet');
   assert.equal(history.payments[0].paymentCategory, 'crypto');
   assert.equal(history.payments[0].title, 'Basic Pack');
-  assert.equal(history.payments[0].amount, '0.09');
-  assert.equal(history.payments[0].paymentAmount, '0.09');
-  assert.equal(history.payments[0].amountValue, '0.09');
+  assert.equal(history.payments[0].amount, '9');
+  assert.equal(history.payments[0].paymentAmount, '9');
+  assert.equal(history.payments[0].amountValue, '9');
   assert.equal(history.payments[0].currency, 'USDT');
   assert.equal(history.payments[0].paymentMethodLegacy, 'crypto');
   assert.deepEqual(history.payments[0].payment, {
     method: 'wallet',
     provider: 'wallet',
     category: 'crypto',
-    amount: '0.09',
-    amountValue: '0.09',
+    amount: '9',
+    amountValue: '9',
     currency: 'USDT',
-    amountByMethod: '0.09',
+    amountByMethod: '9',
     unit: 'USDT'
   });
   assert.equal(history.payments[0].txRequest, null);
@@ -637,7 +637,7 @@ test('GET /api/store/donations/payment/:paymentId does not double-credit on refr
     confirmations: 2,
     actualFrom: '0xsender',
     actualTo: '0x244bcc2721f1037958862825c3feb6a7be6204a7',
-    actualAmount: '20000000000000000'
+    actualAmount: '2000000000000000000'
   }));
 
   const { server, baseUrl } = await startServer();
@@ -684,7 +684,7 @@ test('POST /api/store/donations/create-payment blocks second Starter Pack after 
     confirmations: 2,
     actualFrom: '0xsender',
     actualTo: '0x244bcc2721f1037958862825c3feb6a7be6204a7',
-    actualAmount: '20000000000000000'
+    actualAmount: '2000000000000000000'
   }));
 
   const { server, baseUrl } = await startServer();
@@ -808,7 +808,7 @@ test('POST /api/donations/stars/create creates Telegram Stars order and returns 
   assert.equal(created.paymentMethod, 'telegram_stars');
   assert.equal(created.status, 'created');
   assert.equal(created.telegramUserId, '777001');
-  assert.equal(created.starsAmount, 9);
+  assert.equal(created.starsAmount, 450);
   assert.equal(created.currency, 'XTR');
   assert.equal(created.invoicePayload, `v1:${body.orderId}`);
   assert.ok(Buffer.byteLength(created.invoicePayload, 'utf8') <= 128);
@@ -887,7 +887,7 @@ test('POST /api/donations/stars/confirm credits Telegram Stars order from Mini A
     headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.52' },
     body: JSON.stringify({
       orderId: created.orderId,
-      totalAmount: 2,
+      totalAmount: 100,
       currency: 'XTR',
       telegramInitData: initData
     })
@@ -1021,19 +1021,19 @@ test('POST /api/telegram/webhook processes successful_payment idempotently', asy
   assert.equal(history.payments[0].paymentProvider, 'telegram');
   assert.equal(history.payments[0].paymentCategory, 'stars');
   assert.equal(history.payments[0].status, 'paid');
-  assert.equal(history.payments[0].starsAmount, 2);
-  assert.equal(history.payments[0].amount, 2);
-  assert.equal(history.payments[0].paymentAmount, 2);
-  assert.equal(history.payments[0].amountValue, '2');
+  assert.equal(history.payments[0].starsAmount, 100);
+  assert.equal(history.payments[0].amount, 100);
+  assert.equal(history.payments[0].paymentAmount, 100);
+  assert.equal(history.payments[0].amountValue, '100');
   assert.equal(history.payments[0].currency, 'STARS');
   assert.deepEqual(history.payments[0].payment, {
     method: 'telegram-stars',
     provider: 'telegram',
     category: 'stars',
-    amount: 2,
-    amountValue: '2',
+    amount: 100,
+    amountValue: '100',
     currency: 'STARS',
-    amountByMethod: 2,
+    amountByMethod: 100,
     unit: 'STARS'
   });
   assert.equal(history.payments[0].paymentMethodLegacy, 'telegram_stars');
