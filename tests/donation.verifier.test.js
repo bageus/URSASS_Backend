@@ -50,13 +50,13 @@ test('verifyDonationTransaction confirms exact recipient/amount match even if ea
             tokenContract,
             from: sender,
             to: otherRecipient,
-            value: ethers.utils.parseUnits('0.02', 18)
+            value: ethers.utils.parseUnits('2', 18)
           }),
           buildTransferLog({
             tokenContract,
             from: sender,
             to: merchantWallet,
-            value: ethers.utils.parseUnits('0.02', 18)
+            value: ethers.utils.parseUnits('2', 18)
           })
         ]
       };
@@ -68,7 +68,7 @@ test('verifyDonationTransaction confirms exact recipient/amount match even if ea
 
   const result = await verifyDonationTransaction({
     txHash: '0xabc',
-    expectedAmount: '0.02',
+    expectedAmount: '2',
     expectedDecimals: 18,
     tokenContract,
     merchantWallet,
@@ -78,7 +78,7 @@ test('verifyDonationTransaction confirms exact recipient/amount match even if ea
   assert.equal(result.status, 'confirmed');
   assert.equal(result.reason, 'confirmed');
   assert.equal(result.actualTo, merchantWallet);
-  assert.equal(result.actualAmount, ethers.utils.parseUnits('0.02', 18).toString());
+  assert.equal(result.actualAmount, ethers.utils.parseUnits('2', 18).toString());
 });
 
 test('verifyDonationTransaction returns detailed mismatch reason when no exact transfer match exists', async () => {
@@ -96,7 +96,7 @@ test('verifyDonationTransaction returns detailed mismatch reason when no exact t
             tokenContract,
             from: sender,
             to: merchantWallet,
-            value: ethers.utils.parseUnits('0.03', 18)
+            value: ethers.utils.parseUnits('3', 18)
           })
         ]
       };
@@ -108,7 +108,7 @@ test('verifyDonationTransaction returns detailed mismatch reason when no exact t
 
   const result = await verifyDonationTransaction({
     txHash: '0xdef',
-    expectedAmount: '0.02',
+    expectedAmount: '2',
     expectedDecimals: 18,
     tokenContract,
     merchantWallet,
@@ -118,7 +118,7 @@ test('verifyDonationTransaction returns detailed mismatch reason when no exact t
   assert.equal(result.status, 'failed');
   assert.equal(result.reason, 'amount_mismatch');
   assert.equal(result.actualTo, merchantWallet);
-  assert.equal(result.actualAmount, ethers.utils.parseUnits('0.03', 18).toString());
+  assert.equal(result.actualAmount, ethers.utils.parseUnits('3', 18).toString());
   assert.equal(result.candidateCount, 1);
 });
 
@@ -152,7 +152,7 @@ test('processPendingDonationPayments credits submitted donation in background re
     tokenSymbol: 'USDT',
     tokenContract: '0x55d398326f99059ff775485246999027b3197955',
     merchantWallet: '0x244bcc2721f1037958862825c3feb6a7be6204a7',
-    expectedAmount: '0.02',
+    expectedAmount: '2',
     expectedDecimals: 18,
     txHash: '0xbackgroundhash',
     confirmations: 0,
@@ -227,7 +227,7 @@ test('processPendingDonationPayments credits submitted donation in background re
     confirmations: 2,
     actualFrom: '0xsender',
     actualTo: paymentStore[0].merchantWallet,
-    actualAmount: ethers.utils.parseUnits('0.02', 18).toString(),
+    actualAmount: ethers.utils.parseUnits('2', 18).toString(),
     providerStatus: 'ok'
   }));
 
