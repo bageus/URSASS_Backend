@@ -20,7 +20,7 @@ const INTERNAL_STATUS_AWAITING_TX = 'awaiting_tx';
 const RESPONSELESS_STATUSES = new Set([INTERNAL_STATUS_AWAITING_TX]);
 const FINAL_STATUSES = new Set(['credited', 'paid', 'failed', 'expired']);
 const REWARDABLE_STATUSES = new Set(['confirmed', 'credited', 'paid']);
-const DEFAULT_BSC_PUBLIC_RPC_URL = 'https://bsc-dataseed.binance.org/';
+const DEFAULT_BASE_PUBLIC_RPC_URL = 'https://mainnet.base.org';
 const DONATION_RECHECK_INTERVAL_MS = Math.max(15 * 1000, Number(process.env.DONATIONS_RECHECK_INTERVAL_MS || 60 * 1000));
 const DONATION_RECHECK_BATCH_SIZE = Math.max(1, Number(process.env.DONATIONS_RECHECK_BATCH_SIZE || 25));
 let donationRecheckTimer = null;
@@ -34,8 +34,8 @@ function resetDonationVerifier() {
 }
 
 function getProvider() {
-  const configuredRpcUrl = process.env.BSC_RPC_URL || process.env.DONATIONS_RPC_URL;
-  const rpcUrl = configuredRpcUrl || DEFAULT_BSC_PUBLIC_RPC_URL;
+  const configuredRpcUrl = process.env.BASE_RPC_URL || process.env.BSC_RPC_URL || process.env.DONATIONS_RPC_URL;
+  const rpcUrl = configuredRpcUrl || DEFAULT_BASE_PUBLIC_RPC_URL;
 
   try {
     const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
@@ -145,7 +145,7 @@ async function listDonationProducts(wallet) {
 
   return {
     wallet: normalizedWallet,
-    network: sampleConfig?.network || 'BSC',
+    network: sampleConfig?.network || 'Base',
     token: sampleConfig ? {
       symbol: sampleConfig.currency,
       contract: sampleConfig.tokenContract,

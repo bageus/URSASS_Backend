@@ -64,7 +64,7 @@ npm start
 | `MAX_RESULT_TIMESTAMP_AGE_MS` | Max allowed age for game result timestamp in the past (default: `7200000`, i.e. 2h) |
 | `MAX_RESULT_FUTURE_SKEW_MS` | Max allowed future clock skew for game result timestamp (default: `180000`, i.e. 3m) |
 | `DONATIONS_PRICE_MODE` | Donation prices mode: `test` or `prod` (default: `test`) |
-| `DONATIONS_NETWORK` | Donation network label (default: `BSC`) |
+| `DONATIONS_NETWORK` | Donation network label (default: `Base`) |
 | `DONATIONS_TOKEN_SYMBOL` | Donation token symbol (default: `USDT`) |
 | `DONATIONS_TOKEN_DECIMALS` | Donation token decimals (default: `18`) |
 | `DONATIONS_TOKEN_CONTRACT` | USDT contract address used for donation validation |
@@ -72,7 +72,8 @@ npm start
 | `DONATIONS_TTL_MINUTES` | Payment intent lifetime in minutes (default: `30`) |
 | `DONATIONS_REQUIRED_CONFIRMATIONS` | Required confirmations before crediting (default: `1`) |
 | `DONATIONS_RPC_URL` | JSON-RPC endpoint used to verify donation transactions |
-| `BSC_RPC_URL` | Alias for donation RPC URL |
+| `BASE_RPC_URL` | Preferred alias for donation RPC URL on Base network |
+| `BSC_RPC_URL` | Legacy alias for donation RPC URL (still supported) |
 
 See `.env.example` for a template.
 
