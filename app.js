@@ -97,7 +97,11 @@ function createApp() {
 
   app.use((err, req, res, next) => {
     logger.error({ err }, 'Unhandled error');
-    res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
+    const statusCode = err.statusCode || err.status || 500;
+    const shouldExposeMessage = Boolean(err.expose) || statusCode < 500;
+    res
+      .status(statusCode)
+      .json({ error: shouldExposeMessage ? (err.message || 'Request failed') : 'Internal server error' });
   });
 
   return app;
