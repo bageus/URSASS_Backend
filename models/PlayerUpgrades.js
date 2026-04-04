@@ -24,7 +24,9 @@ const playerUpgradesSchema = new mongoose.Schema({
   // === GOLD (перманентные/consumable) ===
   shield: { type: Number, default: 0, min: 0, max: 1 },
   shield_capacity: { type: Number, default: 0, min: 0, max: 2 },
-  radar: { type: Number, default: 0, min: 0, max: 1 },
+  radar: { type: Number, default: 0, min: 0, max: 1 }, // legacy: migrated to radar_gold
+  radar_obstacles: { type: Number, default: 0, min: 0, max: 1 },
+  radar_gold: { type: Number, default: 0, min: 0, max: 1 },
   alert: { type: Number, default: 0, min: 0, max: 2 },
 
   // === СИСТЕМА ЗАЕЗДОВ ===

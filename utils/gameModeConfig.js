@@ -13,6 +13,8 @@ const UNAUTH_MAX_UPGRADES = Object.freeze({
   spin_cooldown: 3,
   shield: 1,
   shield_capacity: 2,
+  radar_obstacles: 1,
+  radar_gold: 1,
   radar: 1,
   alert: 2
 });

@@ -731,6 +731,8 @@ test('GET /api/game/config returns unauth preset built from backend config', asy
   assert.equal(body.preset, 'all_improvements_enabled');
   assert.equal(body.activeEffects.start_with_shield, true);
   assert.equal(body.activeEffects.start_with_radar, true);
+  assert.equal(body.activeEffects.start_with_radar_gold, true);
+  assert.equal(body.activeEffects.start_with_radar_obstacles, true);
   assert.equal(body.activeEffects.perfect_spin_enabled, true);
   assert.equal(body.activeEffects.shield_capacity, 3);
   assert.equal(body.activeEffects.x2_duration_bonus, 15);

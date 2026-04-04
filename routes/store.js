@@ -15,7 +15,8 @@ const { logSecurityEvent, normalizeWallet, validateTimestampWindow } = require('
 const UPGRADE_KEY_ALIASES = {
   spin_alert: 'alert',
   start_with_alert: 'alert',
-  start_with_radar: 'radar',
+  start_with_radar: 'radar_gold',
+  radar: 'radar_gold',
   spin_perfect: 'alert'
 };
 
@@ -50,6 +51,17 @@ function normalizeShieldUpgrades(upgrades) {
   return changed;
 }
 
+function normalizeRadarUpgrades(upgrades) {
+  const legacyRadarLevel = upgrades.radar || 0;
+
+  if (legacyRadarLevel > 0 && (!upgrades.radar_gold || upgrades.radar_gold < 1)) {
+    upgrades.radar_gold = 1;
+    return true;
+  }
+
+  return false;
+}
+
 async function getOrCreatePlayerUpgrades(wallet) {
   let upgrades = await PlayerUpgrades.findOne({ wallet });
   if (!upgrades) {
@@ -62,8 +74,9 @@ async function getOrCreatePlayerUpgrades(wallet) {
 async function prepareUpgrades(upgrades, { persist = false } = {}) {
   const ridesChanged = upgrades.refreshFreeRides();
   const shieldChanged = normalizeShieldUpgrades(upgrades);
+  const radarChanged = normalizeRadarUpgrades(upgrades);
 
-  if (persist && (ridesChanged || shieldChanged)) {
+  if (persist && (ridesChanged || shieldChanged || radarChanged)) {
     await upgrades.save();
   }
 
@@ -274,8 +287,8 @@ router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
     if (upgradesData.alert && !upgradesData.spin_alert) {
       upgradesData.spin_alert = { ...upgradesData.alert };
     }
-    if (upgradesData.radar && !upgradesData.start_with_radar) {
-      upgradesData.start_with_radar = { ...upgradesData.radar };
+    if (upgradesData.radar_gold && !upgradesData.start_with_radar) {
+      upgradesData.start_with_radar = { ...upgradesData.radar_gold };
     }
 
     res.json({

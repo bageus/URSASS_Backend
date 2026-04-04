@@ -129,11 +129,16 @@ The store now contains **two parallel product systems**:
 - `alert` (Spin Alert) is now a **2-level permanent progression**:
   - level 1 (`1000 Gold`): `activeEffects.spin_alert_mode = "alert"`
   - level 2 (`3000 Gold`): `activeEffects.spin_alert_mode = "perfect"` and `activeEffects.perfect_spin_enabled = true`
+- `radar_obstacles` is a **1-level permanent progression**:
+  - level 1 (`2000 Gold`): `activeEffects.start_with_radar_obstacles = true`
+- `radar_gold` is a **1-level permanent progression**:
+  - level 1 (`3000 Gold`): `activeEffects.start_with_radar_gold = true`
 - Backward-compatible request aliases for `POST /api/store/buy` are preserved:
   - `spin_alert` → `alert`
   - `spin_perfect` → `alert`
   - `start_with_alert` → `alert`
-  - `start_with_radar` → `radar`
+  - `start_with_radar` → `radar_gold`
+  - `radar` → `radar_gold`
 
 ## Security
 

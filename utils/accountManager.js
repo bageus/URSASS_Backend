@@ -16,6 +16,8 @@ const UPGRADE_LEVEL_FIELDS = [
   'spin_cooldown',
   'shield',
   'shield_capacity',
+  'radar_obstacles',
+  'radar_gold',
   'radar',
   'alert'
 ];
