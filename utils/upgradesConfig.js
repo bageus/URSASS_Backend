@@ -117,13 +117,22 @@ const UPGRADES_CONFIG = {
     description: "Shield capacity progression: 2 -> 3"
   },
 
-  radar: {
+  radar_obstacles: {
     type: "permanent",
     currency: "gold",
     maxLevel: 1,
-    prices: [goldPrice(1000)],
+    prices: [goldPrice(2000)],
     effects: [true],
-    description: "Radar (permanent)"
+    description: "Obstacle Radar (delayed spawn tracking)"
+  },
+
+  radar_gold: {
+    type: "permanent",
+    currency: "gold",
+    maxLevel: 1,
+    prices: [goldPrice(3000)],
+    effects: [true],
+    description: "Gold Radar (next coin spawn line)"
   },
 
   alert: {
@@ -200,7 +209,10 @@ function calculateEffects(upgrades) {
       ? UPGRADES_CONFIG.shield_capacity.effects[normalizedShieldCapacityLevel - 1]
       : 1,
     start_with_shield: normalizedShieldLevel > 0,
-    start_with_radar: upgrades.radar > 0,
+    start_with_radar_obstacles: upgrades.radar_obstacles > 0,
+    start_with_radar_gold: (upgrades.radar_gold || upgrades.radar || 0) > 0,
+    // Backward compatibility for clients that still read `start_with_radar`.
+    start_with_radar: (upgrades.radar_gold || upgrades.radar || 0) > 0,
     alert_level: upgrades.alert || 0,
     spin_alert_mode: upgrades.alert > 0
       ? UPGRADES_CONFIG.alert.effects[upgrades.alert - 1]
