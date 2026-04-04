@@ -70,7 +70,7 @@ function registerHandlers(currentBot) {
       const link = await AccountLink.findOne({ telegramId });
 
       if (!link) {
-        currentBbot.sendMessage(msg.chat.id,
+        currentBot.sendMessage(msg.chat.id,
           `❌ No account found.\n\nOpen the game first to create an account!`
         );
         return;
