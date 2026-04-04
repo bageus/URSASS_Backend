@@ -370,7 +370,7 @@ test('GET /api/store/donations/:wallet returns donation products with Starter Pa
 
   assert.equal(res.status, 200);
   const body = await res.json();
-  assert.equal(body.network, 'BSC');
+  assert.equal(body.network, 'Base');
   assert.equal(body.priceMode, 'test');
   assert.equal(body.products.length, 6);
   assert.equal(body.products[0].key, 'starter_pack');
@@ -401,8 +401,8 @@ test('POST /api/store/donations/create-payment creates payment intent', async ()
   assert.equal(body.productKey, 'starter_pack');
   assert.equal(body.amount, '2');
   assert.equal(body.currency, 'USDT');
-  assert.equal(body.txRequest.to, '0x55d398326f99059ff775485246999027b3197955');
-  assert.equal(body.txRequest.transferTo, '0x244bcc2721f1037958862825c3feb6a7be6204a7');
+  assert.equal(body.txRequest.to, '0xfde4c96c8593536e31f229ea8f37b2ada2699bb2');
+  assert.equal(body.txRequest.transferTo, '0xbae8504df4e9816934e13390b4e83d408b7db5d8');
   assert.equal(body.txRequest.transferAmount, '2');
   assert.match(body.txRequest.data, /^0xa9059cbb/i);
   assert.equal(body.txRequest.walletPayload.method, 'eth_sendTransaction');
@@ -456,7 +456,7 @@ test('POST /api/store/donations/submit-transaction credits player after successf
     reason: 'confirmed',
     confirmations: 2,
     actualFrom: '0xsender',
-    actualTo: '0x244bcc2721f1037958862825c3feb6a7be6204a7',
+    actualTo: '0xbae8504df4e9816934e13390b4e83d408b7db5d8',
     actualAmount: '2000000000000000000'
   }));
 
@@ -503,7 +503,7 @@ test('GET /api/store/donations/history/:wallet returns payments sorted by newest
     reason: 'awaiting_confirmations',
     confirmations: 0,
     actualFrom: '0xsender',
-    actualTo: '0x244bcc2721f1037958862825c3feb6a7be6204a7',
+    actualTo: '0xbae8504df4e9816934e13390b4e83d408b7db5d8',
     actualAmount: '3000000000000000000'
   }));
 
@@ -636,7 +636,7 @@ test('GET /api/store/donations/payment/:paymentId does not double-credit on refr
     reason: 'confirmed',
     confirmations: 2,
     actualFrom: '0xsender',
-    actualTo: '0x244bcc2721f1037958862825c3feb6a7be6204a7',
+    actualTo: '0xbae8504df4e9816934e13390b4e83d408b7db5d8',
     actualAmount: '2000000000000000000'
   }));
 
@@ -683,7 +683,7 @@ test('POST /api/store/donations/create-payment blocks second Starter Pack after 
     reason: 'confirmed',
     confirmations: 2,
     actualFrom: '0xsender',
-    actualTo: '0x244bcc2721f1037958862825c3feb6a7be6204a7',
+    actualTo: '0xbae8504df4e9816934e13390b4e83d408b7db5d8',
     actualAmount: '2000000000000000000'
   }));
 

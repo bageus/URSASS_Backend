@@ -35,8 +35,8 @@ test.afterEach(() => {
 });
 
 test('verifyDonationTransaction confirms exact recipient/amount match even if earlier log mismatches', async () => {
-  const tokenContract = '0x55d398326f99059ff775485246999027b3197955';
-  const merchantWallet = '0x244bcc2721f1037958862825c3feb6a7be6204a7';
+  const tokenContract = '0xfde4c96c8593536e31f229ea8f37b2ada2699bb2';
+  const merchantWallet = '0xbae8504df4e9816934e13390b4e83d408b7db5d8';
   const sender = '0x1111111111111111111111111111111111111111';
   const otherRecipient = '0x2222222222222222222222222222222222222222';
 
@@ -82,8 +82,8 @@ test('verifyDonationTransaction confirms exact recipient/amount match even if ea
 });
 
 test('verifyDonationTransaction returns detailed mismatch reason when no exact transfer match exists', async () => {
-  const tokenContract = '0x55d398326f99059ff775485246999027b3197955';
-  const merchantWallet = '0x244bcc2721f1037958862825c3feb6a7be6204a7';
+  const tokenContract = '0xfde4c96c8593536e31f229ea8f37b2ada2699bb2';
+  const merchantWallet = '0xbae8504df4e9816934e13390b4e83d408b7db5d8';
   const sender = '0x1111111111111111111111111111111111111111';
 
   const provider = {
@@ -148,10 +148,10 @@ test('processPendingDonationPayments credits submitted donation in background re
       requiredConfirmations: 1
     },
     status: 'submitted',
-    network: 'BSC',
+    network: 'Base',
     tokenSymbol: 'USDT',
-    tokenContract: '0x55d398326f99059ff775485246999027b3197955',
-    merchantWallet: '0x244bcc2721f1037958862825c3feb6a7be6204a7',
+    tokenContract: '0xfde4c96c8593536e31f229ea8f37b2ada2699bb2',
+    merchantWallet: '0xbae8504df4e9816934e13390b4e83d408b7db5d8',
     expectedAmount: '2',
     expectedDecimals: 18,
     txHash: '0xbackgroundhash',
