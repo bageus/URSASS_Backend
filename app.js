@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
+const crypto = require('crypto');
 const leaderboardRoutes = require('./routes/leaderboard');
 const storeRoutes = require('./routes/store');
 const accountRoutes = require('./routes/account');
@@ -21,38 +22,55 @@ function createApp() {
 
   const allowedOrigins = [
     'https://bageus.github.io',
+    'https://bageus-github-io.vercel.app',
     'https://ursass-tube.vercel.app',
     'http://localhost:3000',
     'http://localhost:5173',
     ...extraAllowedOrigins
   ];
 
+  const allowedOriginSet = new Set(allowedOrigins);
+
+  const isAllowedOrigin = (origin) => !origin || allowedOriginSet.has(origin);
+
+  app.use((req, res, next) => {
+    const requestId = req.get('x-request-id') || crypto.randomUUID();
+    req.requestId = requestId;
+    res.setHeader('X-Request-Id', requestId);
+    next();
+  });
+
   const corsOptions = {
     origin: function(origin, callback) {
-      if (!origin) {
+      if (isAllowedOrigin(origin)) {
         callback(null, true);
         return;
       }
 
-      if (allowedOrigins.includes(origin)) {
-        callback(null, true);
-        return;
-      }
-
-
-      logger.warn({ origin }, 'CORS blocked');
+      logger.warn({ origin }, 'CORS blocked: origin mismatch');
       const corsError = new Error('Not allowed by CORS');
       corsError.statusCode = 403;
       corsError.expose = true;
+      corsError.code = 'CORS_ORIGIN_MISMATCH';
       callback(corsError);
     },
     credentials: true,
     methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'X-Wallet', 'X-Primary-Id', 'X-Telegram-Init-Data', 'x-telegram-init-data']
+    allowedHeaders: ['Content-Type', 'X-Wallet', 'X-Primary-Id', 'X-Telegram-Init-Data', 'x-telegram-init-data', 'X-Request-Id'],
+    optionsSuccessStatus: 204
   };
 
   app.use(cors(corsOptions));
   app.options('*', cors(corsOptions));
+  app.use((req, res, next) => {
+    const origin = req.get('origin');
+    if (origin && isAllowedOrigin(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
+    next();
+  });
   app.use(express.json({ limit: '1mb' }));
   app.use(metricsMiddleware);
 
@@ -95,12 +113,34 @@ function createApp() {
   });
 
   app.use((err, req, res, next) => {
-    logger.error({ err }, 'Unhandled error');
+    const origin = req.get('origin');
+    if (origin && isAllowedOrigin(origin) && !res.getHeader('Access-Control-Allow-Origin')) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
+
     const statusCode = err.statusCode || err.status || 500;
     const shouldExposeMessage = Boolean(err.expose) || statusCode < 500;
+    const errorCode = err.code || 'UNHANDLED_ERROR';
+
+    logger.error({
+      requestId: req.requestId,
+      statusCode,
+      errorCode,
+      origin,
+      path: req.originalUrl,
+      method: req.method,
+      err: err.message
+    }, 'Request failed');
+
     res
       .status(statusCode)
-      .json({ error: shouldExposeMessage ? (err.message || 'Request failed') : 'Internal server error' });
+      .json({
+        error: shouldExposeMessage ? (err.message || 'Request failed') : 'Internal server error',
+        code: errorCode,
+        requestId: req.requestId
+      });
   });
 
   return app;
