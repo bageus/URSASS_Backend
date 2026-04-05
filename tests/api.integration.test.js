@@ -1109,6 +1109,15 @@ test('POST /api/telegram/webhook rejects requests with missing or invalid secret
   });
   assert.equal(invalidSecret.status, 401);
 
+  const querySecret = await fetch(`${baseUrl}/api/telegram/webhook?secret=${process.env.TELEGRAM_WEBHOOK_SECRET}`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify({ update_id: 99 })
+  });
+  assert.equal(querySecret.status, 401);
+
   const validSecret = await fetch(`${baseUrl}/api/telegram/webhook`, {
     method: 'POST',
     headers: {

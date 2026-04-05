@@ -20,8 +20,6 @@ function verifyTelegramWebhook(req, res, next) {
 
   const providedSecret = req.get('x-telegram-bot-api-secret-token')
     || req.get('x-telegram-webhook-secret')
-    || req.query?.secret
-    || req.body?.secret
     || null;
 
   if (!providedSecret || !timingSafeEqual(providedSecret, expectedSecret)) {

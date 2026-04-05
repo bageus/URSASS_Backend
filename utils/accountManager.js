@@ -1,6 +1,7 @@
 const AccountLink = require('../models/AccountLink');
 const Player = require('../models/Player');
 const PlayerUpgrades = require('../models/PlayerUpgrades');
+const mongoose = require('mongoose');
 const logger = require('./logger');
 
 const UPGRADE_LEVEL_FIELDS = [
@@ -21,6 +22,76 @@ const UPGRADE_LEVEL_FIELDS = [
   'radar',
   'alert'
 ];
+
+const TRANSACTION_UNSUPPORTED_ERROR_CODES = new Set([20, 251]);
+
+function isTransactionUnsupported(error) {
+  return TRANSACTION_UNSUPPORTED_ERROR_CODES.has(error?.code)
+    || /transaction/i.test(String(error?.message || ''));
+}
+
+async function queryWithOptionalSession(query, session) {
+  if (session && query && typeof query.session === 'function') {
+    return query.session(session);
+  }
+
+  return query;
+}
+
+async function findOneWithSession(model, filter, session) {
+  const query = model.findOne(filter);
+  return queryWithOptionalSession(query, session);
+}
+
+async function deleteOneWithSession(model, filter, session) {
+  const query = model.deleteOne(filter);
+  return queryWithOptionalSession(query, session);
+}
+
+async function saveWithOptionalSession(document, session) {
+  if (!document || typeof document.save !== 'function') {
+    return document;
+  }
+
+  if (session) {
+    return document.save({ session });
+  }
+
+  return document.save();
+}
+
+async function runWithOptionalTransaction(operation) {
+  if (typeof mongoose.startSession !== 'function') {
+    return operation(null);
+  }
+
+  let session;
+  try {
+    session = await mongoose.startSession();
+  } catch (error) {
+    if (isTransactionUnsupported(error)) {
+      logger.warn({ err: { code: error.code, message: error.message } }, 'Mongo transactions unavailable. Falling back to non-transactional account link flow');
+      return operation(null);
+    }
+    throw error;
+  }
+
+  try {
+    let result;
+    await session.withTransaction(async () => {
+      result = await operation(session);
+    });
+    return result;
+  } catch (error) {
+    if (isTransactionUnsupported(error)) {
+      logger.warn({ err: { code: error.code, message: error.message } }, 'Mongo transactions unavailable. Falling back to non-transactional account link flow');
+      return operation(null);
+    }
+    throw error;
+  } finally {
+    await session.endSession();
+  }
+}
 
 function buildNewPlayer(primaryId) {
   return new Player({
@@ -221,9 +292,9 @@ async function resolvePrimaryId(identifier) {
  * @param {string} linkValue - telegramId или wallet адрес
  * @returns {object} результат привязки
  */
-async function linkAccounts(existingIdentifier, linkType, linkValue) {
+async function linkAccountsInternal(existingIdentifier, linkType, linkValue, session = null) {
   // Находим текущую связку
-  let currentLink = await AccountLink.findOne({ primaryId: existingIdentifier });
+  let currentLink = await findOneWithSession(AccountLink, { primaryId: existingIdentifier }, session);
   if (!currentLink) {
     return { success: false, error: 'Current account not found' };
   }
@@ -241,9 +312,9 @@ async function linkAccounts(existingIdentifier, linkType, linkValue) {
   // Проверяем что привязываемый идентификатор не занят другим аккаунтом
   let otherLink = null;
   if (linkType === 'telegram') {
-    otherLink = await AccountLink.findOne({ telegramId: linkValueNorm });
+    otherLink = await findOneWithSession(AccountLink, { telegramId: linkValueNorm }, session);
   } else {
-    otherLink = await AccountLink.findOne({ wallet: linkValueNorm });
+    otherLink = await findOneWithSession(AccountLink, { wallet: linkValueNorm }, session);
   }
 
   if (otherLink && otherLink.primaryId === currentLink.primaryId) {
@@ -252,7 +323,7 @@ async function linkAccounts(existingIdentifier, linkType, linkValue) {
 
   // Если привязываемый идентификатор уже имеет свой аккаунт — МЕРДЖ
   if (otherLink) {
-    const mergeResult = await mergeAccounts(currentLink.primaryId, otherLink.primaryId);
+    const mergeResult = await mergeAccountsInternal(currentLink.primaryId, otherLink.primaryId, session);
     return mergeResult;
   }
 
@@ -265,7 +336,7 @@ async function linkAccounts(existingIdentifier, linkType, linkValue) {
 
   currentLink.linkedAt = new Date();
   currentLink.updatedAt = new Date();
-  await currentLink.save();
+  await saveWithOptionalSession(currentLink, session);
 
   return {
     success: true,
@@ -276,21 +347,25 @@ async function linkAccounts(existingIdentifier, linkType, linkValue) {
   };
 }
 
+async function linkAccounts(existingIdentifier, linkType, linkValue) {
+  return runWithOptionalTransaction((session) => linkAccountsInternal(existingIdentifier, linkType, linkValue, session));
+}
+
 /**
  * Мерджит два аккаунта.
  * Мастер = аккаунт с лучшим bestScore.
  * Slave данные обнуляются.
  */
-async function mergeAccounts(primaryIdA, primaryIdB) {
-  const playerA = await Player.findOne({ wallet: primaryIdA });
-  const playerB = await Player.findOne({ wallet: primaryIdB });
+async function mergeAccountsInternal(primaryIdA, primaryIdB, session = null) {
+  const playerA = await findOneWithSession(Player, { wallet: primaryIdA }, session);
+  const playerB = await findOneWithSession(Player, { wallet: primaryIdB }, session);
 
   if (!playerA || !playerB) {
     return { success: false, error: 'One or both players not found' };
   }
 
-  const linkA = await AccountLink.findOne({ primaryId: primaryIdA });
-  const linkB = await AccountLink.findOne({ primaryId: primaryIdB });
+  const linkA = await findOneWithSession(AccountLink, { primaryId: primaryIdA }, session);
+  const linkB = await findOneWithSession(AccountLink, { primaryId: primaryIdB }, session);
 
   if (!linkA || !linkB) {
     return { success: false, error: 'One or both account links not found' };
@@ -331,35 +406,35 @@ async function mergeAccounts(primaryIdA, primaryIdB) {
   masterLink.masterSource = String(masterLink.primaryId || '').startsWith('tg_') ? 'telegram' : 'wallet';
 
   // Объединяем player/upgrades данные в master, затем обнуляем slave
-  const masterUpgrades = await PlayerUpgrades.findOne({ wallet: masterLink.primaryId });
-  const slaveUpgrades = await PlayerUpgrades.findOne({ wallet: slaveLink.primaryId });
+  const masterUpgrades = await findOneWithSession(PlayerUpgrades, { wallet: masterLink.primaryId }, session);
+  const slaveUpgrades = await findOneWithSession(PlayerUpgrades, { wallet: slaveLink.primaryId }, session);
 
   mergePlayerState(masterPlayer, slavePlayer);
   masterPlayer.updatedAt = new Date();
-  await masterPlayer.save();
+  await saveWithOptionalSession(masterPlayer, session);
 
   if (masterUpgrades && slaveUpgrades) {
     mergeUpgradesState(masterUpgrades, slaveUpgrades);
     masterUpgrades.updatedAt = new Date();
-    await masterUpgrades.save();
+    await saveWithOptionalSession(masterUpgrades, session);
   }
 
   // Обнуляем slave
   if (slavePlayer) {
     resetPlayerState(slavePlayer);
-    await slavePlayer.save();
+    await saveWithOptionalSession(slavePlayer, session);
   }
 
   if (slaveUpgrades) {
     resetUpgradesState(slaveUpgrades);
-    await slaveUpgrades.save();
+    await saveWithOptionalSession(slaveUpgrades, session);
   }
 
   // Удаляем slave связку
-  await AccountLink.deleteOne({ primaryId: slaveLink.primaryId });
+  await deleteOneWithSession(AccountLink, { primaryId: slaveLink.primaryId }, session);
 
   // Сохраняем master
-  await masterLink.save();
+  await saveWithOptionalSession(masterLink, session);
 
   logger.info({
     masterPrimaryId: masterLink.primaryId,
@@ -376,6 +451,10 @@ async function mergeAccounts(primaryIdA, primaryIdB) {
     masterScore: masterPlayer.bestScore,
     slaveScoreWas: slavePlayer ? slavePlayer.bestScore : 0
   };
+}
+
+async function mergeAccounts(primaryIdA, primaryIdB) {
+  return runWithOptionalTransaction((session) => mergeAccountsInternal(primaryIdA, primaryIdB, session));
 }
 
 module.exports = {
