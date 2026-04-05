@@ -356,6 +356,36 @@ test('POST /api/account/link/verify-telegram rejects expired code', async () => 
   await server.close();
 });
 
+test('POST /api/account/link/verify-telegram returns 503 when TELEGRAM_BOT_SECRET is not configured', async () => {
+  const originalSecret = process.env.TELEGRAM_BOT_SECRET;
+  let server;
+
+  try {
+    delete process.env.TELEGRAM_BOT_SECRET;
+
+    const started = await startServer();
+    server = started.server;
+    const { baseUrl } = started;
+
+    const res = await fetch(`${baseUrl}/api/account/link/verify-telegram`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ telegramId: '777', code: 'SECRETLESS' })
+    });
+
+    assert.equal(res.status, 503);
+    const body = await res.json();
+    assert.match(body.error, /not configured/i);
+  } finally {
+    if (originalSecret) {
+      process.env.TELEGRAM_BOT_SECRET = originalSecret;
+    }
+    if (server) {
+      await server.close();
+    }
+  }
+});
+
 test('GET /api/store/donations/:wallet returns donation products with Starter Pack available', async () => {
   const wallet = Wallet.createRandom().address.toLowerCase();
 
@@ -776,7 +806,7 @@ test('CORS rejects non-whitelisted *.vercel.app origins', async () => {
     }
   });
 
-  assert.equal(res.status, 500);
+  assert.equal(res.status, 403);
   assert.equal(res.headers.get('access-control-allow-origin'), null);
 
   await server.close();

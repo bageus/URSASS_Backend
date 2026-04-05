@@ -198,6 +198,10 @@ router.post('/link/verify-telegram', verifyTelegramLimiter, async (req, res) => 
     }
 
     const expectedSecret = process.env.TELEGRAM_BOT_SECRET;
+    if (!expectedSecret) {
+      return res.status(503).json({ error: 'Telegram bot secret is not configured' });
+    }
+
     if (expectedSecret && botSecret !== expectedSecret) {
       return res.status(401).json({ error: 'Invalid bot secret' });
     }
