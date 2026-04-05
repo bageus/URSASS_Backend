@@ -14,8 +14,16 @@ const AccountLink = require('../models/AccountLink');
 const LinkCode = require('../models/LinkCode');
 const logger = require('../utils/logger');
 const { normalizeWallet, validateTimestampWindow } = require('../utils/security');
+const { validateTelegramInitData } = require('../utils/telegramAuth');
 
 const WALLET_TIMESTAMP_WINDOW_MS = Number(process.env.WALLET_AUTH_TIMESTAMP_WINDOW_MS || 10 * 60 * 1000);
+
+function resolveTelegramInitData(req) {
+  return req.body?.telegramInitData
+    || req.body?.initData
+    || req.get('x-telegram-init-data')
+    || '';
+}
 
 /**
  * Generate a random link code like "BEAR-A3F9K2"
@@ -34,11 +42,16 @@ function generateLinkCode() {
  */
 router.post('/auth/telegram', readLimiter, async (req, res) => {
   try {
-    const { telegramId, firstName, username } = req.body;
+    const initData = resolveTelegramInitData(req);
+    const validation = validateTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN);
 
-    if (!telegramId) {
-      return res.status(400).json({ error: 'Missing telegramId' });
+    if (!validation.valid) {
+      return res.status(401).json({ error: validation.error });
     }
+
+    const telegramId = String(validation.user.id);
+    const firstName = validation.user.first_name || null;
+    const username = validation.user.username || null;
 
     const account = await getOrCreateTelegramAccount(telegramId);
 
@@ -157,7 +170,7 @@ router.post('/link/request-code', writeLimiter, async (req, res) => {
       expiresAt
     }).save();
 
-    logger.info({ code, primaryId: primaryIdLower }, 'Link code generated');
+    logger.info({ primaryId: primaryIdLower }, 'Link code generated');
 
     res.json({
       success: true,
@@ -185,6 +198,10 @@ router.post('/link/verify-telegram', verifyTelegramLimiter, async (req, res) => 
     }
 
     const expectedSecret = process.env.TELEGRAM_BOT_SECRET;
+    if (!expectedSecret) {
+      return res.status(503).json({ error: 'Telegram bot secret is not configured' });
+    }
+
     if (expectedSecret && botSecret !== expectedSecret) {
       return res.status(401).json({ error: 'Invalid bot secret' });
     }

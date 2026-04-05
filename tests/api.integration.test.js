@@ -40,6 +40,7 @@ let donationPayments;
 
 test.before(() => {
   process.env.TELEGRAM_BOT_SECRET = 'test-secret';
+  process.env.TELEGRAM_WEBHOOK_SECRET = 'webhook-secret';
   originalStartSession = mongoose.startSession;
   mongoose.startSession = async () => {
     const err = new Error('Transactions unsupported in tests');
@@ -354,6 +355,36 @@ test('POST /api/account/link/verify-telegram rejects expired code', async () => 
   const body = await res.json();
   assert.match(body.error, /Code expired/i);
   await server.close();
+});
+
+test('POST /api/account/link/verify-telegram returns 503 when TELEGRAM_BOT_SECRET is not configured', async () => {
+  const originalSecret = process.env.TELEGRAM_BOT_SECRET;
+  let server;
+
+  try {
+    delete process.env.TELEGRAM_BOT_SECRET;
+
+    const started = await startServer();
+    server = started.server;
+    const { baseUrl } = started;
+
+    const res = await fetch(`${baseUrl}/api/account/link/verify-telegram`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ telegramId: '777', code: 'SECRETLESS' })
+    });
+
+    assert.equal(res.status, 503);
+    const body = await res.json();
+    assert.match(body.error, /not configured/i);
+  } finally {
+    if (originalSecret) {
+      process.env.TELEGRAM_BOT_SECRET = originalSecret;
+    }
+    if (server) {
+      await server.close();
+    }
+  }
 });
 
 test('GET /api/store/donations/:wallet returns donation products with Starter Pack available', async () => {
@@ -766,6 +797,22 @@ function buildTelegramInitData(user, botToken) {
   return params.toString();
 }
 
+
+test('CORS rejects non-whitelisted *.vercel.app origins', async () => {
+  const { server, baseUrl } = await startServer();
+
+  const res = await fetch(`${baseUrl}/health`, {
+    headers: {
+      Origin: 'https://evil-app.vercel.app'
+    }
+  });
+
+  assert.equal(res.status, 403);
+  assert.equal(res.headers.get('access-control-allow-origin'), null);
+
+  await server.close();
+});
+
 test('OPTIONS /api/donations/stars/create allows Telegram Mini App header in CORS preflight', async () => {
   const { server, baseUrl } = await startServer();
 
@@ -948,7 +995,10 @@ test('POST /api/telegram/webhook accepts pre_checkout_query for compact Stars pa
 
   const res = await fetch(`${baseUrl}/api/telegram/webhook`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      'x-telegram-bot-api-secret-token': process.env.TELEGRAM_WEBHOOK_SECRET
+    },
     body: JSON.stringify(webhookPayload)
   });
 
@@ -996,14 +1046,20 @@ test('POST /api/telegram/webhook processes successful_payment idempotently', asy
 
   const first = await fetch(`${baseUrl}/api/telegram/webhook`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      'x-telegram-bot-api-secret-token': process.env.TELEGRAM_WEBHOOK_SECRET
+    },
     body: JSON.stringify(webhookPayload)
   });
   assert.equal(first.status, 200);
 
   const second = await fetch(`${baseUrl}/api/telegram/webhook`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      'x-telegram-bot-api-secret-token': process.env.TELEGRAM_WEBHOOK_SECRET
+    },
     body: JSON.stringify(webhookPayload)
   });
   assert.equal(second.status, 200);
@@ -1041,4 +1097,157 @@ test('POST /api/telegram/webhook processes successful_payment idempotently', asy
   assert.equal(history.payments[0].paymentMethodLegacy, 'telegram_stars');
 
   await server.close();
+});
+
+test('POST /api/account/auth/telegram requires valid Telegram init data', async () => {
+  process.env.TELEGRAM_BOT_TOKEN = '123456:stars-token';
+  const { server, baseUrl } = await startServer();
+
+  const invalid = await fetch(`${baseUrl}/api/account/auth/telegram`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ telegramId: '777001' })
+  });
+
+  assert.equal(invalid.status, 401);
+
+  const initData = buildTelegramInitData({ id: 777001, first_name: 'Auth' }, process.env.TELEGRAM_BOT_TOKEN);
+  const valid = await fetch(`${baseUrl}/api/account/auth/telegram`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ telegramInitData: initData })
+  });
+
+  assert.equal(valid.status, 200);
+  const body = await valid.json();
+  assert.equal(body.success, true);
+  assert.equal(body.telegramId, '777001');
+
+  await server.close();
+});
+
+test('POST /api/telegram/webhook rejects requests with missing or invalid secret', async () => {
+  process.env.TELEGRAM_BOT_TOKEN = '123456:stars-token';
+
+  const { server, baseUrl } = await startServer();
+
+  const missingSecret = await fetch(`${baseUrl}/api/telegram/webhook`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ update_id: 1 })
+  });
+  assert.equal(missingSecret.status, 401);
+
+  const invalidSecret = await fetch(`${baseUrl}/api/telegram/webhook`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-telegram-bot-api-secret-token': 'wrong-secret'
+    },
+    body: JSON.stringify({ update_id: 2 })
+  });
+  assert.equal(invalidSecret.status, 401);
+
+  const querySecret = await fetch(`${baseUrl}/api/telegram/webhook?secret=${process.env.TELEGRAM_WEBHOOK_SECRET}`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify({ update_id: 99 })
+  });
+  assert.equal(querySecret.status, 401);
+
+  const validSecret = await fetch(`${baseUrl}/api/telegram/webhook`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-telegram-bot-api-secret-token': process.env.TELEGRAM_WEBHOOK_SECRET
+    },
+    body: JSON.stringify({ update_id: 3 })
+  });
+  assert.equal(validSecret.status, 200);
+
+  process.env.TELEGRAM_WEBHOOK_SECRET = 'webhook-secret';
+  await server.close();
+});
+
+test('POST /api/telegram/webhook returns 503 when TELEGRAM_WEBHOOK_SECRET is not configured', async () => {
+  const originalSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
+  let server;
+
+  try {
+    delete process.env.TELEGRAM_WEBHOOK_SECRET;
+    const started = await startServer();
+    server = started.server;
+    const { baseUrl } = started;
+
+    const res = await fetch(`${baseUrl}/api/telegram/webhook`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ update_id: 999 })
+    });
+
+    assert.equal(res.status, 503);
+    const body = await res.json();
+    assert.match(body.error, /not configured/i);
+  } finally {
+    if (originalSecret) {
+      process.env.TELEGRAM_WEBHOOK_SECRET = originalSecret;
+    }
+    if (server) {
+      await server.close();
+    }
+  }
+});
+
+test('POST /api/account/link/request-code does not log plaintext verification code', async () => {
+  const logger = require('../utils/logger');
+  const originalInfo = logger.info;
+  const originalDeleteMany = LinkCode.deleteMany;
+  const originalFindOne = LinkCode.findOne;
+
+  const logged = [];
+  let server;
+
+  try {
+    logger.info = (payload, message) => {
+      if (message === 'Link code generated') {
+        logged.push(payload);
+      }
+    };
+
+    LinkCode.deleteMany = async () => ({ deletedCount: 0 });
+    LinkCode.findOne = async () => null;
+    LinkCode.prototype.save = async function save() { return this; };
+
+    const started = await startServer();
+    server = started.server;
+    const { baseUrl } = started;
+
+    const wallet = Wallet.createRandom().address.toLowerCase();
+
+    // Seed wallet account directly for deterministic test
+    await new AccountLink({ primaryId: wallet, wallet }).save();
+
+    const res = await fetch(`${baseUrl}/api/account/link/request-code`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ primaryId: wallet })
+    });
+
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.code);
+
+    assert.ok(logged.length >= 1);
+    const latestLog = logged[logged.length - 1] || {};
+    assert.equal(Object.prototype.hasOwnProperty.call(latestLog, 'code'), false);
+  } finally {
+    logger.info = originalInfo;
+    LinkCode.deleteMany = originalDeleteMany;
+    LinkCode.findOne = originalFindOne;
+    if (server) {
+      await server.close();
+    }
+  }
 });
