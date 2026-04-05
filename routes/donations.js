@@ -12,6 +12,7 @@ const { validateTelegramInitData } = require('../utils/telegramAuth');
 const { writeLimiter, readLimiter } = require('../middleware/rateLimiter');
 const logger = require('../utils/logger');
 const { logSecurityEvent } = require('../utils/security');
+const { verifyTelegramWebhook } = require('../middleware/telegramWebhookAuth');
 
 function resolveInitData(req) {
   return req.body?.telegramInitData
@@ -125,7 +126,7 @@ router.post('/donations/stars/confirm', writeLimiter, async (req, res) => {
   }
 });
 
-router.post('/telegram/webhook', readLimiter, async (req, res) => {
+router.post('/telegram/webhook', readLimiter, verifyTelegramWebhook, async (req, res) => {
   try {
     const update = req.body || {};
     logger.info({ updateId: update.update_id || null, keys: Object.keys(update) }, 'Telegram payment webhook update received');
