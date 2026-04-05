@@ -40,6 +40,7 @@ let donationPayments;
 
 test.before(() => {
   process.env.TELEGRAM_BOT_SECRET = 'test-secret';
+  process.env.TELEGRAM_WEBHOOK_SECRET = 'webhook-secret';
   originalStartSession = mongoose.startSession;
   mongoose.startSession = async () => {
     const err = new Error('Transactions unsupported in tests');
@@ -994,7 +995,10 @@ test('POST /api/telegram/webhook accepts pre_checkout_query for compact Stars pa
 
   const res = await fetch(`${baseUrl}/api/telegram/webhook`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      'x-telegram-bot-api-secret-token': process.env.TELEGRAM_WEBHOOK_SECRET
+    },
     body: JSON.stringify(webhookPayload)
   });
 
@@ -1042,14 +1046,20 @@ test('POST /api/telegram/webhook processes successful_payment idempotently', asy
 
   const first = await fetch(`${baseUrl}/api/telegram/webhook`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      'x-telegram-bot-api-secret-token': process.env.TELEGRAM_WEBHOOK_SECRET
+    },
     body: JSON.stringify(webhookPayload)
   });
   assert.equal(first.status, 200);
 
   const second = await fetch(`${baseUrl}/api/telegram/webhook`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      'x-telegram-bot-api-secret-token': process.env.TELEGRAM_WEBHOOK_SECRET
+    },
     body: JSON.stringify(webhookPayload)
   });
   assert.equal(second.status, 200);
@@ -1118,7 +1128,6 @@ test('POST /api/account/auth/telegram requires valid Telegram init data', async 
 
 test('POST /api/telegram/webhook rejects requests with missing or invalid secret', async () => {
   process.env.TELEGRAM_BOT_TOKEN = '123456:stars-token';
-  process.env.TELEGRAM_WEBHOOK_SECRET = 'webhook-secret';
 
   const { server, baseUrl } = await startServer();
 
@@ -1158,8 +1167,37 @@ test('POST /api/telegram/webhook rejects requests with missing or invalid secret
   });
   assert.equal(validSecret.status, 200);
 
-  delete process.env.TELEGRAM_WEBHOOK_SECRET;
+  process.env.TELEGRAM_WEBHOOK_SECRET = 'webhook-secret';
   await server.close();
+});
+
+test('POST /api/telegram/webhook returns 503 when TELEGRAM_WEBHOOK_SECRET is not configured', async () => {
+  const originalSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
+  let server;
+
+  try {
+    delete process.env.TELEGRAM_WEBHOOK_SECRET;
+    const started = await startServer();
+    server = started.server;
+    const { baseUrl } = started;
+
+    const res = await fetch(`${baseUrl}/api/telegram/webhook`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ update_id: 999 })
+    });
+
+    assert.equal(res.status, 503);
+    const body = await res.json();
+    assert.match(body.error, /not configured/i);
+  } finally {
+    if (originalSecret) {
+      process.env.TELEGRAM_WEBHOOK_SECRET = originalSecret;
+    }
+    if (server) {
+      await server.close();
+    }
+  }
 });
 
 test('POST /api/account/link/request-code does not log plaintext verification code', async () => {

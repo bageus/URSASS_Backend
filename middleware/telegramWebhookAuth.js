@@ -15,7 +15,7 @@ function verifyTelegramWebhook(req, res, next) {
   const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
 
   if (!expectedSecret) {
-    return next();
+    return res.status(503).json({ error: 'Telegram webhook secret is not configured' });
   }
 
   const providedSecret = req.get('x-telegram-bot-api-secret-token')
