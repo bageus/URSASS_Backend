@@ -1,12 +1,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const mongoose = require('mongoose');
 
 const AccountLink = require('../models/AccountLink');
 const Player = require('../models/Player');
 const PlayerUpgrades = require('../models/PlayerUpgrades');
-const { mergeAccounts } = require('../utils/accountManager');
+const { mergeAccounts, linkAccounts } = require('../utils/accountManager');
 
 test('mergeAccounts stores schema-compatible masterSource value', async () => {
+  const originalStartSession = mongoose.startSession;
   const originalAccountLinkFindOne = AccountLink.findOne;
   const originalAccountLinkDeleteOne = AccountLink.deleteOne;
   const originalPlayerFindOne = Player.findOne;
@@ -68,6 +70,12 @@ test('mergeAccounts stores schema-compatible masterSource value', async () => {
   };
 
   try {
+    mongoose.startSession = async () => {
+      const err = new Error('Transactions unsupported in tests');
+      err.code = 20;
+      throw err;
+    };
+
     AccountLink.findOne = async ({ primaryId }) => {
       if (primaryId === 'tg_100') return linkTelegram;
       if (primaryId === '0xabc') return linkWallet;
@@ -111,9 +119,57 @@ test('mergeAccounts stores schema-compatible masterSource value', async () => {
     assert.equal(upgradesTelegram.paidRidesRemaining, 0);
     assert.deepEqual(upgradesTelegram.recentRideSessionIds, []);
   } finally {
+    mongoose.startSession = originalStartSession;
     AccountLink.findOne = originalAccountLinkFindOne;
     AccountLink.deleteOne = originalAccountLinkDeleteOne;
     Player.findOne = originalPlayerFindOne;
     PlayerUpgrades.findOne = originalPlayerUpgradesFindOne;
+  }
+});
+
+test('linkAccounts falls back to non-transactional mode when transactions are unavailable', async () => {
+  const originalStartSession = mongoose.startSession;
+  const originalFindOne = AccountLink.findOne;
+
+  const currentLink = {
+    primaryId: 'tg_999',
+    telegramId: '999',
+    wallet: null,
+    linkedAt: null,
+    updatedAt: null,
+    save: async function save() { return this; }
+  };
+
+  try {
+    mongoose.startSession = async () => {
+      const err = new Error('Transactions unsupported');
+      err.code = 20;
+      throw err;
+    };
+
+    AccountLink.findOne = async ({ primaryId, wallet, telegramId }) => {
+      if (primaryId === 'tg_999') {
+        return currentLink;
+      }
+      if (wallet === '0xabc') {
+        return null;
+      }
+      if (telegramId) {
+        return null;
+      }
+      return null;
+    };
+
+    const result = await linkAccounts('tg_999', 'wallet', '0xAbC');
+
+    assert.equal(result.success, true);
+    assert.equal(result.primaryId, 'tg_999');
+    assert.equal(result.wallet, '0xabc');
+    assert.equal(result.merged, false);
+    assert.equal(currentLink.wallet, '0xabc');
+    assert.ok(currentLink.linkedAt instanceof Date);
+  } finally {
+    mongoose.startSession = originalStartSession;
+    AccountLink.findOne = originalFindOne;
   }
 });

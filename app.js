@@ -39,10 +39,6 @@ function createApp() {
         return;
       }
 
-      if (origin.endsWith('.vercel.app')) {
-        callback(null, true);
-        return;
-      }
 
       logger.warn({ origin }, 'CORS blocked');
       callback(new Error('Not allowed by CORS'));
