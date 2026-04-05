@@ -61,10 +61,23 @@ function buildLeaderboardEntry(player, displayName, position) {
   };
 }
 
+function isValidWalletAddress(wallet) {
+  return /^0x[a-fA-F0-9]{40}$/.test(wallet);
+}
+
 // ✅ GET: Top 10 players
 router.get('/top', readLimiter, async (req, res) => {
   try {
-    const wallet = req.query.wallet?.toLowerCase();
+    const walletQuery = typeof req.query.wallet === 'string' ? req.query.wallet.trim() : '';
+    const wallet = walletQuery ? walletQuery.toLowerCase() : null;
+
+    if (wallet && !isValidWalletAddress(wallet)) {
+      logger.warn({ wallet: walletQuery, requestId: req.requestId }, 'GET /top rejected: invalid wallet format');
+      return res.status(400).json({
+        error: 'Invalid wallet format. Expected EVM wallet like 0x... (40 hex chars).',
+        requestId: req.requestId
+      });
+    }
 
     const topPlayers = await Player.find({ bestScore: { $gt: 0 } })
       .sort({ bestScore: -1 })
@@ -117,8 +130,8 @@ router.get('/top', readLimiter, async (req, res) => {
     });
 
   } catch (error) {
-    logger.error({ err: error }, 'GET /top error');
-    res.status(500).json({ error: 'Server error' });
+    logger.error({ err: error.message, requestId: req.requestId }, 'GET /top error');
+    res.status(500).json({ error: 'Server error', requestId: req.requestId });
   }
 });
 

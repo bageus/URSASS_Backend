@@ -7,18 +7,26 @@ const { getGameModeConfig } = require('../utils/gameModeConfig');
 router.get('/config', readLimiter, async (req, res) => {
   try {
     const requestedMode = req.query.mode || 'unauth';
+
+    if (String(requestedMode).trim().toLowerCase() === 'unauth') {
+      // Public guest mode: no auth/signature/wallet checks required.
+      const config = getGameModeConfig('unauth');
+      return res.json(config);
+    }
+
     const config = getGameModeConfig(requestedMode);
 
     if (!config) {
       return res.status(404).json({
-        error: `Unknown game mode config: ${requestedMode}`
+        error: `Unknown game mode config: ${requestedMode}`,
+        requestId: req.requestId
       });
     }
 
     res.json(config);
   } catch (error) {
-    logger.error({ err: error }, 'GET /config error');
-    res.status(500).json({ error: 'Server error' });
+    logger.error({ err: error.message, requestId: req.requestId }, 'GET /config error');
+    res.status(500).json({ error: 'Server error', requestId: req.requestId });
   }
 });
 

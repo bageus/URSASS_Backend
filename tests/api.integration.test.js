@@ -773,6 +773,61 @@ test('GET /api/game/config returns unauth preset built from backend config', asy
   await server.close();
 });
 
+test('GET /api/leaderboard/top allows empty wallet query and keeps public response contract', async () => {
+  Player.find = () => ({
+    sort() { return this; },
+    limit() { return this; },
+    select() {
+      return Promise.resolve([
+        {
+          wallet: '0x1111111111111111111111111111111111111111',
+          bestScore: 1000,
+          bestDistance: 200,
+          averageScore: 500,
+          scoreToAverageRatio: 2,
+          totalGoldCoins: 10,
+          totalSilverCoins: 20,
+          gamesPlayed: 3
+        }
+      ]);
+    }
+  });
+  AccountLink.find = async () => [];
+  Player.findOne = () => queryResult(null);
+
+  const { server, baseUrl } = await startServer();
+
+  const res = await fetch(`${baseUrl}/api/leaderboard/top?wallet=`, {
+    headers: { Origin: 'https://bageus-github-io.vercel.app' }
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('access-control-allow-origin'), 'https://bageus-github-io.vercel.app');
+  const body = await res.json();
+  assert.ok(Array.isArray(body.leaderboard));
+  assert.equal(body.playerPosition, null);
+  assert.equal(body.leaderboard[0].position, 1);
+
+  await server.close();
+});
+
+test('GET /api/leaderboard/top rejects invalid wallet with 400 and CORS headers', async () => {
+  const { server, baseUrl } = await startServer();
+
+  const res = await fetch(`${baseUrl}/api/leaderboard/top?wallet=invalid-wallet`, {
+    headers: { Origin: 'https://bageus-github-io.vercel.app' }
+  });
+
+  assert.equal(res.status, 400);
+  assert.equal(res.headers.get('access-control-allow-origin'), 'https://bageus-github-io.vercel.app');
+  assert.ok(res.headers.get('x-request-id'));
+  const body = await res.json();
+  assert.match(body.error, /Invalid wallet format/i);
+  assert.ok(body.requestId);
+
+  await server.close();
+});
+
 test('GET /api/game/config rejects unknown mode', async () => {
   const { server, baseUrl } = await startServer();
 
@@ -781,6 +836,27 @@ test('GET /api/game/config rejects unknown mode', async () => {
   assert.equal(res.status, 404);
   const body = await res.json();
   assert.match(body.error, /Unknown game mode config/i);
+
+  await server.close();
+});
+
+test('GET /api/v1/game/config?mode=unauth is public and CORS-enabled for production frontend origin', async () => {
+  const { server, baseUrl } = await startServer();
+
+  const res = await fetch(`${baseUrl}/api/v1/game/config?mode=unauth`, {
+    headers: { Origin: 'https://bageus-github-io.vercel.app' }
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('access-control-allow-origin'), 'https://bageus-github-io.vercel.app');
+  const body = await res.json();
+  assert.equal(body.mode, 'unauth');
+  assert.equal(body.storeEnabled, false);
+  assert.equal(body.saveProgress, false);
+  assert.equal(body.eligibleForLeaderboard, false);
+  assert.ok(body.rides);
+  assert.ok(body.balance);
+  assert.ok(body.activeEffects);
 
   await server.close();
 });
