@@ -766,6 +766,22 @@ function buildTelegramInitData(user, botToken) {
   return params.toString();
 }
 
+
+test('CORS rejects non-whitelisted *.vercel.app origins', async () => {
+  const { server, baseUrl } = await startServer();
+
+  const res = await fetch(`${baseUrl}/health`, {
+    headers: {
+      Origin: 'https://evil-app.vercel.app'
+    }
+  });
+
+  assert.equal(res.status, 500);
+  assert.equal(res.headers.get('access-control-allow-origin'), null);
+
+  await server.close();
+});
+
 test('OPTIONS /api/donations/stars/create allows Telegram Mini App header in CORS preflight', async () => {
   const { server, baseUrl } = await startServer();
 
