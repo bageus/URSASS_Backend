@@ -12,6 +12,7 @@ const DonationPayment = require('../models/DonationPayment');
 const AccountLink = require('../models/AccountLink');
 const { setDonationVerifierForTests, resetDonationVerifier } = require('../utils/donationService');
 const { setTelegramStarsClientForTests } = require('../utils/telegramStarsService');
+const { resetTelegramWebhookReplayStore } = require('../utils/telegramWebhookReplay');
 const crypto = require('crypto');
 
 const { createApp } = require('../app');
@@ -54,6 +55,7 @@ test.after(() => {
 });
 
 test.beforeEach(() => {
+  resetTelegramWebhookReplayStore();
   SecurityEvent.create = async () => ({ _id: 'sec' });
   SecurityEvent.countDocuments = async () => 0;
   GameResult.create = async () => ([{ _id: 'gr' }]);
@@ -1095,6 +1097,40 @@ test('POST /api/telegram/webhook processes successful_payment idempotently', asy
     unit: 'STARS'
   });
   assert.equal(history.payments[0].paymentMethodLegacy, 'telegram_stars');
+
+  await server.close();
+});
+
+test('POST /api/telegram/webhook ignores duplicate update_id replays', async () => {
+  process.env.TELEGRAM_BOT_TOKEN = '123456:stars-token';
+  const { server, baseUrl } = await startServer();
+
+  const payload = { update_id: 424242 };
+  const headers = {
+    'content-type': 'application/json',
+    'x-telegram-bot-api-secret-token': process.env.TELEGRAM_WEBHOOK_SECRET
+  };
+
+  const first = await fetch(`${baseUrl}/api/telegram/webhook`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload)
+  });
+  assert.equal(first.status, 200);
+  const firstBody = await first.json();
+  assert.equal(firstBody.ok, true);
+  assert.equal(firstBody.ignored, true);
+
+  const second = await fetch(`${baseUrl}/api/telegram/webhook`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload)
+  });
+  assert.equal(second.status, 200);
+  const secondBody = await second.json();
+  assert.equal(secondBody.ok, true);
+  assert.equal(secondBody.duplicate, true);
+  assert.equal(secondBody.updateId, 424242);
 
   await server.close();
 });
