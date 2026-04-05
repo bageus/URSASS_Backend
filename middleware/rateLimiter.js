@@ -1,6 +1,21 @@
 const rateLimit = require('express-rate-limit');
 
-const getClientIp = (req) => req.get('x-forwarded-for') || req.ip || req.connection.remoteAddress;
+function getClientIp(req) {
+  const xForwardedFor = req.get('x-forwarded-for');
+
+  if (xForwardedFor && typeof xForwardedFor === 'string') {
+    const firstIp = xForwardedFor
+      .split(',')
+      .map((value) => value.trim())
+      .find(Boolean);
+
+    if (firstIp) {
+      return firstIp;
+    }
+  }
+
+  return req.ip || req.connection.remoteAddress || 'unknown';
+}
 
 // ✅ Строгий лимит для отправки игровых результатов
 const saveResultLimiter = rateLimit({

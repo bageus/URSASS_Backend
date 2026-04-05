@@ -12,6 +12,8 @@ const { validateTelegramInitData } = require('../utils/telegramAuth');
 const { writeLimiter, readLimiter } = require('../middleware/rateLimiter');
 const logger = require('../utils/logger');
 const { logSecurityEvent } = require('../utils/security');
+const { verifyTelegramWebhook } = require('../middleware/telegramWebhookAuth');
+const { rememberTelegramUpdate } = require('../utils/telegramWebhookReplay');
 
 function resolveInitData(req) {
   return req.body?.telegramInitData
@@ -125,10 +127,16 @@ router.post('/donations/stars/confirm', writeLimiter, async (req, res) => {
   }
 });
 
-router.post('/telegram/webhook', readLimiter, async (req, res) => {
+router.post('/telegram/webhook', readLimiter, verifyTelegramWebhook, async (req, res) => {
   try {
     const update = req.body || {};
-    logger.info({ updateId: update.update_id || null, keys: Object.keys(update) }, 'Telegram payment webhook update received');
+    const updateId = update.update_id || null;
+    if (rememberTelegramUpdate(updateId)) {
+      logger.warn({ updateId }, 'Duplicate Telegram webhook update ignored');
+      return res.json({ ok: true, duplicate: true, updateId });
+    }
+
+    logger.info({ updateId, keys: Object.keys(update) }, 'Telegram payment webhook update received');
 
     if (update.pre_checkout_query) {
       const result = await handleTelegramPreCheckoutQuery(update);
