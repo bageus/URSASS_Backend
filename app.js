@@ -13,6 +13,7 @@ const { metricsMiddleware, renderMetricsText } = require('./middleware/requestMe
 function createApp() {
   const app = express();
 
+  app.disable('x-powered-by');
   app.set('trust proxy', 1);
 
   const extraAllowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
@@ -71,6 +72,21 @@ function createApp() {
     }
     next();
   });
+
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-DNS-Prefetch-Control', 'off');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+
+    if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
+
+    next();
+  });
+
   app.use(express.json({ limit: '1mb' }));
   app.use(metricsMiddleware);
 
