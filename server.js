@@ -4,8 +4,22 @@ const { initBot } = require('./bot');
 const logger = require('./utils/logger');
 const { createApp } = require('./app');
 const { startDonationPaymentRecheckLoop } = require('./utils/donationService');
+const { validateStartupConfig } = require('./utils/startupConfig');
 
 const app = createApp();
+
+
+const startupValidation = validateStartupConfig();
+startupValidation.warnings.forEach((warning) => {
+  logger.warn({ warning }, 'Startup configuration warning');
+});
+
+if (startupValidation.errors.length > 0) {
+  startupValidation.errors.forEach((error) => {
+    logger.error({ error }, 'Startup configuration error');
+  });
+  process.exit(1);
+}
 
 const runBotInProcess = process.env.BOT_MODE !== 'worker' && process.env.START_BOT_IN_PROCESS !== 'false';
 
