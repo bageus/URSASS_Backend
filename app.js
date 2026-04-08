@@ -7,6 +7,7 @@ const storeRoutes = require('./routes/store');
 const accountRoutes = require('./routes/account');
 const gameRoutes = require('./routes/game');
 const donationsRoutes = require('./routes/donations');
+const analyticsRoutes = require('./routes/analytics');
 const logger = require('./utils/logger');
 const { metricsMiddleware, renderMetricsText } = require('./middleware/requestMetrics');
 
@@ -95,12 +96,14 @@ function createApp() {
   app.use('/api/account', accountRoutes);
   app.use('/api/game', gameRoutes);
   app.use('/api', donationsRoutes);
+  app.use('/api/analytics', analyticsRoutes);
 
   app.use('/api/v1/leaderboard', leaderboardRoutes);
   app.use('/api/v1/store', storeRoutes);
   app.use('/api/v1/account', accountRoutes);
   app.use('/api/v1/game', gameRoutes);
   app.use('/api/v1', donationsRoutes);
+  app.use('/api/v1/analytics', analyticsRoutes);
 
   app.get('/health', (req, res) => {
     const mongoStates = {
@@ -123,9 +126,13 @@ function createApp() {
     });
   });
 
-  app.get('/metrics', (req, res) => {
-    res.set('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
-    res.end(renderMetricsText());
+  app.get('/metrics', async (req, res, next) => {
+    try {
+      res.set('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+      res.end(await renderMetricsText());
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.use((err, req, res, next) => {
