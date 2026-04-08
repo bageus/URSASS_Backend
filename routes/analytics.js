@@ -57,18 +57,27 @@ function validateAndNormalizeEvent(inputEvent) {
   };
 }
 
-router.post('/events', readLimiter, async (req, res, next) => {
-  try {
-    const sentAt = parseNonNegativeNumber(req.body?.sentAt);
-    const events = req.body?.events;
+function buildEventsBatch(body, isSingleEventRoute = false) {
+  const sentAt = parseNonNegativeNumber(body?.sentAt);
+  if (sentAt === null) {
+    const err = new Error('sentAt is required and must be a non-negative number');
+    err.statusCode = 400;
+    err.code = 'ANALYTICS_INVALID_SENT_AT';
+    err.expose = true;
+    throw err;
+  }
 
-    if (sentAt === null) {
-      const err = new Error('sentAt is required and must be a non-negative number');
-      err.statusCode = 400;
-      err.code = 'ANALYTICS_INVALID_SENT_AT';
-      err.expose = true;
-      throw err;
-    }
+  if (isSingleEventRoute) {
+    const singleEvent = body?.event && typeof body.event === 'object' && !Array.isArray(body.event) ? body.event : body;
+    return { sentAt, events: [singleEvent] };
+  }
+
+  return { sentAt, events: body?.events };
+}
+
+async function ingestEvents(req, res, next, isSingleEventRoute = false) {
+  try {
+    const { sentAt, events } = buildEventsBatch(req.body, isSingleEventRoute);
 
     if (!Array.isArray(events) || events.length === 0) {
       const err = new Error('events must be a non-empty array');
@@ -122,6 +131,14 @@ router.post('/events', readLimiter, async (req, res, next) => {
 
     next(error);
   }
+}
+
+router.post('/events', readLimiter, async (req, res, next) => {
+  await ingestEvents(req, res, next, false);
+});
+
+router.post('/event', readLimiter, async (req, res, next) => {
+  await ingestEvents(req, res, next, true);
 });
 
 module.exports = router;
