@@ -1430,3 +1430,34 @@ test('POST /api/analytics/events rejects unsupported event type', async () => {
 
   await server.close();
 });
+
+test('POST /api/analytics/event accepts a single analytics event payload', async () => {
+  const inserted = [];
+  AnalyticsEvent.insertMany = async (docs) => {
+    inserted.push(...docs);
+    return docs;
+  };
+
+  const { server, baseUrl } = await startServer();
+  const sentAt = Date.now();
+  const res = await fetch(`${baseUrl}/api/analytics/event`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      sentAt,
+      name: 'game_start',
+      timestamp: sentAt - 1000,
+      payload: { sessionId: 'single-route' }
+    })
+  });
+
+  assert.equal(res.status, 202);
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.accepted, 1);
+  assert.equal(inserted.length, 1);
+  assert.equal(inserted[0].eventType, 'game_start');
+  assert.equal(inserted[0].payload.sessionId, 'single-route');
+
+  await server.close();
+});
