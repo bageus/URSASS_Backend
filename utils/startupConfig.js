@@ -5,6 +5,10 @@ function normalizeList(value) {
     .filter(Boolean);
 }
 
+function isTrue(value) {
+  return String(value || '').trim().toLowerCase() === 'true';
+}
+
 function validateStartupConfig(env = process.env) {
   const mode = String(env.NODE_ENV || 'development').toLowerCase();
   const isProduction = mode === 'production';
@@ -12,19 +16,27 @@ function validateStartupConfig(env = process.env) {
   const errors = [];
   const warnings = [];
 
-  const requiredInProduction = [
-    'MONGO_URL',
+  if (isProduction && !String(env.MONGO_URL || '').trim()) {
+    errors.push('Missing required env var in production: MONGO_URL');
+  }
+
+  const telegramRequired = isTrue(env.REQUIRE_TELEGRAM_CONFIG);
+  const telegramVars = [
     'TELEGRAM_BOT_TOKEN',
     'TELEGRAM_BOT_SECRET',
     'TELEGRAM_WEBHOOK_SECRET'
   ];
 
-  if (isProduction) {
-    requiredInProduction.forEach((name) => {
-      if (!String(env[name] || '').trim()) {
+  const missingTelegramVars = telegramVars.filter((name) => !String(env[name] || '').trim());
+
+  if (missingTelegramVars.length > 0) {
+    if (telegramRequired) {
+      missingTelegramVars.forEach((name) => {
         errors.push(`Missing required env var in production: ${name}`);
-      }
-    });
+      });
+    } else if (isProduction) {
+      warnings.push(`Telegram config is incomplete (${missingTelegramVars.join(', ')}). Telegram auth/webhook/stars features may be unavailable.`);
+    }
   }
 
   const allowedOrigins = normalizeList(env.CORS_ALLOWED_ORIGINS);
