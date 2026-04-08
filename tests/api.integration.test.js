@@ -10,6 +10,7 @@ const SecurityEvent = require('../models/SecurityEvent');
 const LinkCode = require('../models/LinkCode');
 const DonationPayment = require('../models/DonationPayment');
 const AccountLink = require('../models/AccountLink');
+const { AnalyticsEvent } = require('../models/AnalyticsEvent');
 const { setDonationVerifierForTests, resetDonationVerifier } = require('../utils/donationService');
 const { setTelegramStarsClientForTests } = require('../utils/telegramStarsService');
 const { resetTelegramWebhookReplayStore } = require('../utils/telegramWebhookReplay');
@@ -169,6 +170,7 @@ test.beforeEach(() => {
     return chain;
   };
   resetDonationVerifier();
+  AnalyticsEvent.insertMany = async (docs) => docs;
 });
 
 test('POST /api/leaderboard/save rejects invalid signature', async () => {
@@ -1362,4 +1364,69 @@ test('POST /api/account/link/request-code does not log plaintext verification co
       await server.close();
     }
   }
+});
+
+
+test('POST /api/analytics/events accepts valid analytics batch', async () => {
+  const inserted = [];
+  AnalyticsEvent.insertMany = async (docs) => {
+    inserted.push(...docs);
+    return docs;
+  };
+
+  const { server, baseUrl } = await startServer();
+  const sentAt = Date.now();
+  const res = await fetch(`${baseUrl}/api/analytics/events`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      sentAt,
+      events: [
+        { name: 'game_start', timestamp: sentAt - 1000, payload: { sessionId: 's1' } },
+        { name: 'currency_spent', timestamp: sentAt - 500, payload: { amount: 50, currency: 'coins' } }
+      ]
+    })
+  });
+
+  assert.equal(res.status, 202);
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.accepted, 2);
+  assert.equal(inserted.length, 2);
+  assert.equal(inserted[0].eventType, 'game_start');
+  assert.equal(inserted[0].sentAt, sentAt);
+
+  const metricsRes = await fetch(`${baseUrl}/metrics`);
+  const metricsText = await metricsRes.text();
+  assert.match(metricsText, /app_analytics_ingest_total\{status="accepted"\} 2/);
+  assert.match(metricsText, /app_analytics_ingest_total\{status="stored"\} 2/);
+
+  await server.close();
+});
+
+test('POST /api/analytics/events rejects unsupported event type', async () => {
+  AnalyticsEvent.insertMany = async () => {
+    throw new Error('insertMany should not be called for invalid payload');
+  };
+
+  const { server, baseUrl } = await startServer();
+  const sentAt = Date.now();
+  const res = await fetch(`${baseUrl}/api/analytics/events`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      sentAt,
+      events: [{ name: 'unknown_event', timestamp: sentAt }]
+    })
+  });
+
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.equal(body.code, 'ANALYTICS_INVALID_EVENT');
+
+  const metricsRes = await fetch(`${baseUrl}/metrics`);
+  const metricsText = await metricsRes.text();
+  assert.match(metricsText, /app_analytics_ingest_total\{status="invalid"\} 1/);
+
+  await server.close();
 });
