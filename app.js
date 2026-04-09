@@ -97,6 +97,7 @@ function createApp() {
   app.use('/api/game', gameRoutes);
   app.use('/api', donationsRoutes);
   app.use('/api/analytics', analyticsRoutes);
+  app.use('/api/telemetry', analyticsRoutes);
 
   app.use('/api/v1/leaderboard', leaderboardRoutes);
   app.use('/api/v1/store', storeRoutes);
@@ -104,6 +105,7 @@ function createApp() {
   app.use('/api/v1/game', gameRoutes);
   app.use('/api/v1', donationsRoutes);
   app.use('/api/v1/analytics', analyticsRoutes);
+  app.use('/api/v1/telemetry', analyticsRoutes);
 
   app.get('/health', (req, res) => {
     const mongoStates = {
