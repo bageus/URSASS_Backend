@@ -109,6 +109,7 @@ Versioned aliases are also available under `/api/v1/*` (backward-compatible with
 ## Frontend Integration Note
 
 - `https://bageus-github-io.vercel.app` is a frontend origin and is allowed by CORS.
+- `https://ursasstube.fun` (and `https://www.ursasstube.fun`) are also allowed by CORS.
 - API requests must target the deployed backend host (for example, Railway), not the frontend host itself.
 - If you send `POST https://bageus-github-io.vercel.app/api/analytics/events`, Vercel frontend hosting may return `404 Not Found` because that route is not served there.
 
