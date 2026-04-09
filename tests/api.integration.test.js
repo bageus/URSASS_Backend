@@ -893,6 +893,21 @@ test('CORS rejects non-whitelisted *.vercel.app origins', async () => {
   await server.close();
 });
 
+test('GET /health allows play.ursasstube.fun origin via CORS', async () => {
+  const { server, baseUrl } = await startServer();
+
+  const res = await fetch(`${baseUrl}/health`, {
+    headers: {
+      Origin: 'https://play.ursasstube.fun'
+    }
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('access-control-allow-origin'), 'https://play.ursasstube.fun');
+
+  await server.close();
+});
+
 test('OPTIONS /api/donations/stars/create allows Telegram Mini App header in CORS preflight', async () => {
   const { server, baseUrl } = await startServer();
 
