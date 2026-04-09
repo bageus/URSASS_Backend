@@ -899,14 +899,14 @@ test('OPTIONS /api/donations/stars/create allows Telegram Mini App header in COR
   const res = await fetch(`${baseUrl}/api/donations/stars/create`, {
     method: 'OPTIONS',
     headers: {
-      Origin: 'https://ursass-tube.vercel.app',
+      Origin: 'https://ursasstube.fun',
       'Access-Control-Request-Method': 'POST',
       'Access-Control-Request-Headers': 'content-type,x-telegram-init-data'
     }
   });
 
   assert.equal(res.status, 204);
-  assert.equal(res.headers.get('access-control-allow-origin'), 'https://ursass-tube.vercel.app');
+  assert.equal(res.headers.get('access-control-allow-origin'), 'https://ursasstube.fun');
   assert.match(res.headers.get('access-control-allow-headers') || '', /x-telegram-init-data/i);
   assert.match(res.headers.get('access-control-allow-methods') || '', /POST/i);
 

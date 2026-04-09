@@ -26,6 +26,8 @@ function createApp() {
     'https://bageus.github.io',
     'https://bageus-github-io.vercel.app',
     'https://ursass-tube.vercel.app',
+    'https://ursasstube.fun',
+    'https://www.ursasstube.fun',
     'http://localhost:3000',
     'http://localhost:5173',
     ...extraAllowedOrigins
