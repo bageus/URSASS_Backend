@@ -3,8 +3,9 @@ const { normalizeWallet } = require('./security');
 // AI_WHITELIST_START
 // add allowed wallets here (lowercase)
 const AI_MODE_WALLET_WHITELIST = [
-  // '0x6735646dBA76763695Be5395bf2F4245046Db44C',
-  '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  // '0x1234...abcd',
+  '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  '0x6735646dba76763695be5395bf2f4245046db44c'
 ];
 // AI_WHITELIST_END
 
