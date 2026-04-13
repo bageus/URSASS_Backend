@@ -10,6 +10,7 @@ const { saveResultLimiter, readLimiter } = require('../middleware/rateLimiter');
 const logger = require('../utils/logger');
 const { markSuspicious } = require('../middleware/requestMetrics');
 const { logSecurityEvent, normalizeWallet, validateTimestampWindow } = require('../utils/security');
+const { hasAiModeAccess, validateAiSettings } = require('../utils/aiModeAccess');
 
 /**
  * Build display name for a player based on their AccountLink data.
@@ -138,7 +139,7 @@ router.get('/top', readLimiter, async (req, res) => {
 // ✅ POST: Save game result with signature verification
 router.post('/save', saveResultLimiter, async (req, res) => {
   try {
-    const { wallet, score, distance, goldCoins, silverCoins, signature, timestamp, authMode, telegramId } = req.body;
+    const { wallet, score, distance, goldCoins, silverCoins, signature, timestamp, authMode, telegramId, aiSettings } = req.body;
 
     const isTelegramAuth = authMode === 'telegram';
 
@@ -157,6 +158,19 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     }
 
     const walletLower = normalizeWallet(wallet);
+    const aiValidation = validateAiSettings(aiSettings);
+    if (!aiValidation.valid) {
+      return res.status(400).json({ error: aiValidation.error });
+    }
+
+    const aiConfig = aiValidation.sanitized;
+    if (aiConfig?.enabled && !hasAiModeAccess(walletLower)) {
+      return res.status(403).json({ error: 'AI mode is not allowed for this wallet' });
+    }
+
+    if (aiConfig?.enabled) {
+      logger.info({ wallet: walletLower, aiSettings: aiConfig }, 'AI mode enabled for result submission');
+    }
 
     // Anti-cheat: validate score, distance, and coin values
     if (typeof score !== 'number' || isNaN(score) || score < 0 || score > 999999) {
