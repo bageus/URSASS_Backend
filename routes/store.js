@@ -11,6 +11,7 @@ const SecurityEvent = require('../models/SecurityEvent');
 const logger = require('../utils/logger');
 const { markSuspicious } = require('../middleware/requestMetrics');
 const { logSecurityEvent, normalizeWallet, validateTimestampWindow } = require('../utils/security');
+const { hasAiModeAccess } = require('../utils/aiModeAccess');
 
 const UPGRADE_KEY_ALIASES = {
   spin_alert: 'alert',
@@ -254,6 +255,7 @@ router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
     const silver = player ? player.totalSilverCoins : 0;
 
     const effects = calculateEffects(upgrades);
+    effects.ai_mode_access = hasAiModeAccess(wallet);
 
     // Build upgrades data
     const upgradesData = {};

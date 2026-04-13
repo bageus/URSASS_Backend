@@ -863,6 +863,116 @@ test('GET /api/v1/game/config?mode=unauth is public and CORS-enabled for product
   await server.close();
 });
 
+test('GET /api/store/upgrades/:wallet returns ai_mode_access=true for whitelisted wallet', async () => {
+  const wallet = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  Player.findOne = () => queryResult({
+    totalGoldCoins: 0,
+    totalSilverCoins: 0
+  });
+  PlayerUpgrades.findOne = () => queryResult({
+    refreshFreeRides() { return false; },
+    getTotalRides() { return 3; },
+    freeRidesRemaining: 3,
+    paidRidesRemaining: 0,
+    freeRidesResetAt: new Date(),
+    save: async function save() { return this; }
+  });
+
+  const { server, baseUrl } = await startServer();
+  const res = await fetch(`${baseUrl}/api/store/upgrades/${wallet}`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.activeEffects.ai_mode_access, true);
+  await server.close();
+});
+
+test('GET /api/store/upgrades/:wallet returns ai_mode_access=false for regular wallet', async () => {
+  const wallet = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  Player.findOne = () => queryResult({
+    totalGoldCoins: 0,
+    totalSilverCoins: 0
+  });
+  PlayerUpgrades.findOne = () => queryResult({
+    refreshFreeRides() { return false; },
+    getTotalRides() { return 3; },
+    freeRidesRemaining: 3,
+    paidRidesRemaining: 0,
+    freeRidesResetAt: new Date(),
+    save: async function save() { return this; }
+  });
+
+  const { server, baseUrl } = await startServer();
+  const res = await fetch(`${baseUrl}/api/store/upgrades/${wallet}`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.activeEffects.ai_mode_access, false);
+  await server.close();
+});
+
+test('POST /api/leaderboard/save rejects non-whitelisted wallet when ai mode enabled', async () => {
+  const wallet = Wallet.createRandom();
+  const timestamp = Date.now();
+  const message = `Save game result\nWallet: ${wallet.address}\nScore: 210\nDistance: 90\nTimestamp: ${timestamp}`;
+  const signature = await wallet.signMessage(message);
+
+  const { server, baseUrl } = await startServer();
+  const res = await fetch(`${baseUrl}/api/leaderboard/save`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      wallet: wallet.address,
+      score: 210,
+      distance: 90,
+      signature,
+      timestamp,
+      aiSettings: {
+        enabled: true,
+        distance: 100,
+        spinCount: 2,
+        combo: true,
+        priority: 'gold'
+      }
+    })
+  });
+
+  assert.equal(res.status, 403);
+  const body = await res.json();
+  assert.match(body.error, /AI mode is not allowed/i);
+  await server.close();
+});
+
+test('POST /api/leaderboard/save validates aiSettings fields', async () => {
+  const wallet = Wallet.createRandom();
+  const timestamp = Date.now();
+  const message = `Save game result\nWallet: ${wallet.address}\nScore: 220\nDistance: 95\nTimestamp: ${timestamp}`;
+  const signature = await wallet.signMessage(message);
+
+  const { server, baseUrl } = await startServer();
+  const res = await fetch(`${baseUrl}/api/leaderboard/save`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      wallet: wallet.address,
+      score: 220,
+      distance: 95,
+      signature,
+      timestamp,
+      aiSettings: {
+        enabled: false,
+        distance: -1,
+        spinCount: 0,
+        combo: false,
+        priority: 'invalid'
+      }
+    })
+  });
+
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.match(body.error, /distance must be integer >= 0/i);
+  await server.close();
+});
+
 
 function buildTelegramInitData(user, botToken) {
   const authDate = Math.floor(Date.now() / 1000);
