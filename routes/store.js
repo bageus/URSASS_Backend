@@ -21,6 +21,39 @@ const UPGRADE_KEY_ALIASES = {
   spin_perfect: 'alert'
 };
 
+const NEW_PLAYER_GOLD_UPGRADE_DEFAULTS = {
+  shield: 0,
+  shield_capacity: 0,
+  radar_obstacles: 0,
+  radar_gold: 0,
+  alert: 0
+};
+
+function toUpgradeLevel(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'boolean') {
+    return value ? 1 : 0;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized || normalized === 'false' || normalized === 'null' || normalized === 'undefined') {
+      return 0;
+    }
+    if (normalized === 'true') {
+      return 1;
+    }
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function isNormalizedUpgradeLevel(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
 function resolveUpgradeKey(upgradeKey) {
   return UPGRADE_KEY_ALIASES[upgradeKey] || upgradeKey;
 }
@@ -31,10 +64,10 @@ function isLevelUpgradeType(type) {
 
 function normalizeShieldUpgrades(upgrades) {
   let changed = false;
-  const legacyShieldLevel = upgrades.shield || 0;
+  const legacyShieldLevel = toUpgradeLevel(upgrades.shield);
+  const currentCapacityLevel = toUpgradeLevel(upgrades.shield_capacity);
 
   if (legacyShieldLevel > 1) {
-    const currentCapacityLevel = typeof upgrades.shield_capacity === 'number' ? upgrades.shield_capacity : 0;
     const migratedCapacityLevel = Math.min(2, legacyShieldLevel - 1);
 
     if (currentCapacityLevel < migratedCapacityLevel) {
@@ -44,7 +77,18 @@ function normalizeShieldUpgrades(upgrades) {
 
     upgrades.shield = 1;
     changed = true;
-  } else if (typeof upgrades.shield_capacity !== 'number') {
+  } else {
+    if (!isNormalizedUpgradeLevel(upgrades.shield) || upgrades.shield !== legacyShieldLevel) {
+      upgrades.shield = legacyShieldLevel;
+      changed = true;
+    }
+    if (!isNormalizedUpgradeLevel(upgrades.shield_capacity) || upgrades.shield_capacity !== currentCapacityLevel) {
+      upgrades.shield_capacity = currentCapacityLevel;
+      changed = true;
+    }
+  }
+
+  if (typeof upgrades.shield_capacity !== 'number') {
     upgrades.shield_capacity = 0;
     changed = true;
   }
@@ -53,20 +97,40 @@ function normalizeShieldUpgrades(upgrades) {
 }
 
 function normalizeRadarUpgrades(upgrades) {
-  const legacyRadarLevel = upgrades.radar || 0;
+  const legacyRadarLevel = toUpgradeLevel(upgrades.radar);
+  const currentRadarGoldLevel = toUpgradeLevel(upgrades.radar_gold);
+  let changed = false;
 
-  if (legacyRadarLevel > 0 && (!upgrades.radar_gold || upgrades.radar_gold < 1)) {
+  if (legacyRadarLevel > 0 && currentRadarGoldLevel < 1) {
     upgrades.radar_gold = 1;
-    return true;
+    changed = true;
+  } else if (!isNormalizedUpgradeLevel(upgrades.radar_gold) || upgrades.radar_gold !== currentRadarGoldLevel) {
+    upgrades.radar_gold = currentRadarGoldLevel;
+    changed = true;
   }
 
+  const radarObstaclesLevel = toUpgradeLevel(upgrades.radar_obstacles);
+  if (!isNormalizedUpgradeLevel(upgrades.radar_obstacles) || upgrades.radar_obstacles !== radarObstaclesLevel) {
+    upgrades.radar_obstacles = radarObstaclesLevel;
+    changed = true;
+  }
+
+  return changed;
+}
+
+function normalizeAlertUpgrade(upgrades) {
+  const alertLevel = toUpgradeLevel(upgrades.alert);
+  if (!isNormalizedUpgradeLevel(upgrades.alert) || upgrades.alert !== alertLevel) {
+    upgrades.alert = alertLevel;
+    return true;
+  }
   return false;
 }
 
 async function getOrCreatePlayerUpgrades(wallet) {
   let upgrades = await PlayerUpgrades.findOne({ wallet });
   if (!upgrades) {
-    upgrades = new PlayerUpgrades({ wallet });
+    upgrades = new PlayerUpgrades({ wallet, ...NEW_PLAYER_GOLD_UPGRADE_DEFAULTS });
     await upgrades.save();
   }
   return upgrades;
@@ -76,8 +140,9 @@ async function prepareUpgrades(upgrades, { persist = false } = {}) {
   const ridesChanged = upgrades.refreshFreeRides();
   const shieldChanged = normalizeShieldUpgrades(upgrades);
   const radarChanged = normalizeRadarUpgrades(upgrades);
+  const alertChanged = normalizeAlertUpgrade(upgrades);
 
-  if (persist && (ridesChanged || shieldChanged || radarChanged)) {
+  if (persist && (ridesChanged || shieldChanged || radarChanged || alertChanged)) {
     await upgrades.save();
   }
 
@@ -263,7 +328,7 @@ router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
       const config = UPGRADES_CONFIG[key];
 
       if (config.type === "tiered" || config.type === "permanent") {
-        const currentLevel = upgrades[key] || 0;
+        const currentLevel = Math.max(0, toUpgradeLevel(upgrades[key]));
         upgradesData[key] = {
           type: config.type,
           currency: config.currency,
