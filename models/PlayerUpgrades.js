@@ -63,6 +63,37 @@ const playerUpgradesSchema = new mongoose.Schema({
   }
 });
 
+function toUpgradeLevel(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'boolean') return value ? 1 : 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized || normalized === 'false' || normalized === 'null' || normalized === 'undefined') return 0;
+    if (normalized === 'true') return 1;
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+playerUpgradesSchema.pre('validate', function normalizeLegacyRadarAndGoldUpgrades(next) {
+  const radarLegacyLevel = toUpgradeLevel(this.radar);
+  const radarGoldLevel = toUpgradeLevel(this.radar_gold);
+
+  if (radarLegacyLevel > 0 && radarGoldLevel < 1) {
+    this.radar_gold = 1;
+  } else {
+    this.radar_gold = radarGoldLevel;
+  }
+
+  this.radar_obstacles = toUpgradeLevel(this.radar_obstacles);
+  this.shield = Math.min(1, toUpgradeLevel(this.shield));
+  this.shield_capacity = Math.min(2, toUpgradeLevel(this.shield_capacity));
+  this.alert = Math.min(2, toUpgradeLevel(this.alert));
+
+  next();
+});
+
 /**
  * Пересчитать бесплатные заезды на основе времени.
  * Вызывается при каждом обращении к данным игрока.
