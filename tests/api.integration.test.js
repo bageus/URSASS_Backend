@@ -886,6 +886,111 @@ test('GET /api/store/upgrades/:wallet returns ai_mode_access=true for whiteliste
   await server.close();
 });
 
+test('GET /api/store/upgrades/:wallet for new wallet returns zeroed gold upgrades and disabled effects', async () => {
+  const wallet = Wallet.createRandom().address.toLowerCase();
+  let createdUpgrades = null;
+
+  Player.findOne = () => queryResult({
+    totalGoldCoins: 0,
+    totalSilverCoins: 0
+  });
+  PlayerUpgrades.findOne = () => queryResult(null);
+  PlayerUpgrades.prototype.save = async function save() {
+    createdUpgrades = this;
+    return this;
+  };
+
+  const { server, baseUrl } = await startServer();
+  const res = await fetch(`${baseUrl}/api/store/upgrades/${wallet}`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+
+  assert.equal(createdUpgrades.shield, 0);
+  assert.equal(createdUpgrades.shield_capacity, 0);
+  assert.equal(createdUpgrades.radar_obstacles, 0);
+  assert.equal(createdUpgrades.radar_gold, 0);
+  assert.equal(createdUpgrades.alert, 0);
+
+  assert.equal(body.upgrades.shield.currentLevel, 0);
+  assert.equal(body.upgrades.shield_capacity.currentLevel, 0);
+  assert.equal(body.upgrades.radar_obstacles.currentLevel, 0);
+  assert.equal(body.upgrades.radar_gold.currentLevel, 0);
+  assert.equal(body.upgrades.alert.currentLevel, 0);
+
+  assert.equal(body.activeEffects.start_with_shield, false);
+  assert.equal(body.activeEffects.start_with_radar_obstacles, false);
+  assert.equal(body.activeEffects.start_with_radar_gold, false);
+  assert.equal(body.activeEffects.start_with_radar, false);
+  assert.equal(body.activeEffects.start_with_alert, false);
+  assert.equal(typeof body.activeEffects.start_with_shield, 'boolean');
+  assert.equal(typeof body.activeEffects.start_with_radar_obstacles, 'boolean');
+  assert.equal(typeof body.activeEffects.start_with_radar_gold, 'boolean');
+  assert.equal(typeof body.activeEffects.start_with_alert, 'boolean');
+  assert.equal(typeof body.activeEffects.shield_level, 'number');
+  assert.equal(typeof body.activeEffects.shield_capacity_level, 'number');
+  assert.equal(typeof body.activeEffects.alert_level, 'number');
+
+  await server.close();
+});
+
+test('GET /api/store/upgrades/:wallet normalizes legacy string levels and radar fallback', async () => {
+  const wallet = Wallet.createRandom().address.toLowerCase();
+  let saveCalls = 0;
+
+  Player.findOne = () => queryResult({
+    totalGoldCoins: 0,
+    totalSilverCoins: 0
+  });
+  PlayerUpgrades.findOne = () => queryResult({
+    shield: 'false',
+    shield_capacity: '0',
+    radar: '1',
+    radar_gold: '0',
+    radar_obstacles: 'false',
+    alert: '2',
+    x2_duration: '0',
+    score_plus_300_mult: '0',
+    score_plus_500_mult: '0',
+    score_minus_300_mult: '0',
+    score_minus_500_mult: '0',
+    invert_score: '0',
+    speed_up_mult: '0',
+    speed_down_mult: '0',
+    magnet_duration: '0',
+    spin_cooldown: '0',
+    freeRidesRemaining: 3,
+    paidRidesRemaining: 0,
+    freeRidesResetAt: new Date(),
+    refreshFreeRides() { return false; },
+    getTotalRides() { return 3; },
+    save: async function save() { saveCalls += 1; return this; }
+  });
+
+  const { server, baseUrl } = await startServer();
+  const res = await fetch(`${baseUrl}/api/store/upgrades/${wallet}`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+
+  assert.equal(saveCalls, 1);
+  assert.equal(body.upgrades.shield.currentLevel, 0);
+  assert.equal(body.upgrades.shield_capacity.currentLevel, 0);
+  assert.equal(body.upgrades.radar_obstacles.currentLevel, 0);
+  assert.equal(body.upgrades.radar_gold.currentLevel, 1);
+  assert.equal(body.upgrades.alert.currentLevel, 2);
+
+  assert.equal(body.activeEffects.start_with_shield, false);
+  assert.equal(body.activeEffects.start_with_radar_obstacles, false);
+  assert.equal(body.activeEffects.start_with_radar_gold, true);
+  assert.equal(body.activeEffects.start_with_radar, true);
+  assert.equal(body.activeEffects.alert_level, 2);
+  assert.equal(body.activeEffects.perfect_spin_enabled, true);
+  assert.equal(typeof body.activeEffects.start_with_radar_gold, 'boolean');
+  assert.equal(typeof body.activeEffects.start_with_alert, 'boolean');
+  assert.equal(typeof body.activeEffects.alert_level, 'number');
+
+  await server.close();
+});
+
 test('GET /api/store/upgrades/:wallet returns ai_mode_access=false for regular wallet', async () => {
   const wallet = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
   Player.findOne = () => queryResult({

@@ -5,6 +5,30 @@ function goldPrice(defaultPrice) {
   return isTestEnv ? TEST_GOLD_PRICE : defaultPrice;
 }
 
+function toUpgradeLevel(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === 'boolean') {
+    return value ? 1 : 0;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized || normalized === 'false' || normalized === 'null' || normalized === 'undefined') {
+      return 0;
+    }
+    if (normalized === 'true') {
+      return 1;
+    }
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  return 0;
+}
+
 const UPGRADES_CONFIG = {
 
   // === SILVER — TIERED ===
@@ -155,52 +179,69 @@ const UPGRADES_CONFIG = {
 };
 
 function calculateEffects(upgrades) {
-  const legacyShieldLevel = upgrades.shield || 0;
-  const hasSeparateShieldCapacity = typeof upgrades.shield_capacity === "number";
+  const x2DurationLevel = toUpgradeLevel(upgrades.x2_duration);
+  const scorePlus300Level = toUpgradeLevel(upgrades.score_plus_300_mult);
+  const scorePlus500Level = toUpgradeLevel(upgrades.score_plus_500_mult);
+  const scoreMinus300Level = toUpgradeLevel(upgrades.score_minus_300_mult);
+  const scoreMinus500Level = toUpgradeLevel(upgrades.score_minus_500_mult);
+  const invertScoreLevel = toUpgradeLevel(upgrades.invert_score);
+  const speedUpLevel = toUpgradeLevel(upgrades.speed_up_mult);
+  const speedDownLevel = toUpgradeLevel(upgrades.speed_down_mult);
+  const magnetDurationLevel = toUpgradeLevel(upgrades.magnet_duration);
+  const spinCooldownLevel = toUpgradeLevel(upgrades.spin_cooldown);
+  const legacyShieldLevel = toUpgradeLevel(upgrades.shield);
+  const shieldCapacityLevel = toUpgradeLevel(upgrades.shield_capacity);
+  const radarObstaclesLevel = toUpgradeLevel(upgrades.radar_obstacles);
+  const radarGoldLevel = toUpgradeLevel(upgrades.radar_gold);
+  const legacyRadarLevel = toUpgradeLevel(upgrades.radar);
+  const alertLevel = toUpgradeLevel(upgrades.alert);
+
+  const hasSeparateShieldCapacity = Number.isFinite(shieldCapacityLevel);
   const normalizedShieldLevel = legacyShieldLevel > 0 ? 1 : 0;
   const normalizedShieldCapacityLevel = hasSeparateShieldCapacity
-    ? upgrades.shield_capacity
+    ? shieldCapacityLevel
     : Math.max(0, legacyShieldLevel - 1);
+  const normalizedRadarGoldLevel = radarGoldLevel > 0 ? radarGoldLevel : legacyRadarLevel;
 
   return {
-    x2_duration_bonus: upgrades.x2_duration > 0
-      ? UPGRADES_CONFIG.x2_duration.effects[upgrades.x2_duration - 1]
+    x2_duration_bonus: x2DurationLevel > 0
+      ? UPGRADES_CONFIG.x2_duration.effects[x2DurationLevel - 1]
       : 0,
 
-    score_plus_300_multiplier: upgrades.score_plus_300_mult > 0
-      ? UPGRADES_CONFIG.score_plus_300_mult.effects[upgrades.score_plus_300_mult - 1]
+    score_plus_300_multiplier: scorePlus300Level > 0
+      ? UPGRADES_CONFIG.score_plus_300_mult.effects[scorePlus300Level - 1]
       : 1.0,
 
-    score_plus_500_multiplier: upgrades.score_plus_500_mult > 0
-      ? UPGRADES_CONFIG.score_plus_500_mult.effects[upgrades.score_plus_500_mult - 1]
+    score_plus_500_multiplier: scorePlus500Level > 0
+      ? UPGRADES_CONFIG.score_plus_500_mult.effects[scorePlus500Level - 1]
       : 1.0,
 
-    score_minus_300_multiplier: upgrades.score_minus_300_mult > 0
-      ? UPGRADES_CONFIG.score_minus_300_mult.effects[upgrades.score_minus_300_mult - 1]
+    score_minus_300_multiplier: scoreMinus300Level > 0
+      ? UPGRADES_CONFIG.score_minus_300_mult.effects[scoreMinus300Level - 1]
       : 1.0,
 
-    score_minus_500_multiplier: upgrades.score_minus_500_mult > 0
-      ? UPGRADES_CONFIG.score_minus_500_mult.effects[upgrades.score_minus_500_mult - 1]
+    score_minus_500_multiplier: scoreMinus500Level > 0
+      ? UPGRADES_CONFIG.score_minus_500_mult.effects[scoreMinus500Level - 1]
       : 1.0,
 
-    invert_score_multiplier: upgrades.invert_score > 0
-      ? UPGRADES_CONFIG.invert_score.effects[upgrades.invert_score - 1]
+    invert_score_multiplier: invertScoreLevel > 0
+      ? UPGRADES_CONFIG.invert_score.effects[invertScoreLevel - 1]
       : 1.0,
 
-    speed_up_multiplier: upgrades.speed_up_mult > 0
-      ? UPGRADES_CONFIG.speed_up_mult.effects[upgrades.speed_up_mult - 1]
+    speed_up_multiplier: speedUpLevel > 0
+      ? UPGRADES_CONFIG.speed_up_mult.effects[speedUpLevel - 1]
       : 1.0,
 
-    speed_down_multiplier: upgrades.speed_down_mult > 0
-      ? UPGRADES_CONFIG.speed_down_mult.effects[upgrades.speed_down_mult - 1]
+    speed_down_multiplier: speedDownLevel > 0
+      ? UPGRADES_CONFIG.speed_down_mult.effects[speedDownLevel - 1]
       : 1.0,
 
-    magnet_duration_bonus: upgrades.magnet_duration > 0
-      ? UPGRADES_CONFIG.magnet_duration.effects[upgrades.magnet_duration - 1]
+    magnet_duration_bonus: magnetDurationLevel > 0
+      ? UPGRADES_CONFIG.magnet_duration.effects[magnetDurationLevel - 1]
       : 0,
 
-    spin_cooldown_reduction: upgrades.spin_cooldown > 0
-      ? UPGRADES_CONFIG.spin_cooldown.effects[upgrades.spin_cooldown - 1]
+    spin_cooldown_reduction: spinCooldownLevel > 0
+      ? UPGRADES_CONFIG.spin_cooldown.effects[spinCooldownLevel - 1]
       : 0,
 
     shield_level: normalizedShieldLevel,
@@ -209,16 +250,16 @@ function calculateEffects(upgrades) {
       ? UPGRADES_CONFIG.shield_capacity.effects[normalizedShieldCapacityLevel - 1]
       : 1,
     start_with_shield: normalizedShieldLevel > 0,
-    start_with_radar_obstacles: upgrades.radar_obstacles > 0,
-    start_with_radar_gold: (upgrades.radar_gold || upgrades.radar || 0) > 0,
+    start_with_radar_obstacles: radarObstaclesLevel > 0,
+    start_with_radar_gold: normalizedRadarGoldLevel > 0,
     // Backward compatibility for clients that still read `start_with_radar`.
-    start_with_radar: (upgrades.radar_gold || upgrades.radar || 0) > 0,
-    alert_level: upgrades.alert || 0,
-    spin_alert_mode: upgrades.alert > 0
-      ? UPGRADES_CONFIG.alert.effects[upgrades.alert - 1]
+    start_with_radar: normalizedRadarGoldLevel > 0,
+    alert_level: alertLevel,
+    spin_alert_mode: alertLevel > 0
+      ? UPGRADES_CONFIG.alert.effects[alertLevel - 1]
       : null,
-    start_with_alert: upgrades.alert > 0,
-    perfect_spin_enabled: upgrades.alert >= 2
+    start_with_alert: alertLevel > 0,
+    perfect_spin_enabled: alertLevel >= 2
   };
 }
 
