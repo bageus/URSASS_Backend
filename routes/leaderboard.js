@@ -5,12 +5,14 @@ const mongoose = require('mongoose');
 const Player = require('../models/Player');
 const GameResult = require('../models/GameResult');
 const AccountLink = require('../models/AccountLink');
+const PlayerRun = require('../models/PlayerRun');
 const { verifySignature, createMessageToVerify } = require('../utils/verifySignature');
 const { saveResultLimiter, readLimiter } = require('../middleware/rateLimiter');
 const logger = require('../utils/logger');
 const { markSuspicious } = require('../middleware/requestMetrics');
 const { logSecurityEvent, normalizeWallet, validateTimestampWindow } = require('../utils/security');
 const { hasAiModeAccess, validateAiSettings } = require('../utils/aiModeAccess');
+const { computePlayerInsights, DEFAULTS: leaderboardInsightsConfig } = require('../services/leaderboardInsightsService');
 
 /**
  * Build display name for a player based on their AccountLink data.
@@ -94,9 +96,11 @@ router.get('/top', readLimiter, async (req, res) => {
     }
 
     let playerPosition = null;
+    let playerRecord = null;
     if (wallet) {
       const playerData = await Player.findOne({ wallet });
       if (playerData) {
+        playerRecord = playerData;
         const playerLink = await AccountLink.findOne({ primaryId: wallet });
 
         if (playerData.bestScore > 0) {
@@ -119,6 +123,15 @@ router.get('/top', readLimiter, async (req, res) => {
       }
     }
 
+    const includeInsights =
+      leaderboardInsightsConfig.insightsEnabled &&
+      wallet &&
+      (req.query.v === '2' || req.query.includeInsights === 'true');
+
+    const insights = includeInsights && playerRecord
+      ? await computePlayerInsights({ wallet, player: playerRecord })
+      : null;
+
     res.json({
       leaderboard: topPlayers.map((player, index) => (
         buildLeaderboardEntry(
@@ -127,7 +140,8 @@ router.get('/top', readLimiter, async (req, res) => {
           index + 1
         )
       )),
-      playerPosition
+      playerPosition,
+      ...(insights ? { playerInsights: insights } : {})
     });
 
   } catch (error) {
@@ -313,6 +327,8 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       }
 
       let player = await playerQuery;
+      const previousBestScore = player?.bestScore || 0;
+      const previousGamesPlayed = player?.gamesPlayed || 0;
 
       if (!player) {
         player = new Player({
@@ -404,6 +420,26 @@ router.post('/save', saveResultLimiter, async (req, res) => {
         await player.save();
       }
 
+      const runPayload = {
+        playerId: player._id,
+        wallet: walletLower,
+        runId: deduplicationToken,
+        score: scoreValue,
+        distance: distanceValue,
+        goldCoins: coins.gold,
+        silverCoins: coins.silver,
+        isFirstRun: previousGamesPlayed === 0,
+        isPersonalBest: scoreValue > previousBestScore,
+        verified: true,
+        isValid: !player.suspiciousScorePattern
+      };
+
+      if (session) {
+        await PlayerRun.create([runPayload], { session });
+      } else {
+        await PlayerRun.create([runPayload]);
+      }
+
       responsePayload = {
         bestScore: player.bestScore,
         averageScore: player.averageScore || 0,
@@ -472,6 +508,34 @@ router.post('/save', saveResultLimiter, async (req, res) => {
 
     logger.error({ err: error }, 'POST /save error');
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.get('/insights', readLimiter, async (req, res) => {
+  try {
+    if (!leaderboardInsightsConfig.insightsEnabled) {
+      return res.status(404).json({ error: 'Insights are disabled by feature flag.' });
+    }
+
+    const walletQuery = typeof req.query.wallet === 'string' ? req.query.wallet.trim() : '';
+    const wallet = walletQuery ? walletQuery.toLowerCase() : null;
+
+    if (!wallet || !isValidWalletAddress(wallet)) {
+      return res.status(400).json({
+        error: 'Invalid wallet format. Expected EVM wallet like 0x... (40 hex chars).'
+      });
+    }
+
+    const player = await Player.findOne({ wallet });
+    if (!player) {
+      return res.json({ wallet, playerInsights: null });
+    }
+
+    const playerInsights = await computePlayerInsights({ wallet, player });
+    return res.json({ wallet, playerInsights });
+  } catch (error) {
+    logger.error({ err: error.message, requestId: req.requestId }, 'GET /insights error');
+    return res.status(500).json({ error: 'Server error', requestId: req.requestId });
   }
 });
 

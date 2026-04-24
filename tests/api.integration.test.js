@@ -5,6 +5,7 @@ const mongoose = require('mongoose');
 
 const Player = require('../models/Player');
 const GameResult = require('../models/GameResult');
+const PlayerRun = require('../models/PlayerRun');
 const PlayerUpgrades = require('../models/PlayerUpgrades');
 const SecurityEvent = require('../models/SecurityEvent');
 const LinkCode = require('../models/LinkCode');
@@ -60,6 +61,9 @@ test.beforeEach(() => {
   SecurityEvent.create = async () => ({ _id: 'sec' });
   SecurityEvent.countDocuments = async () => 0;
   GameResult.create = async () => ([{ _id: 'gr' }]);
+  PlayerRun.create = async () => ([{ _id: 'run' }]);
+  PlayerRun.findOne = () => ({ sort: async () => null });
+  PlayerRun.countDocuments = async () => 0;
   Player.prototype.save = async function save() { return this; };
   PlayerUpgrades.prototype.save = async function save() { return this; };
   LinkCode.deleteOne = async () => ({ deletedCount: 1 });
