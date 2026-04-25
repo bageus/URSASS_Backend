@@ -13,6 +13,7 @@ const { markSuspicious } = require('../middleware/requestMetrics');
 const { logSecurityEvent, normalizeWallet, validateTimestampWindow } = require('../utils/security');
 const { hasAiModeAccess, validateAiSettings } = require('../utils/aiModeAccess');
 const { computePlayerInsights, DEFAULTS: leaderboardInsightsConfig } = require('../services/leaderboardInsightsService');
+const { buildGameOverPayload } = require('../services/gameOverAgitationService');
 
 /**
  * Build display name for a player based on their AccountLink data.
@@ -288,6 +289,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     const scoreValue = Math.floor(score);
     const distanceValue = Math.floor(distance);
     let responsePayload;
+    let runContext;
 
     const persistResultAndPlayer = async (session = null) => {
       const gameResultQuery = GameResult.findOne({ signature: deduplicationToken });
@@ -440,6 +442,11 @@ router.post('/save', saveResultLimiter, async (req, res) => {
         await PlayerRun.create([runPayload]);
       }
 
+      runContext = {
+        run: runPayload,
+        previousBestScore
+      };
+
       responsePayload = {
         bestScore: player.bestScore,
         averageScore: player.averageScore || 0,
@@ -486,6 +493,21 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       totalSilverCoins: responsePayload.totalSilverCoins
     }, 'Result saved (VERIFIED)');
 
+    const playerForInsights = {
+      bestScore: responsePayload.bestScore
+    };
+
+    const gameOverInsights = leaderboardInsightsConfig.insightsEnabled
+      ? await computePlayerInsights({ wallet: walletLower, player: playerForInsights, latestRun: runContext?.run })
+      : null;
+
+    const gameOverPrompt = await buildGameOverPayload({
+      insights: gameOverInsights,
+      run: runContext?.run || { score: scoreValue, isFirstRun: false, isPersonalBest: false },
+      previousBestScore: runContext?.previousBestScore || 0,
+      isAuthenticated: true
+    });
+
     res.json({
       success: true,
       message: 'Result saved successfully with valid signature',
@@ -496,7 +518,9 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       bestDistance: responsePayload.bestDistance,
       totalGoldCoins: responsePayload.totalGoldCoins,
       totalSilverCoins: responsePayload.totalSilverCoins,
-      gamesPlayed: responsePayload.gamesPlayed
+      gamesPlayed: responsePayload.gamesPlayed,
+      gameOverPrompt,
+      ...(gameOverInsights ? { playerInsights: gameOverInsights } : {})
     });
 
   } catch (error) {
@@ -508,6 +532,52 @@ router.post('/save', saveResultLimiter, async (req, res) => {
 
     logger.error({ err: error }, 'POST /save error');
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+
+router.post('/game-over-preview', readLimiter, async (req, res) => {
+  try {
+    const score = Number(req.body?.score || 0);
+    const distance = Number(req.body?.distance || 0);
+    const isAuthenticated = Boolean(req.body?.isAuthenticated);
+
+    if (!Number.isFinite(score) || score < 0) {
+      return res.status(400).json({ error: 'Invalid score value' });
+    }
+
+    if (!Number.isFinite(distance) || distance < 0) {
+      return res.status(400).json({ error: 'Invalid distance value' });
+    }
+
+    let rank = null;
+    if (score > 0) {
+      const better = await Player.countDocuments({ bestScore: { $gt: score } });
+      rank = better + 1;
+    }
+
+    const pseudoInsights = {
+      rank,
+      percentileFirstRunScore: null,
+      recommendedTarget: null
+    };
+
+    const gameOverPrompt = await buildGameOverPayload({
+      insights: pseudoInsights,
+      run: {
+        score: Math.floor(score),
+        distance: Math.floor(distance),
+        isFirstRun: false,
+        isPersonalBest: false
+      },
+      previousBestScore: 0,
+      isAuthenticated
+    });
+
+    return res.json({ gameOverPrompt });
+  } catch (error) {
+    logger.error({ err: error.message, requestId: req.requestId }, 'POST /game-over-preview error');
+    return res.status(500).json({ error: 'Server error', requestId: req.requestId });
   }
 });
 
