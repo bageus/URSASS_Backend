@@ -64,6 +64,27 @@ test.beforeEach(() => {
   PlayerRun.create = async () => ([{ _id: 'run' }]);
   PlayerRun.findOne = () => ({ sort: async () => null });
   PlayerRun.countDocuments = async () => 0;
+  Player.countDocuments = async () => 0;
+  Player.find = () => ({
+    sort() {
+      return {
+        skip() {
+          return {
+            limit() {
+              return {
+                select: async () => []
+              };
+            }
+          };
+        },
+        limit() {
+          return {
+            select: async () => []
+          };
+        }
+      };
+    }
+  });
   Player.prototype.save = async function save() { return this; };
   PlayerUpgrades.prototype.save = async function save() { return this; };
   LinkCode.deleteOne = async () => ({ deletedCount: 1 });
@@ -1721,6 +1742,56 @@ test('POST /api/analytics/event accepts a single analytics event payload', async
   assert.equal(inserted.length, 1);
   assert.equal(inserted[0].eventType, 'game_start');
   assert.equal(inserted[0].payload.sessionId, 'single-route');
+
+  await server.close();
+});
+
+test('GET /api/leaderboard/share/payload/:wallet uses latest score when latest run is personal best', async () => {
+  const wallet = '0x1111111111111111111111111111111111111111';
+
+  Player.findOne = () => ({
+    select: async () => ({ wallet, bestScore: 450 })
+  });
+  PlayerRun.findOne = () => ({
+    sort() {
+      return {
+        select: async () => ({ score: 500, isPersonalBest: true, createdAt: new Date() })
+      };
+    }
+  });
+
+  const { server, baseUrl } = await startServer();
+  const res = await fetch(`${baseUrl}/api/leaderboard/share/payload/${wallet}`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.scoreForShare, 500);
+  assert.equal(body.isLatestRunPersonalBest, true);
+  assert.match(body.postText, /I scored 500 in Ursass Tube 🐻/);
+  assert.match(body.postText, /#UrsassTube/);
+
+  await server.close();
+});
+
+test('GET /api/leaderboard/share/payload/:wallet uses personal best when latest run is not a record', async () => {
+  const wallet = '0x2222222222222222222222222222222222222222';
+
+  Player.findOne = () => ({
+    select: async () => ({ wallet, bestScore: 1200 })
+  });
+  PlayerRun.findOne = () => ({
+    sort() {
+      return {
+        select: async () => ({ score: 700, isPersonalBest: false, createdAt: new Date() })
+      };
+    }
+  });
+
+  const { server, baseUrl } = await startServer();
+  const res = await fetch(`${baseUrl}/api/leaderboard/share/payload/${wallet}`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.scoreForShare, 1200);
+  assert.equal(body.isLatestRunPersonalBest, false);
 
   await server.close();
 });
