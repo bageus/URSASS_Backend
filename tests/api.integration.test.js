@@ -1817,7 +1817,7 @@ test('GET /api/leaderboard/share/page/:wallet og:image points to PNG endpoint', 
   assert.equal(res.status, 200);
   assert.match(res.headers.get('content-type'), /text\/html/);
   const html = await res.text();
-  assert.match(html, /share\/image\/0x3333333333333333333333333333333333333333\.png/);
+  assert.match(html, new RegExp(`share/image/${wallet}\\.png`));
 
   await server.close();
 });

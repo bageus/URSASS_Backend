@@ -765,7 +765,7 @@ router.get('/share/image/:wallet.png', readLimiter, async (req, res) => {
       .toBuffer();
 
     res.setHeader('Content-Type', 'image/png');
-    res.setHeader('Cache-Control', 'public, max-age=60');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
     return res.send(pngBuffer);
   } catch (error) {
     logger.error({ err: error.message, requestId: req.requestId }, 'GET /share/image/:wallet.png error');
