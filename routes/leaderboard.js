@@ -15,6 +15,59 @@ const { hasAiModeAccess, validateAiSettings } = require('../utils/aiModeAccess')
 const { computePlayerInsights, DEFAULTS: leaderboardInsightsConfig } = require('../services/leaderboardInsightsService');
 const { buildGameOverPayload } = require('../services/gameOverAgitationService');
 
+const SHARE_COPY_TEMPLATE = 'I scored {score} in Ursass Tube 🐻\nCan you beat me?';
+const SHARE_HASHTAGS = '#UrsassTube #Ursas #Ursasplanet #GameChallenge #HighScore';
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function getPublicBaseUrl(req) {
+  const configured = (process.env.PUBLIC_BASE_URL || process.env.APP_BASE_URL || '').trim();
+  if (configured) {
+    return configured.replace(/\/+$/, '');
+  }
+  return `${req.protocol}://${req.get('host')}`;
+}
+
+async function resolveShareContextByWallet(wallet) {
+  const player = await Player.findOne({ wallet }).select('wallet bestScore');
+  if (!player) {
+    return null;
+  }
+
+  const latestRun = await PlayerRun.findOne({ wallet, verified: true, isValid: true })
+    .sort({ createdAt: -1 })
+    .select('score isPersonalBest createdAt');
+
+  const personalBestScore = Math.max(0, Number(player.bestScore || 0));
+  const latestRunScore = latestRun ? Math.max(0, Number(latestRun.score || 0)) : 0;
+  const isLatestRunPersonalBest = Boolean(latestRun?.isPersonalBest && latestRunScore > 0);
+  const scoreForShare = isLatestRunPersonalBest
+    ? latestRunScore
+    : Math.max(personalBestScore, latestRunScore);
+
+  return {
+    wallet: player.wallet,
+    scoreForShare,
+    personalBestScore,
+    latestRunScore,
+    isLatestRunPersonalBest
+  };
+}
+
+function buildSharePostText(score, referralLink = '') {
+  const normalizedScore = Math.max(0, Math.floor(Number(score || 0)));
+  const main = SHARE_COPY_TEMPLATE.replace('{score}', normalizedScore);
+  const parts = [main, referralLink.trim(), SHARE_HASHTAGS].filter(Boolean);
+  return parts.join('\n');
+}
+
 /**
  * Build display name for a player based on their AccountLink data.
  * Priority:
@@ -577,6 +630,155 @@ router.post('/game-over-preview', readLimiter, async (req, res) => {
     return res.json({ gameOverPrompt });
   } catch (error) {
     logger.error({ err: error.message, requestId: req.requestId }, 'POST /game-over-preview error');
+    return res.status(500).json({ error: 'Server error', requestId: req.requestId });
+  }
+});
+
+router.get('/share/payload/:wallet', readLimiter, async (req, res) => {
+  try {
+    const wallet = String(req.params.wallet || '').trim().toLowerCase();
+    if (!isValidWalletAddress(wallet)) {
+      return res.status(400).json({
+        error: 'Invalid wallet format. Expected EVM wallet like 0x... (40 hex chars).'
+      });
+    }
+
+    const shareContext = await resolveShareContextByWallet(wallet);
+    if (!shareContext) {
+      return res.status(404).json({ error: 'Player not found' });
+    }
+
+    const baseUrl = getPublicBaseUrl(req);
+    const shareUrl = `${baseUrl}/api/leaderboard/share/page/${wallet}`;
+    const postText = buildSharePostText(shareContext.scoreForShare, '');
+
+    return res.json({
+      wallet,
+      scoreForShare: shareContext.scoreForShare,
+      latestRunScore: shareContext.latestRunScore,
+      personalBestScore: shareContext.personalBestScore,
+      isLatestRunPersonalBest: shareContext.isLatestRunPersonalBest,
+      shareUrl,
+      postText
+    });
+  } catch (error) {
+    logger.error({ err: error.message, requestId: req.requestId }, 'GET /share/payload/:wallet error');
+    return res.status(500).json({ error: 'Server error', requestId: req.requestId });
+  }
+});
+
+router.get('/share/image/:wallet.svg', readLimiter, async (req, res) => {
+  try {
+    const wallet = String(req.params.wallet || '').trim().toLowerCase();
+    if (!isValidWalletAddress(wallet)) {
+      return res.status(400).json({ error: 'Invalid wallet format.' });
+    }
+
+    const shareContext = await resolveShareContextByWallet(wallet);
+    if (!shareContext) {
+      return res.status(404).json({ error: 'Player not found' });
+    }
+
+    const score = shareContext.scoreForShare;
+    const externalBackground = (process.env.SHARE_CARD_BACKGROUND_URL || '').trim();
+    const imageLayer = externalBackground
+      ? `<image href="${escapeHtml(externalBackground)}" x="0" y="0" width="1200" height="630" preserveAspectRatio="xMidYMid slice" />`
+      : '';
+
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#080426"/>
+      <stop offset="100%" stop-color="#121f68"/>
+    </linearGradient>
+    <linearGradient id="num" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#a55bff"/>
+      <stop offset="100%" stop-color="#44d2ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)" />
+  ${imageLayer}
+  <rect x="36" y="36" width="1128" height="558" rx="28" fill="rgba(3, 4, 20, 0.52)" stroke="rgba(115, 120, 255, 0.55)" />
+  <text x="88" y="180" fill="#ffffff" font-size="76" font-weight="800" font-family="Arial, Helvetica, sans-serif">I SCORED</text>
+  <text x="88" y="312" fill="url(#num)" font-size="150" font-weight="900" font-family="Arial Black, Arial, Helvetica, sans-serif">${score}</text>
+  <text x="88" y="412" fill="#ffffff" font-size="68" font-weight="700" font-family="Arial, Helvetica, sans-serif">CAN YOU</text>
+  <text x="88" y="510" fill="url(#num)" font-size="104" font-weight="900" font-family="Arial Black, Arial, Helvetica, sans-serif">BEAT ME?</text>
+  <text x="88" y="568" fill="#8fe6ff" font-size="30" font-family="Arial, Helvetica, sans-serif">ursasstube.fun</text>
+</svg>`;
+
+    res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    return res.send(svg);
+  } catch (error) {
+    logger.error({ err: error.message, requestId: req.requestId }, 'GET /share/image/:wallet.svg error');
+    return res.status(500).json({ error: 'Server error', requestId: req.requestId });
+  }
+});
+
+router.get('/share/page/:wallet', readLimiter, async (req, res) => {
+  try {
+    const wallet = String(req.params.wallet || '').trim().toLowerCase();
+    if (!isValidWalletAddress(wallet)) {
+      return res.status(400).send('Invalid wallet');
+    }
+
+    const shareContext = await resolveShareContextByWallet(wallet);
+    if (!shareContext) {
+      return res.status(404).send('Player not found');
+    }
+
+    const baseUrl = getPublicBaseUrl(req);
+    const score = shareContext.scoreForShare;
+    const shareImageUrl = `${baseUrl}/api/leaderboard/share/image/${wallet}.svg`;
+    const referralLink = '';
+    const postText = buildSharePostText(score, referralLink);
+    const title = `I scored ${score} in Ursass Tube 🐻`;
+    const description = `Can you beat me? ${SHARE_HASHTAGS}`;
+
+    const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(title)}</title>
+  <meta name="description" content="${escapeHtml(description)}" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="${escapeHtml(title)}" />
+  <meta property="og:description" content="${escapeHtml(description)}" />
+  <meta property="og:image" content="${escapeHtml(shareImageUrl)}" />
+  <meta property="og:url" content="${escapeHtml(`${baseUrl}/api/leaderboard/share/page/${wallet}`)}" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="${escapeHtml(title)}" />
+  <meta name="twitter:description" content="${escapeHtml(description)}" />
+  <meta name="twitter:image" content="${escapeHtml(shareImageUrl)}" />
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; font-family: Arial, sans-serif; background: #090b2d; color: #fff; }
+    main { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+    .card { max-width: 680px; width: 100%; background: #111438; border-radius: 16px; padding: 20px; box-shadow: 0 10px 32px rgba(0,0,0,.45);}
+    img { width: 100%; border-radius: 12px; border: 1px solid rgba(255,255,255,.12);}
+    pre { white-space: pre-wrap; background: #090b2d; padding: 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.1);}
+    a.btn { display: inline-block; text-decoration: none; color: #fff; background: linear-gradient(90deg,#a55bff,#44d2ff); padding: 10px 14px; border-radius: 9px; font-weight: 700;}
+  </style>
+</head>
+<body>
+  <main>
+    <article class="card">
+      <h1>${escapeHtml(title)}</h1>
+      <img src="${escapeHtml(shareImageUrl)}" alt="Ursass Tube share card" />
+      <p>Share text:</p>
+      <pre>${escapeHtml(postText)}</pre>
+      <a class="btn" href="https://ursasstube.fun" rel="noopener noreferrer">Play now</a>
+    </article>
+  </main>
+</body>
+</html>`;
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    return res.send(html);
+  } catch (error) {
+    logger.error({ err: error.message, requestId: req.requestId }, 'GET /share/page/:wallet error');
     return res.status(500).json({ error: 'Server error', requestId: req.requestId });
   }
 });
