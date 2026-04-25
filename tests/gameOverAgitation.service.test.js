@@ -4,9 +4,11 @@ const assert = require('node:assert/strict');
 const Player = require('../models/Player');
 const {
   buildAgitationPrompt,
+  buildGameOverPayload,
   buildGameOverLeaderboardSlice,
   resolvePersonalBestHook
 } = require('../services/gameOverAgitationService');
+const mongoose = require('mongoose');
 
 test('buildAgitationPrompt returns NEW LEADER for #1 rank', () => {
   const prompt = buildAgitationPrompt({
@@ -104,4 +106,52 @@ test('buildGameOverLeaderboardSlice returns player context rows with dim flags',
   assert.equal(slice.rows[1].isCurrentPlayerRow, true);
   assert.equal(slice.rows[0].isDimmed, true);
   assert.equal(slice.rows[2].isDimmed, true);
+});
+
+
+test('buildGameOverPayload computes #1 delta from leaderboard score, not weaker current run', async () => {
+  const originalFind = Player.find;
+  const originalReadyState = mongoose.connection.readyState;
+
+  Player.find = () => {
+    const query = {
+      _skip: 0,
+      _limit: 0,
+      sort() { return this; },
+      skip(value) { this._skip = value; return this; },
+      limit(value) { this._limit = value; return this; },
+      select() {
+        if (this._limit === 1) {
+          const rank = this._skip + 1;
+          const map = {
+            1: { wallet: '0x1', bestScore: 1000 },
+            3: { wallet: '0x3', bestScore: 900 }
+          };
+          return Promise.resolve([map[rank]].filter(Boolean));
+        }
+
+        return Promise.resolve([
+          { wallet: '0x1', bestScore: 1000 },
+          { wallet: '0x2', bestScore: 950 },
+          { wallet: '0x3', bestScore: 900 }
+        ]);
+      }
+    };
+
+    return query;
+  };
+
+  mongoose.connection.readyState = 1;
+
+  const payload = await buildGameOverPayload({
+    insights: { rank: 2, recommendedTarget: null },
+    run: { score: 600, isFirstRun: false, isPersonalBest: false },
+    previousBestScore: 950,
+    isAuthenticated: true
+  });
+
+  assert.equal(payload.boost, 'Next +51 to #1');
+
+  Player.find = originalFind;
+  mongoose.connection.readyState = originalReadyState;
 });
