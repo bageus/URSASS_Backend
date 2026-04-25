@@ -1768,6 +1768,8 @@ test('GET /api/leaderboard/share/payload/:wallet uses latest score when latest r
   assert.equal(body.isLatestRunPersonalBest, true);
   assert.match(body.postText, /I scored 500 in Ursass Tube 🐻/);
   assert.match(body.postText, /#UrsassTube/);
+  assert.ok(body.shareImageUrl, 'shareImageUrl should be present');
+  assert.match(body.shareImageUrl, /share\/image\/.*\.png$/);
 
   await server.close();
 });
@@ -1792,6 +1794,74 @@ test('GET /api/leaderboard/share/payload/:wallet uses personal best when latest 
   const body = await res.json();
   assert.equal(body.scoreForShare, 1200);
   assert.equal(body.isLatestRunPersonalBest, false);
+
+  await server.close();
+});
+
+test('GET /api/leaderboard/share/page/:wallet og:image points to PNG endpoint', async () => {
+  const wallet = '0x3333333333333333333333333333333333333333';
+
+  Player.findOne = () => ({
+    select: async () => ({ wallet, bestScore: 800 })
+  });
+  PlayerRun.findOne = () => ({
+    sort() {
+      return {
+        select: async () => null
+      };
+    }
+  });
+
+  const { server, baseUrl } = await startServer();
+  const res = await fetch(`${baseUrl}/api/leaderboard/share/page/${wallet}`);
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type'), /text\/html/);
+  const html = await res.text();
+  assert.match(html, /share\/image\/0x3333333333333333333333333333333333333333\.png/);
+
+  await server.close();
+});
+
+test('GET /api/leaderboard/share/image/:wallet.png returns 200 and image/png', async () => {
+  const wallet = '0x4444444444444444444444444444444444444444';
+
+  Player.findOne = () => ({
+    select: async () => ({ wallet, bestScore: 9999 })
+  });
+  PlayerRun.findOne = () => ({
+    sort() {
+      return {
+        select: async () => ({ score: 9999, isPersonalBest: true, createdAt: new Date() })
+      };
+    }
+  });
+
+  const { server, baseUrl } = await startServer();
+  const res = await fetch(`${baseUrl}/api/leaderboard/share/image/${wallet}.png`);
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type'), /image\/png/);
+
+  await server.close();
+});
+
+test('GET /api/leaderboard/share/image/:wallet.png returns 404 for unknown wallet', async () => {
+  const wallet = '0x5555555555555555555555555555555555555555';
+
+  Player.findOne = () => ({
+    select: async () => null
+  });
+
+  const { server, baseUrl } = await startServer();
+  const res = await fetch(`${baseUrl}/api/leaderboard/share/image/${wallet}.png`);
+  assert.equal(res.status, 404);
+
+  await server.close();
+});
+
+test('GET /api/leaderboard/share/image/:wallet.png returns 400 for invalid wallet', async () => {
+  const { server, baseUrl } = await startServer();
+  const res = await fetch(`${baseUrl}/api/leaderboard/share/image/not-a-wallet.png`);
+  assert.equal(res.status, 400);
 
   await server.close();
 });
