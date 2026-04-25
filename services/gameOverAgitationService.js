@@ -1,4 +1,5 @@
 const Player = require('../models/Player');
+const mongoose = require('mongoose');
 
 function formatRankLabel(rank) {
   if (!rank || rank < 1) return 'unranked';
@@ -36,13 +37,36 @@ function buildPracticeModePrompt({ percentileFirstRunScore, rank }) {
     ? Math.round(percentileFirstRunScore)
     : null;
 
+  const rankLabel = formatRankLabel(rank);
+  const wowHook = rank && rank > 0
+    ? `🔥WOW! You would be ${rankLabel}`
+    : '🔥WOW! Set a score to claim your rank';
+
   return {
     title: 'GOOD RUN!',
-    hook: 'You’re playing in practice mode',
+    hook: wowHook,
     boost: betterThan !== null && betterThan >= 60
       ? `Better than ${betterThan}% of new players`
-      : `Your rank ${formatRankLabel(rank)} • Save your score & climb the leaderboard`
+      : 'Practice mode'
   };
+}
+
+function resolveBucketMilestone(rank) {
+  if (!rank || rank < 1) return null;
+  if (rank <= 10) return 'TOP 10';
+  if (rank <= 100) return 'TOP 100';
+  if (rank <= 1000) return 'TOP 1000';
+  if (rank <= 10000) return 'TOP 10000';
+  return null;
+}
+
+function pickNextBucket(rank) {
+  if (!rank || rank < 1) return null;
+  if (rank > 10000) return 10000;
+  if (rank > 1000) return 1000;
+  if (rank > 100) return 100;
+  if (rank > 10) return 10;
+  return null;
 }
 
 function buildAgitationPrompt({
@@ -53,6 +77,8 @@ function buildAgitationPrompt({
   top1Delta,
   top3Delta,
   nextRankDelta,
+  nextBucket,
+  nextBucketDelta,
   percentileFirstRunScore,
   isAuthenticated
 }) {
@@ -112,15 +138,42 @@ function buildAgitationPrompt({
   }
 
   if (run.isPersonalBest) {
+    const farBucketThreshold = 1500;
+    const canPushBucket = typeof nextBucketDelta === 'number' && nextBucketDelta <= farBucketThreshold;
+    const nextBucketLabel = nextBucket ? `TOP ${nextBucket}` : null;
+
     return {
       title: 'PERSONAL BEST!',
-      hook: resolvePersonalBestHook(rank),
-      boost: typeof nextRankDelta === 'number'
-        ? `+${nextRankDelta} points to break in`
-        : (recommendedTarget ? `+${recommendedTarget.delta} points to ${recommendedTarget.label}` : null)
+      hook: resolveBucketMilestone(rank)
+        ? `You reached ${resolveBucketMilestone(rank)}`
+        : resolvePersonalBestHook(rank),
+      boost: canPushBucket && nextBucketLabel
+        ? `+${nextBucketDelta} points to ${nextBucketLabel}`
+        : typeof nextRankDelta === 'number'
+          ? `+${nextRankDelta} points to pass the next player`
+          : (recommendedTarget ? `+${recommendedTarget.delta} points to ${recommendedTarget.label}` : null)
     };
   }
 
+  if (!run.isFirstRun && previousBestScore > 0 && (run.score || 0) < previousBestScore) {
+    return {
+      title: 'GOON RUN!',
+      hook: 'You can go further',
+      boost: `Beat your best score +${Math.max(1, previousBestScore - (run.score || 0) + 1)}`
+    };
+  }
+
+  if (!run.isFirstRun && previousBestScore > 0 && (run.score || 0) >= previousBestScore) {
+    return {
+      title: 'GOOD RUN!',
+      hook: 'You can go further',
+      boost: typeof nextBucketDelta === 'number' && nextBucket
+        ? `+${nextBucketDelta} points to TOP ${nextBucket}`
+        : typeof nextRankDelta === 'number'
+          ? `+${nextRankDelta} points to pass the next player`
+        : (recommendedTarget ? `+${recommendedTarget.delta} points to ${recommendedTarget.label}` : null)
+    };
+  }
   const quality = evaluateRunQuality({ score: run.score || 0, playerBestBeforeRun: previousBestScore || 0 });
   let hook = 'Keep climbing';
   let boost = typeof nextRankDelta === 'number'
@@ -145,12 +198,18 @@ function buildAgitationPrompt({
 
 async function getScoreAtRank(rank) {
   if (!rank || rank < 1) return null;
+  if (mongoose.connection.readyState !== 1) return null;
 
-  const rows = await Player.find({ bestScore: { $gt: 0 } })
-    .sort({ bestScore: -1 })
-    .skip(rank - 1)
-    .limit(1)
-    .select('wallet bestScore');
+  let rows;
+  try {
+    rows = await Player.find({ bestScore: { $gt: 0 } })
+      .sort({ bestScore: -1 })
+      .skip(rank - 1)
+      .limit(1)
+      .select('wallet bestScore');
+  } catch (error) {
+    return null;
+  }
 
   const row = rows?.[0] || null;
   return row ? { wallet: row.wallet, bestScore: row.bestScore } : null;
@@ -189,10 +248,15 @@ async function buildGameOverPayload({ insights, run, previousBestScore, isAuthen
   const top1 = await getScoreAtRank(1);
   const top3 = await getScoreAtRank(3);
   const next = rank && rank > 1 ? await getScoreAtRank(rank - 1) : null;
+  const nextBucket = pickNextBucket(rank);
+  const bucketTarget = nextBucket ? await getScoreAtRank(nextBucket) : null;
 
   const top1Delta = top1?.bestScore ? Math.max(1, top1.bestScore - (run.score || 0) + 1) : null;
   const top3Delta = top3?.bestScore ? Math.max(1, top3.bestScore - (run.score || 0) + 1) : null;
   const nextRankDelta = next?.bestScore ? Math.max(1, next.bestScore - (run.score || 0) + 1) : null;
+  const nextBucketDelta = bucketTarget?.bestScore
+    ? Math.max(1, bucketTarget.bestScore - (run.score || 0) + 1)
+    : null;
 
   const prompt = buildAgitationPrompt({
     rank,
@@ -202,6 +266,8 @@ async function buildGameOverPayload({ insights, run, previousBestScore, isAuthen
     top1Delta,
     top3Delta,
     nextRankDelta,
+    nextBucket,
+    nextBucketDelta,
     percentileFirstRunScore: insights?.percentileFirstRunScore ?? null,
     isAuthenticated
   });
