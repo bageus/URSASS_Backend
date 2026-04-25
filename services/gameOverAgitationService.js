@@ -251,11 +251,12 @@ async function buildGameOverPayload({ insights, run, previousBestScore, isAuthen
   const nextBucket = pickNextBucket(rank);
   const bucketTarget = nextBucket ? await getScoreAtRank(nextBucket) : null;
 
-  const top1Delta = top1?.bestScore ? Math.max(1, top1.bestScore - (run.score || 0) + 1) : null;
-  const top3Delta = top3?.bestScore ? Math.max(1, top3.bestScore - (run.score || 0) + 1) : null;
-  const nextRankDelta = next?.bestScore ? Math.max(1, next.bestScore - (run.score || 0) + 1) : null;
+  const playerLeaderboardScore = Math.max(run.score || 0, previousBestScore || 0);
+  const top1Delta = top1?.bestScore ? Math.max(1, top1.bestScore - playerLeaderboardScore + 1) : null;
+  const top3Delta = top3?.bestScore ? Math.max(1, top3.bestScore - playerLeaderboardScore + 1) : null;
+  const nextRankDelta = next?.bestScore ? Math.max(1, next.bestScore - playerLeaderboardScore + 1) : null;
   const nextBucketDelta = bucketTarget?.bestScore
-    ? Math.max(1, bucketTarget.bestScore - (run.score || 0) + 1)
+    ? Math.max(1, bucketTarget.bestScore - playerLeaderboardScore + 1)
     : null;
 
   const prompt = buildAgitationPrompt({
