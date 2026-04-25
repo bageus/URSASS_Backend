@@ -56,8 +56,8 @@ test('buildAgitationPrompt for personal best in top 1000', () => {
   });
 
   assert.equal(prompt.title, 'PERSONAL BEST!');
-  assert.equal(prompt.hook, 'You’re in TOP 1000!');
-  assert.equal(prompt.boost, '+88 points to break in');
+  assert.equal(prompt.hook, 'You reached TOP 1000');
+  assert.equal(prompt.boost, '+88 points to pass the next player');
 });
 
 test('buildAgitationPrompt for unauthenticated run', () => {
@@ -74,7 +74,7 @@ test('buildAgitationPrompt for unauthenticated run', () => {
   });
 
   assert.equal(prompt.title, 'GOOD RUN!');
-  assert.equal(prompt.hook, 'You’re playing in practice mode');
+  assert.equal(prompt.hook, '🔥WOW! You would be #12345');
   assert.match(prompt.boost, /Better than 68% of new players/);
 });
 
