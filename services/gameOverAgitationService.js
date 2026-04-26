@@ -159,7 +159,9 @@ function buildAgitationPrompt({
     return {
       title: 'GOON RUN!',
       hook: 'You can go further',
-      boost: `Beat your best score +${Math.max(1, previousBestScore - (run.score || 0) + 1)}`
+      boost: typeof nextRankDelta === 'number'
+        ? `+${nextRankDelta} points to pass the next player`
+        : `Beat your best score +${Math.max(1, previousBestScore - (run.score || 0) + 1)}`
     };
   }
 
