@@ -116,7 +116,67 @@ Versioned aliases are also available under `/api/v1/*` (backward-compatible with
 
 
 
-## Unauthenticated Browser Mode
+## Referral & Share Flow
+
+### Overview
+
+Players receive referral codes (8 chars, unambiguous alphabet) and can share their results daily for **+20 gold**. When a referred player completes their first valid run, both the referrer (**+50 gold**) and the new player (**+100 gold**) are rewarded.
+
+### New Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `FRONTEND_BASE_URL` | — | Frontend origin for referral URLs (e.g. `https://ursasstube.fun`) |
+| `SHARE_REWARD_DELAY_MS` | `30000` | Milliseconds between share start and confirm to receive gold |
+| `SHARE_DAILY_REWARD_GOLD` | `20` | Gold awarded for daily share |
+| `REFERRAL_REWARD_REFERRER_GOLD` | `50` | Gold awarded to referrer on new player's first run |
+| `REFERRAL_REWARD_REFEREE_GOLD` | `100` | Gold awarded to new player on their first run |
+
+### New Endpoints
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/account/me/profile` | Required | Player profile: rank, gold, referral URL, streak, canShareToday |
+| `POST` | `/api/referral/track` | Required | Record that current player was referred (body: `{ ref }`) |
+| `POST` | `/api/share/start` | Required | Start a share session; returns `shareId`, `postText`, `imageUrl`, `intentUrl` |
+| `POST` | `/api/share/confirm` | Required | Confirm share after ≥30s; awards +20 gold (body: `{ shareId }`) |
+
+All endpoints are also available under `/api/v1/*`.
+
+#### `GET /api/account/me/profile` response
+
+```json
+{
+  "primaryId": "tg_123 | 0x...",
+  "rank": 42,
+  "totalRankedPlayers": 12500,
+  "bestScore": 8350,
+  "gold": 1240,
+  "referralCode": "K7M3X9PA",
+  "referralUrl": "https://ursasstube.fun/?ref=K7M3X9PA",
+  "telegram": { "connected": true, "username": "vasya", "id": "123" },
+  "wallet":   { "connected": true, "address": "0x..." },
+  "x":        { "connected": false, "username": null },
+  "shareStreak": 3,
+  "canShareToday": true,
+  "goldRewardToday": 20,
+  "lastShareDay": "2026-04-25"
+}
+```
+
+Auth headers accepted: `X-Primary-Id`, `X-Wallet`, `X-Telegram-Init-Data`.
+
+### Migration
+
+Run `scripts/migrations/2026-04-26-referral-and-share.js` to create the `shareevents` collection, add indexes, and backfill `referralCode` for existing players:
+
+```bash
+MONGO_URI='mongodb://...' node scripts/migrations/2026-04-26-referral-and-share.js
+```
+
+The script is idempotent — safe to run multiple times.
+
+---
 
 - Use `GET /api/game/config?mode=unauth` to fetch the runtime preset for browser users who choose not to authenticate.
 - This mode is **non-persistent**: no leaderboard entry, no progress save, no store purchases, and no ride limits are enforced by the config response.
