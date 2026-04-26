@@ -78,6 +78,10 @@ function buildFallbackType({ isFirstRun, comparisonMode, comparisonPercentile },
 }
 
 function labelForTarget(target) {
+  if (target.targetType === 'score') {
+    return 'your best';
+  }
+
   if (target.targetType === 'bucket') {
     if (target.bucket === 'top10') return 'TOP 10';
     if (target.bucket === 'top100') return 'TOP 100';
@@ -162,7 +166,22 @@ async function buildNextTargets({ rank, playerScore }, cfg = DEFAULTS) {
   return realTargets;
 }
 
-function pickRecommendedTarget(nextTargets, rank, cfg = DEFAULTS) {
+function pickRecommendedTarget(nextTargets, rank, cfg = DEFAULTS, { currentScore, bestScore } = {}) {
+  if (
+    typeof bestScore === 'number' && bestScore > 0 &&
+    typeof currentScore === 'number' && currentScore < bestScore
+  ) {
+    // +1 so delta means "points needed to exceed the personal best",
+    // consistent with rank target delta calculations.
+    const delta = bestScore - currentScore + 1;
+    return {
+      targetType: 'score',
+      type: 'score',
+      label: 'your best',
+      delta
+    };
+  }
+
   if (!nextTargets.length) {
     return null;
   }
@@ -181,6 +200,7 @@ function pickRecommendedTarget(nextTargets, rank, cfg = DEFAULTS) {
 
   return {
     targetType: realistic.targetType,
+    type: realistic.targetType,
     label: labelForTarget(realistic),
     delta: Number.isFinite(realistic.delta) ? realistic.delta : deltaCap
   };
@@ -256,7 +276,10 @@ async function computePlayerInsights({ wallet, player, latestRun, config = DEFAU
   }, config);
 
   const nextTargets = await buildNextTargets({ rank, playerScore: player.bestScore }, config);
-  const recommendedTarget = pickRecommendedTarget(nextTargets, rank, config);
+  const recommendedTarget = pickRecommendedTarget(nextTargets, rank, config, {
+    currentScore: run.score,
+    bestScore: player.bestScore
+  });
 
   return {
     isFirstRun: Boolean(run.isFirstRun),
