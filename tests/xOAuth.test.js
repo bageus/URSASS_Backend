@@ -207,7 +207,7 @@ test('GET /api/x/oauth/start - creates OAuthState and redirects (302)', async ()
 
     const r = await get(baseUrl, '/api/x/oauth/start', { 'X-Primary-Id': 'tg_x2' });
     assert.equal(r.status, 302, 'should redirect');
-    assert.ok(r.location?.includes('twitter.com'), `location should be X URL, got: ${r.location}`);
+    assert.ok(r.location?.startsWith('https://twitter.com/i/oauth2/authorize'), `location should be X authorize URL, got: ${r.location}`);
     assert.equal(created.length, 1, 'OAuthState should be created');
     assert.equal(created[0].primaryId, 'tg_x2');
     assert.ok(created[0].codeVerifier, 'codeVerifier should be set');
@@ -229,7 +229,7 @@ test('GET /api/x/oauth/start - ?mode=json returns JSON authorizeUrl', async () =
 
     const r = await get(baseUrl, '/api/x/oauth/start?mode=json', { 'X-Primary-Id': 'tg_x3' });
     assert.equal(r.status, 200);
-    assert.ok(r.body.authorizeUrl?.includes('twitter.com'), 'should contain authorizeUrl');
+    assert.ok(r.body.authorizeUrl?.startsWith('https://twitter.com/i/oauth2/authorize'), 'should contain authorizeUrl');
   } finally {
     clearXOAuthEnv();
     server.close();
@@ -290,13 +290,15 @@ test('GET /api/x/oauth/callback - valid state, mocked X response → updates Pla
   const origFetch = xOAuthModule.fetchXUser;
 
   try {
+    // State must be a 64-char hex string (32 random bytes as hex)
+    const validState = 'a'.repeat(64);
     const savedState = {
-      state: 'validstate123',
+      state: validState,
       primaryId: 'tg_x4',
       codeVerifier: 'verifier_abc'
     };
 
-    OAuthState.findOne = async (q) => (q.state === 'validstate123' ? { ...savedState } : null);
+    OAuthState.findOne = async (q) => (q.state === validState ? { ...savedState } : null);
     OAuthState.deleteOne = async () => {};
     SecurityEvent.create = async () => ({});
 
@@ -327,7 +329,7 @@ test('GET /api/x/oauth/callback - valid state, mocked X response → updates Pla
 
     const r = await get(
       baseUrl,
-      '/api/x/oauth/callback?code=authcode&state=validstate123'
+      `/api/x/oauth/callback?code=authcode&state=${validState}`
     );
 
     assert.equal(r.status, 302, `expected 302, got ${r.status}`);

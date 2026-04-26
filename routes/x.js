@@ -48,6 +48,24 @@ const disconnectLimiter = rateLimit({
   keyGenerator: getClientIp
 });
 
+const oauthCallbackLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  message: 'Too many OAuth callback requests. Please wait.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: getClientIp
+});
+
+const statusLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  message: 'Too many status requests. Please wait.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: getClientIp
+});
+
 /**
  * Resolve authenticated primaryId from request headers.
  * Returns AccountLink if valid, null otherwise.
@@ -114,7 +132,7 @@ router.get('/oauth/start', oauthStartLimiter, requireXOAuth, async (req, res) =>
 // GET /oauth/callback
 // ─────────────────────────────────────────────────────────────────────────────
 
-router.get('/oauth/callback', requireXOAuth, async (req, res) => {
+router.get('/oauth/callback', oauthCallbackLimiter, requireXOAuth, async (req, res) => {
   const frontendBase = FRONTEND_BASE_URL();
 
   try {
@@ -130,15 +148,21 @@ router.get('/oauth/callback', requireXOAuth, async (req, res) => {
       return res.redirect(302, `${frontendBase}/?x=error&reason=missing_params`);
     }
 
+    // Validate state format: must be a 64-char hex string (from crypto.randomBytes(32).toString('hex'))
+    const stateStr = String(state);
+    if (!/^[0-9a-f]{64}$/.test(stateStr)) {
+      return res.redirect(302, `${frontendBase}/?x=error&reason=invalid_state`);
+    }
+
     // Validate state
-    const oauthState = await OAuthState.findOne({ state });
+    const oauthState = await OAuthState.findOne({ state: stateStr });
     if (!oauthState) {
-      logger.warn({ state }, 'X OAuth callback: invalid or expired state');
+      logger.warn({}, 'X OAuth callback: invalid or expired state');
       await logSecurityEvent({
         eventType: 'x_oauth_invalid_state',
         route: '/api/x/oauth/callback',
         ipAddress: getClientIp(req),
-        details: { state }
+        details: {}
       });
       return res.redirect(302, `${frontendBase}/?x=error&reason=invalid_state`);
     }
@@ -151,7 +175,7 @@ router.get('/oauth/callback', requireXOAuth, async (req, res) => {
       tokenData = await xOAuth.exchangeCodeForToken({ code, codeVerifier });
     } catch (err) {
       logger.error({ err: err.message }, 'X OAuth token exchange failed');
-      await OAuthState.deleteOne({ state });
+      await OAuthState.deleteOne({ state: stateStr });
       return res.redirect(302, `${frontendBase}/?x=error&reason=token_exchange_failed`);
     }
 
@@ -163,14 +187,14 @@ router.get('/oauth/callback', requireXOAuth, async (req, res) => {
       xUser = await xOAuth.fetchXUser(accessToken);
     } catch (err) {
       logger.error({ err: err.message }, 'X OAuth fetchXUser failed');
-      await OAuthState.deleteOne({ state });
+      await OAuthState.deleteOne({ state: stateStr });
       return res.redirect(302, `${frontendBase}/?x=error&reason=fetch_user_failed`);
     }
 
     const { id: xUserId, username: xUsername } = xUser;
 
     if (!xUserId) {
-      await OAuthState.deleteOne({ state });
+      await OAuthState.deleteOne({ state: stateStr });
       return res.redirect(302, `${frontendBase}/?x=error&reason=user_id_missing`);
     }
 
@@ -188,14 +212,14 @@ router.get('/oauth/callback', requireXOAuth, async (req, res) => {
         ipAddress: getClientIp(req),
         details: { xUserId, xUsername }
       });
-      await OAuthState.deleteOne({ state });
+      await OAuthState.deleteOne({ state: stateStr });
       return res.redirect(302, `${frontendBase}/?x=error&reason=already_linked`);
     }
 
     // Update player record
     const player = await Player.findOne({ wallet: primaryId }).select('+xAccessToken +xRefreshToken');
     if (!player) {
-      await OAuthState.deleteOne({ state });
+      await OAuthState.deleteOne({ state: stateStr });
       return res.redirect(302, `${frontendBase}/?x=error&reason=player_not_found`);
     }
 
@@ -207,7 +231,7 @@ router.get('/oauth/callback', requireXOAuth, async (req, res) => {
     await player.save();
 
     // Clean up state
-    await OAuthState.deleteOne({ state });
+    await OAuthState.deleteOne({ state: stateStr });
 
     logger.info({ primaryId, xUserId, xUsername: xUsername || null }, 'X account connected');
 
@@ -264,7 +288,7 @@ router.post('/disconnect', disconnectLimiter, requireXOAuth, async (req, res) =>
 // GET /status
 // ─────────────────────────────────────────────────────────────────────────────
 
-router.get('/status', requireXOAuth, async (req, res) => {
+router.get('/status', statusLimiter, requireXOAuth, async (req, res) => {
   try {
     const link = await resolveAuth(req);
     if (!link) {
