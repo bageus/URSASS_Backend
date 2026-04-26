@@ -172,3 +172,101 @@ The server is deployed on [Railway](https://railway.app). Set the environment va
 For better isolation under load, you can run the bot in a separate worker process:
 - API: `npm run start:api` with `BOT_MODE=worker` (or `START_BOT_IN_PROCESS=false`)
 - Bot worker: `npm run start:bot`
+
+## Referral & Share Flow
+
+### New Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `FRONTEND_BASE_URL` | *(none)* | Base URL for referral links, e.g. `https://ursasstube.fun` |
+| `SHARE_REWARD_DELAY_MS` | `30000` | Milliseconds a user must wait after `/share/start` before confirming |
+| `SHARE_DAILY_REWARD_GOLD` | `20` | Gold awarded per confirmed daily share |
+| `REFERRAL_REWARD_REFERRER_GOLD` | `50` | Gold awarded to the referrer when the referee completes their first run |
+| `REFERRAL_REWARD_REFEREE_GOLD` | `100` | Gold awarded to the referee on first run after being referred |
+
+### Endpoints
+
+#### Player Profile
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/account/me/profile` | `X-Primary-Id` header | Returns rank, bestScore, gold, referralUrl, share streak, connection status |
+
+**Response:**
+```json
+{
+  "primaryId": "tg_123",
+  "rank": 42,
+  "totalRankedPlayers": 12500,
+  "bestScore": 8350,
+  "gold": 1240,
+  "referralCode": "K7M3X9PA",
+  "referralUrl": "https://ursasstube.fun/?ref=K7M3X9PA",
+  "telegram": { "connected": true, "username": "vasya", "id": "123" },
+  "wallet": { "connected": true, "address": "0x..." },
+  "x": { "connected": false, "username": null },
+  "shareStreak": 3,
+  "canShareToday": true,
+  "goldRewardToday": 20,
+  "lastShareDay": "2026-04-25"
+}
+```
+
+#### Referral Tracking
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/referral/track` | `X-Primary-Id` header | Attach a referral code to the current player |
+
+**Body:** `{ "ref": "K7M3X9PA" }`
+
+**Notes:**
+- Idempotent — calling it twice returns `{ "already": true }`
+- Self-referral is rejected (400)
+- Rewards (+50 gold for referrer, +100 gold for referee) are granted automatically after the referee's **first valid game run**
+
+#### Share Flow
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/share/start` | `X-Primary-Id` header | Start a share event; returns shareId, postText, imageUrl, intentUrl |
+| `POST` | `/api/share/confirm` | `X-Primary-Id` header | Confirm the share after ≥30 s; awards 20 gold and updates streak |
+
+**`/api/share/start` response:**
+```json
+{
+  "shareId": "uuid",
+  "postText": "I scored 8350 in Ursass Tube 🐻\n...",
+  "referralUrl": "https://ursasstube.fun/?ref=K7M3X9PA",
+  "imageUrl": "https://api.ursasstube.fun/api/leaderboard/share/image/0x....png",
+  "intentUrl": "https://twitter.com/intent/tweet?text=...",
+  "eligibleForReward": true,
+  "secondsUntilReward": 30
+}
+```
+
+**`/api/share/confirm` response (success):**
+```json
+{
+  "awarded": true,
+  "goldAwarded": 20,
+  "shareStreak": 4,
+  "totalGold": 1260
+}
+```
+
+**Streak logic:**
+- Streak +1 if `lastShareDay === yesterday`
+- Streak resets to 1 if the player missed a day
+- `/me/profile` returns `shareStreak: 0` for display if streak is stale (DB not mutated until next confirm)
+
+### Migration
+
+Run once after deployment to backfill `referralCode` for existing players and create necessary indexes:
+
+```bash
+node scripts/migrations/2026-04-26-referral-and-share.js
+```
+
+The migration is **idempotent** — safe to run multiple times.

@@ -305,5 +305,6 @@ module.exports = {
   buildFallbackType,
   buildNextTargets,
   pickRecommendedTarget,
-  computePercentileFromRank
+  computePercentileFromRank,
+  computeRank
 };
