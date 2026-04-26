@@ -65,5 +65,21 @@ module.exports = {
   saveResultLimiter,
   writeLimiter,
   readLimiter,
-  verifyTelegramLimiter
+  verifyTelegramLimiter,
+  shareStartLimiter: rateLimit({
+    windowMs: 1 * 60 * 1000,
+    max: 10,
+    message: '❌ Too many share start requests. Please wait.',
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: getClientIp
+  }),
+  shareConfirmLimiter: rateLimit({
+    windowMs: 1 * 60 * 1000,
+    max: 30,
+    message: '❌ Too many share confirm requests. Please wait.',
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: getClientIp
+  })
 };
