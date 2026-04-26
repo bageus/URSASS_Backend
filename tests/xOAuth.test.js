@@ -147,7 +147,7 @@ test('buildAuthorizeUrl contains all required query parameters', () => {
     const url = buildAuthorizeUrl({ state, codeChallenge });
 
     const parsed = new URL(url);
-    assert.equal(parsed.hostname, 'twitter.com');
+    assert.equal(parsed.hostname, 'x.com');
     assert.equal(parsed.searchParams.get('response_type'), 'code');
     assert.equal(parsed.searchParams.get('client_id'), 'test_client_id');
     assert.equal(parsed.searchParams.get('redirect_uri'), process.env.X_OAUTH_REDIRECT_URI);
@@ -207,7 +207,7 @@ test('GET /api/x/oauth/start - creates OAuthState and redirects (302)', async ()
 
     const r = await get(baseUrl, '/api/x/oauth/start', { 'X-Primary-Id': 'tg_x2' });
     assert.equal(r.status, 302, 'should redirect');
-    assert.ok(r.location?.startsWith('https://twitter.com/i/oauth2/authorize'), `location should be X authorize URL, got: ${r.location}`);
+    assert.ok(r.location?.startsWith('https://x.com/i/oauth2/authorize'), `location should be X authorize URL, got: ${r.location}`);
     assert.equal(created.length, 1, 'OAuthState should be created');
     assert.equal(created[0].primaryId, 'tg_x2');
     assert.ok(created[0].codeVerifier, 'codeVerifier should be set');
@@ -229,7 +229,7 @@ test('GET /api/x/oauth/start - ?mode=json returns JSON authorizeUrl', async () =
 
     const r = await get(baseUrl, '/api/x/oauth/start?mode=json', { 'X-Primary-Id': 'tg_x3' });
     assert.equal(r.status, 200);
-    assert.ok(r.body.authorizeUrl?.startsWith('https://twitter.com/i/oauth2/authorize'), 'should contain authorizeUrl');
+    assert.ok(r.body.authorizeUrl?.startsWith('https://x.com/i/oauth2/authorize'), 'should contain authorizeUrl');
   } finally {
     clearXOAuthEnv();
     server.close();
