@@ -114,7 +114,24 @@ Versioned aliases are also available under `/api/v1/*` (backward-compatible with
 - API requests must target the deployed backend host (for example, Railway), not the frontend host itself.
 - If you send `POST https://bageus-github-io.vercel.app/api/analytics/events`, Vercel frontend hosting may return `404 Not Found` because that route is not served there.
 
+## Auth Headers
 
+Authenticated endpoints resolve the caller identity from one of three request headers (checked in order):
+
+| Header | Description |
+|---|---|
+| `X-Primary-Id` | **Preferred.** The canonical `primaryId` of the AccountLink record (e.g. `tg_123` or `0xabc`). |
+| `X-Wallet` | **Fallback.** Wallet address *or* telegram primaryId (e.g. `tg_123`). The middleware tries `wallet` field first, then `primaryId` field. |
+| `X-Telegram-Init-Data` | Raw Telegram WebApp `initData` string. Validated via HMAC; account looked up by `telegramId`. |
+
+The auth middleware (`middleware/requireAuth.js`) performs cross-field lookups for robustness:
+
+- When `X-Primary-Id` is provided: tries `{ primaryId }` first, then `{ wallet }` as fallback.
+- When `X-Wallet` is provided: tries `{ wallet }` first, then `{ primaryId }` as fallback.
+
+This ensures Telegram-only users (whose `primaryId` is `tg_<id>`) can authenticate even when the frontend sends their identifier in the `X-Wallet` header.
+
+Any unmatched `/api/*` route returns `404 application/json { "error": "not_found" }` instead of an HTML page.
 
 ## Unauthenticated Browser Mode
 
@@ -295,16 +312,16 @@ The migration is **idempotent** — safe to run multiple times.
 | `X_OAUTH_REDIRECT_URI` | *(required)* | e.g. `https://api.ursasstube.fun/api/x/oauth/callback` |
 | `X_OAUTH_SCOPES` | `tweet.read users.read offline.access` | Space-separated scopes |
 
-If `X_OAUTH_CLIENT_ID` or `X_OAUTH_REDIRECT_URI` are missing, all `/api/x/*` endpoints return **503 `{ error: "x_oauth_not_configured" }`** — the server does not crash.
+If `X_OAUTH_CLIENT_ID` or `X_OAUTH_REDIRECT_URI` are missing, all `/api/x/*` endpoints return **503 `application/json { error: "x_oauth_not_configured" }`** — the server does not crash.
 
 ### Endpoints
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| `GET` | `/api/x/oauth/start` | `X-Primary-Id` header | Start OAuth flow; redirects to X or returns `{ authorizeUrl }` with `?mode=json` |
+| `GET` | `/api/x/oauth/start` | `X-Primary-Id` or `X-Wallet` header | Start OAuth flow; redirects to X or returns `{ authorizeUrl }` with `?mode=json` |
 | `GET` | `/api/x/oauth/callback` | *(none — X redirects here)* | Handles code exchange; redirects back to frontend |
-| `POST` | `/api/x/disconnect` | `X-Primary-Id` header | Revoke tokens and unlink X account |
-| `GET` | `/api/x/status` | `X-Primary-Id` header | Returns current X connection status |
+| `POST` | `/api/x/disconnect` | `X-Primary-Id` or `X-Wallet` header | Revoke tokens and unlink X account |
+| `GET` | `/api/x/status` | `X-Primary-Id` or `X-Wallet` header | Returns current X connection status |
 
 Versioned aliases at `/api/v1/x/*` also work.
 
@@ -312,6 +329,7 @@ Versioned aliases at `/api/v1/x/*` also work.
 
 - Generates PKCE pair, stores `OAuthState` (TTL 5 min), redirects 302 to X authorization URL.
 - Add `?mode=json` to receive `{ "authorizeUrl": "..." }` instead of a redirect (useful for SPAs opening a popup/tab).
+- When env variables are absent returns `503 application/json { error: "x_oauth_not_configured" }`.
 
 #### `GET /api/x/oauth/callback`
 
@@ -334,7 +352,7 @@ Possible `reason` values:
 | `access_denied` | User denied the X authorization |
 | `missing_params` | `code` or `state` missing in callback |
 | `invalid_state` | `state` not found or expired (CSRF protection) |
-| `already_linked` | This X account is already linked to another player |
+| `already_linked_to_another_player` | This X account is already connected to a different player. A security event is logged with both `primaryId` values for audit. |
 | `token_exchange_failed` | Error calling X token endpoint |
 | `fetch_user_failed` | Error fetching user info from X |
 | `player_not_found` | Player record not found |

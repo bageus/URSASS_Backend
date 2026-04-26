@@ -18,6 +18,7 @@ const { validateTelegramInitData } = require('../utils/telegramAuth');
 const { computeRank } = require('../services/leaderboardInsightsService');
 const { buildReferralUrl } = require('../utils/referral');
 const { getUtcDayKey, getYesterdayUtcDayKey } = require('../utils/utcDay');
+const { findLink } = require('../middleware/requireAuth');
 
 const WALLET_TIMESTAMP_WINDOW_MS = Number(process.env.WALLET_AUTH_TIMESTAMP_WINDOW_MS || 10 * 60 * 1000);
 
@@ -318,25 +319,24 @@ router.get('/info/:identifier', readLimiter, async (req, res) => {
 /**
  * GET /api/account/me/profile
  * Returns full player profile including rank, referral info, share streak.
- * Auth: X-Primary-Id header or X-Wallet header.
+ * Auth: X-Primary-Id or X-Wallet header (both fields tried, with cross-field fallback).
  */
 router.get('/me/profile', readLimiter, async (req, res) => {
   try {
-    const primaryId = (
-      req.get('x-primary-id') ||
-      req.get('X-Primary-Id') ||
-      ''
-    ).trim().toLowerCase();
+    const rawPrimaryId = (req.get('x-primary-id') || '').trim().toLowerCase();
+    const rawWallet = (req.get('x-wallet') || '').trim().toLowerCase();
+    const initData = req.get('x-telegram-init-data') || req.get('X-Telegram-Init-Data') || '';
 
-    if (!primaryId) {
+    if (!rawPrimaryId && !rawWallet && !initData) {
       return res.status(401).json({ error: 'Authentication required' });
     }
 
-    const link = await AccountLink.findOne({ primaryId });
-    if (!link) {
+    const link = await findLink(rawPrimaryId, rawWallet, initData);
+    if (!link || link.__invalid) {
       return res.status(401).json({ error: 'Account not found' });
     }
 
+    const primaryId = link.primaryId;
     const player = await Player.findOne({ wallet: primaryId });
     if (!player) {
       return res.status(404).json({ error: 'Player not found. Play at least one game first.' });

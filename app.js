@@ -120,6 +120,11 @@ function createApp() {
   app.use('/api/v1/share', shareRoutes);
   app.use('/api/v1/x', xRoutes);
 
+  // JSON 404 for any unmatched /api/* route (prevents Express default HTML response)
+  app.use('/api', (req, res) => {
+    res.status(404).json({ error: 'not_found' });
+  });
+
   app.get('/health', (req, res) => {
     const mongoStates = {
       0: 'disconnected',

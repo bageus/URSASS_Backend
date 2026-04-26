@@ -18,6 +18,7 @@ const AccountLink = require('../models/AccountLink');
 const xOAuth = require('../utils/xOAuth');
 const { logSecurityEvent } = require('../utils/security');
 const logger = require('../utils/logger');
+const { findLink } = require('../middleware/requireAuth');
 
 const FRONTEND_BASE_URL = () => (process.env.FRONTEND_BASE_URL || 'https://ursasstube.fun').replace(/\/+$/, '');
 
@@ -69,19 +70,21 @@ const statusLimiter = rateLimit({
 /**
  * Resolve authenticated primaryId from request headers.
  * Returns AccountLink if valid, null otherwise.
+ * Supports X-Primary-Id and X-Wallet with cross-field fallbacks.
  */
 async function resolveAuth(req) {
-  const primaryId = (
+  const rawPrimaryId = (
     req.get('x-primary-id') ||
     req.get('X-Primary-Id') ||
     req.body?.primaryId ||
     ''
   ).trim().toLowerCase();
 
-  if (!primaryId) return null;
+  const rawWallet = (req.get('x-wallet') || '').trim().toLowerCase();
+  const initData = req.get('x-telegram-init-data') || req.get('X-Telegram-Init-Data') || '';
 
-  const link = await AccountLink.findOne({ primaryId });
-  if (!link) return null;
+  const link = await findLink(rawPrimaryId, rawWallet, initData);
+  if (!link || link.__invalid) return null;
 
   return link;
 }
@@ -108,6 +111,8 @@ router.get('/oauth/start', oauthStartLimiter, requireXOAuth, async (req, res) =>
     }
 
     const primaryId = link.primaryId;
+    const maskedId = primaryId.length > 6 ? `${primaryId.slice(0, 3)}***${primaryId.slice(-3)}` : '***';
+    logger.info({ primaryId: maskedId, mode: req.query.mode || 'redirect' }, 'GET /x/oauth/start');
 
     const state = crypto.randomBytes(32).toString('hex');
     const { codeVerifier, codeChallenge } = xOAuth.generatePkcePair();
@@ -201,19 +206,20 @@ router.get('/oauth/callback', oauthCallbackLimiter, requireXOAuth, async (req, r
     // Check if this X account is already linked to a different player
     const existing = await Player.findOne({ xUserId, wallet: { $ne: primaryId } }).select('wallet').lean();
     if (existing) {
+      const ownerPrimaryId = existing.wallet;
       logger.warn(
-        { xUserId, requestingPrimaryId: primaryId, ownerPrimaryId: existing.wallet },
-        'X account already linked to another player'
+        { xUserId, requestingPrimaryId: primaryId, ownerPrimaryId },
+        'X account already linked to another player — security event'
       );
       await logSecurityEvent({
         wallet: primaryId,
-        eventType: 'x_oauth_already_linked',
+        eventType: 'x_oauth_already_linked_to_another_player',
         route: '/api/x/oauth/callback',
         ipAddress: getClientIp(req),
-        details: { xUserId, xUsername }
+        details: { xUserId, xUsername, ownerPrimaryId, requestingPrimaryId: primaryId }
       });
       await OAuthState.deleteOne({ state: stateStr });
-      return res.redirect(302, `${frontendBase}/?x=error&reason=already_linked`);
+      return res.redirect(302, `${frontendBase}/?x=error&reason=already_linked_to_another_player`);
     }
 
     // Update player record
