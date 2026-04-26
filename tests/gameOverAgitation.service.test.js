@@ -80,6 +80,23 @@ test('buildAgitationPrompt for unauthenticated run', () => {
   assert.match(prompt.boost, /Better than 68% of new players/);
 });
 
+test('buildAgitationPrompt prefers next-player target for non-PB authenticated runs', () => {
+  const prompt = buildAgitationPrompt({
+    rank: 25,
+    run: { isFirstRun: false, isPersonalBest: false, score: 11959 },
+    previousBestScore: 127443,
+    recommendedTarget: { targetType: 'score', label: 'your best', delta: 115485 },
+    top1Delta: null,
+    top3Delta: null,
+    nextRankDelta: 3719,
+    percentileFirstRunScore: null,
+    isAuthenticated: true
+  });
+
+  assert.equal(prompt.title, 'GOON RUN!');
+  assert.equal(prompt.boost, '+3719 points to pass the next player');
+});
+
 test('resolvePersonalBestHook maps rank buckets', () => {
   assert.equal(resolvePersonalBestHook(50), 'You’re in TOP 100!');
   assert.equal(resolvePersonalBestHook(500), 'You’re in TOP 1000!');
