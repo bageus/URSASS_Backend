@@ -270,3 +270,92 @@ node scripts/migrations/2026-04-26-referral-and-share.js
 ```
 
 The migration is **idempotent** — safe to run multiple times.
+
+---
+
+## X (Twitter) OAuth
+
+> **Note:** Real tweet-level verification (checking that a post with a given tweetId was actually published) is a future PR. This section describes the OAuth connect/disconnect foundation.
+
+### Setup in X Developer Portal
+
+1. Create an application at [developer.twitter.com](https://developer.twitter.com).
+2. Enable **OAuth 2.0** in the app settings.
+3. Set the **Callback URL** to your `X_OAUTH_REDIRECT_URI`, e.g. `https://api.ursasstube.fun/api/x/oauth/callback`.
+4. Request at least these **Scopes**: `tweet.read users.read offline.access`.
+5. Copy your **Client ID** (and **Client Secret** for confidential clients) into the environment variables below.
+
+### Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `X_OAUTH_CLIENT_ID` | *(required)* | OAuth 2.0 Client ID from X Developer Portal |
+| `X_OAUTH_CLIENT_SECRET` | *(required for confidential clients)* | Client Secret; omit if using public client |
+| `X_OAUTH_PUBLIC_CLIENT` | `false` | Set `true` to skip Basic auth on token exchange (public client) |
+| `X_OAUTH_REDIRECT_URI` | *(required)* | e.g. `https://api.ursasstube.fun/api/x/oauth/callback` |
+| `X_OAUTH_SCOPES` | `tweet.read users.read offline.access` | Space-separated scopes |
+
+If `X_OAUTH_CLIENT_ID` or `X_OAUTH_REDIRECT_URI` are missing, all `/api/x/*` endpoints return **503 `{ error: "x_oauth_not_configured" }`** — the server does not crash.
+
+### Endpoints
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/x/oauth/start` | `X-Primary-Id` header | Start OAuth flow; redirects to X or returns `{ authorizeUrl }` with `?mode=json` |
+| `GET` | `/api/x/oauth/callback` | *(none — X redirects here)* | Handles code exchange; redirects back to frontend |
+| `POST` | `/api/x/disconnect` | `X-Primary-Id` header | Revoke tokens and unlink X account |
+| `GET` | `/api/x/status` | `X-Primary-Id` header | Returns current X connection status |
+
+Versioned aliases at `/api/v1/x/*` also work.
+
+#### `GET /api/x/oauth/start`
+
+- Generates PKCE pair, stores `OAuthState` (TTL 5 min), redirects 302 to X authorization URL.
+- Add `?mode=json` to receive `{ "authorizeUrl": "..." }` instead of a redirect (useful for SPAs opening a popup/tab).
+
+#### `GET /api/x/oauth/callback`
+
+Handles the redirect from X after user grants or denies access.
+
+**Success redirect:**
+```
+${FRONTEND_BASE_URL}/?x=connected&username=<x_username>
+```
+
+**Error redirect:**
+```
+${FRONTEND_BASE_URL}/?x=error&reason=<reason>
+```
+
+Possible `reason` values:
+
+| reason | Description |
+|---|---|
+| `access_denied` | User denied the X authorization |
+| `missing_params` | `code` or `state` missing in callback |
+| `invalid_state` | `state` not found or expired (CSRF protection) |
+| `already_linked` | This X account is already linked to another player |
+| `token_exchange_failed` | Error calling X token endpoint |
+| `fetch_user_failed` | Error fetching user info from X |
+| `player_not_found` | Player record not found |
+| `server_error` | Unexpected server error |
+
+#### `POST /api/x/disconnect`
+
+Unlinks the connected X account. Attempts best-effort token revocation.
+
+**Response:**
+```json
+{ "disconnected": true }
+```
+
+#### `GET /api/x/status`
+
+**Response:**
+```json
+{
+  "connected": true,
+  "username": "bearplayer",
+  "connectedAt": "2026-04-25T12:00:00.000Z"
+}
+```
