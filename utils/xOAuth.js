@@ -13,7 +13,7 @@ const crypto = require('crypto');
 const axios = require('axios');
 const logger = require('./logger');
 
-const X_AUTHORIZE_URL = 'https://twitter.com/i/oauth2/authorize';
+const X_AUTHORIZE_URL = 'https://x.com/i/oauth2/authorize';
 const X_TOKEN_URL = 'https://api.twitter.com/2/oauth2/token';
 const X_USERS_ME_URL = 'https://api.twitter.com/2/users/me';
 const X_REVOKE_URL = 'https://api.twitter.com/2/oauth2/revoke';

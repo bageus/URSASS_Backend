@@ -9,6 +9,7 @@ const {
 } = require('../utils/accountManager');
 const { verifySignature } = require('../utils/verifySignature');
 const { readLimiter, writeLimiter, verifyTelegramLimiter } = require('../middleware/rateLimiter');
+const { requireAuth } = require('../middleware/requireAuth');
 const Player = require('../models/Player');
 const AccountLink = require('../models/AccountLink');
 const LinkCode = require('../models/LinkCode');
@@ -281,6 +282,68 @@ router.post('/link/wallet', writeLimiter, async (req, res) => {
 
   } catch (error) {
     logger.error({ err: error }, 'POST /link/wallet error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * GET /api/account/me/profile
+ * Returns the authenticated player's full profile.
+ * Auth: X-Primary-Id, X-Wallet, or X-Telegram-Init-Data header.
+ */
+router.get('/me/profile', readLimiter, requireAuth, async (req, res) => {
+  try {
+    const primaryId = req.primaryId;
+    const link = req.authLink;
+
+    const player = await Player.findOne({ wallet: primaryId });
+    if (!player) {
+      return res.status(404).json({ error: 'Player not found' });
+    }
+
+    const { rank, totalRankedPlayers } = await computeRank(player.bestScore);
+
+    const today = getUtcDayKey();
+    const yesterday = getYesterdayUtcDayKey();
+
+    const canShareToday = player.lastShareDay !== today;
+
+    let displayStreak = player.shareStreak || 0;
+    if (player.lastShareDay && player.lastShareDay < yesterday) {
+      displayStreak = 0;
+    }
+
+    const referralCode = player.referralCode || null;
+    const referralUrl = referralCode ? buildReferralUrl(referralCode, req) : null;
+
+    return res.json({
+      primaryId,
+      rank: rank || null,
+      totalRankedPlayers: totalRankedPlayers || 0,
+      bestScore: player.bestScore || 0,
+      gold: player.gold || 0,
+      referralCode,
+      referralUrl,
+      telegram: {
+        connected: !!link.telegramId,
+        username: link.telegramUsername || null,
+        id: link.telegramId || null
+      },
+      wallet: {
+        connected: !!link.wallet,
+        address: link.wallet || null
+      },
+      x: {
+        connected: !!player.xUserId,
+        username: player.xUsername || null
+      },
+      shareStreak: displayStreak,
+      canShareToday,
+      goldRewardToday: Number(process.env.SHARE_DAILY_REWARD_GOLD || 20),
+      lastShareDay: player.lastShareDay || null
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'GET /me/profile error');
     res.status(500).json({ error: 'Server error' });
   }
 });
