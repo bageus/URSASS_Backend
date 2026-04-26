@@ -17,6 +17,7 @@ const { logSecurityEvent, normalizeWallet, validateTimestampWindow } = require('
 const { hasAiModeAccess, validateAiSettings } = require('../utils/aiModeAccess');
 const { computePlayerInsights, DEFAULTS: leaderboardInsightsConfig } = require('../services/leaderboardInsightsService');
 const { buildGameOverPayload } = require('../services/gameOverAgitationService');
+const { maybeGrantReferralRewards } = require('../utils/referralRewards');
 
 const SHARE_COPY_TEMPLATE = 'I scored {score} in Ursass Tube 🐻\nCan you beat me?';
 const SHARE_HASHTAGS = '#UrsassTube #Ursas #Ursasplanet #GameChallenge #HighScore';
@@ -548,6 +549,16 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       totalGoldCoins: responsePayload.totalGoldCoins,
       totalSilverCoins: responsePayload.totalSilverCoins
     }, 'Result saved (VERIFIED)');
+
+    // Grant referral rewards on first valid run (non-blocking, errors logged internally)
+    try {
+      const savedPlayer = await Player.findOne({ wallet: walletLower });
+      if (savedPlayer) {
+        await maybeGrantReferralRewards(savedPlayer, { requestId: req.requestId });
+      }
+    } catch (refErr) {
+      logger.error({ err: refErr, wallet: walletLower }, 'maybeGrantReferralRewards failed');
+    }
 
     const playerForInsights = {
       bestScore: responsePayload.bestScore

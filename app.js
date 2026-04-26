@@ -8,6 +8,8 @@ const accountRoutes = require('./routes/account');
 const gameRoutes = require('./routes/game');
 const donationsRoutes = require('./routes/donations');
 const analyticsRoutes = require('./routes/analytics');
+const referralRoutes = require('./routes/referral');
+const shareRoutes = require('./routes/share');
 const logger = require('./utils/logger');
 const { metricsMiddleware, renderMetricsText } = require('./middleware/requestMetrics');
 
@@ -102,6 +104,8 @@ function createApp() {
   app.use('/api', donationsRoutes);
   app.use('/api/analytics', analyticsRoutes);
   app.use('/api/telemetry', analyticsRoutes);
+  app.use('/api/referral', referralRoutes);
+  app.use('/api/share', shareRoutes);
 
   app.use('/api/v1/leaderboard', leaderboardRoutes);
   app.use('/api/v1/store', storeRoutes);
@@ -110,6 +114,8 @@ function createApp() {
   app.use('/api/v1', donationsRoutes);
   app.use('/api/v1/analytics', analyticsRoutes);
   app.use('/api/v1/telemetry', analyticsRoutes);
+  app.use('/api/v1/referral', referralRoutes);
+  app.use('/api/v1/share', shareRoutes);
 
   app.get('/health', (req, res) => {
     const mongoStates = {
