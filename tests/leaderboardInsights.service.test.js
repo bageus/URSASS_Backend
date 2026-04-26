@@ -139,6 +139,78 @@ test('recommended target supports top100/top1000/top10000 buckets', () => {
   assert.equal(top10000.label, 'TOP 1000');
 });
 
+test('pickRecommendedTarget returns score-based target when currentScore < bestScore', () => {
+  const targets = [
+    { targetType: 'rank', targetRank: 1, delta: 111767 }
+  ];
+
+  const result = pickRecommendedTarget(targets, 2, { realisticDeltaTop10: 1200 }, {
+    currentScore: 186,
+    bestScore: 15677
+  });
+
+  assert.equal(result.targetType, 'score');
+  assert.equal(result.type, 'score');
+  assert.equal(result.label, 'your best');
+  assert.equal(result.delta, 15677 - 186 + 1);
+});
+
+test('pickRecommendedTarget returns rank-based target when currentScore equals bestScore (personal best)', () => {
+  const targets = [
+    { targetType: 'rank', targetRank: 1, delta: 111767 }
+  ];
+
+  const result = pickRecommendedTarget(targets, 2, { realisticDeltaTop10: 200000 }, {
+    currentScore: 15677,
+    bestScore: 15677
+  });
+
+  assert.equal(result.targetType, 'rank');
+  assert.equal(result.type, 'rank');
+});
+
+test('pickRecommendedTarget returns rank-based target when bestScore is absent', () => {
+  const targets = [
+    { targetType: 'rank', targetRank: 1, delta: 111767 }
+  ];
+
+  const result = pickRecommendedTarget(targets, 2, { realisticDeltaTop10: 200000 });
+
+  assert.equal(result.targetType, 'rank');
+});
+
+test('computePlayerInsights: rank #2, currentScore far below bestScore → score-based recommendedTarget', async () => {
+  mockRankedScores([127443, 15677, 15215, 13606, 5883, 3709, 1877, 997, 813, 92]);
+
+  PlayerRun.findOne = () => ({
+    sort: async () => ({ isFirstRun: false, isPersonalBest: false, score: 186, distance: 20, goldCoins: 0 })
+  });
+
+  PlayerRun.countDocuments = async () => 0;
+
+  const insights = await computePlayerInsights({
+    wallet: '0x293c',
+    player: { bestScore: 15677 },
+    config: {
+      insightsEnabled: true,
+      minimumSegmentSize: 10,
+      weakPercentileThreshold: 20,
+      realisticDeltaTop10: 1200,
+      realisticDeltaTop100: 2200,
+      realisticDeltaTop1000: 3200,
+      realisticDeltaTop10000: 4500
+    }
+  });
+
+  assert.equal(insights.isPersonalBest, false);
+  assert.equal(insights.rank, 2);
+  assert.ok(insights.recommendedTarget);
+  assert.equal(insights.recommendedTarget.targetType, 'score');
+  assert.equal(insights.recommendedTarget.type, 'score');
+  assert.equal(insights.recommendedTarget.label, 'your best');
+  assert.equal(insights.recommendedTarget.delta, 15677 - 186 + 1);
+});
+
 test('computePlayerInsights ignores invalid statistical segment data', async () => {
   mockRankedScores([100]);
 

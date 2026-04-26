@@ -1,7 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
+const path = require('path');
 const mongoose = require('mongoose');
+let sharp;
+try { sharp = require('sharp'); } catch (_) { sharp = null; }
 const Player = require('../models/Player');
 const GameResult = require('../models/GameResult');
 const AccountLink = require('../models/AccountLink');
@@ -650,6 +653,7 @@ router.get('/share/payload/:wallet', readLimiter, async (req, res) => {
 
     const baseUrl = getPublicBaseUrl(req);
     const shareUrl = `${baseUrl}/api/leaderboard/share/page/${wallet}`;
+    const shareImageUrl = `${baseUrl}/api/leaderboard/share/image/${wallet}.png`;
     const postText = buildSharePostText(shareContext.scoreForShare, '');
 
     return res.json({
@@ -659,6 +663,7 @@ router.get('/share/payload/:wallet', readLimiter, async (req, res) => {
       personalBestScore: shareContext.personalBestScore,
       isLatestRunPersonalBest: shareContext.isLatestRunPersonalBest,
       shareUrl,
+      shareImageUrl,
       postText
     });
   } catch (error) {
@@ -716,6 +721,58 @@ router.get('/share/image/:wallet.svg', readLimiter, async (req, res) => {
   }
 });
 
+const SCORE_TEMPLATE_PATH = path.join(__dirname, '..', 'img', 'Score_result');
+
+router.get('/share/image/:wallet.png', readLimiter, async (req, res) => {
+  try {
+    const wallet = String(req.params.wallet || '').trim().toLowerCase();
+    if (!isValidWalletAddress(wallet)) {
+      return res.status(400).json({ error: 'Invalid wallet format.' });
+    }
+
+    const shareContext = await resolveShareContextByWallet(wallet);
+    if (!shareContext) {
+      return res.status(404).json({ error: 'Player not found' });
+    }
+
+    if (!sharp) {
+      return res.status(503).json({ error: 'PNG rendering unavailable' });
+    }
+
+    const score = shareContext.scoreForShare;
+
+    const templateMeta = await sharp(SCORE_TEMPLATE_PATH).metadata();
+    const w = templateMeta.width || 1254;
+    const h = templateMeta.height || 1254;
+
+    const scoreText = String(score);
+    const fontSize = Math.min(180, Math.floor(w * 0.14));
+    const cx = Math.round(w / 2);
+    const cy = Math.round(h * 0.72);
+
+    const svgOverlay = Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">` +
+      `<text x="${cx}" y="${cy}" text-anchor="middle"` +
+      ` font-size="${fontSize}" font-weight="900"` +
+      ` font-family="Arial Black, Arial, sans-serif"` +
+      ` fill="#ffffff" stroke="#000000" stroke-width="6">${escapeHtml(scoreText)}</text>` +
+      `</svg>`
+    );
+
+    const pngBuffer = await sharp(SCORE_TEMPLATE_PATH)
+      .composite([{ input: svgOverlay, blend: 'over' }])
+      .png({ compressionLevel: 8 })
+      .toBuffer();
+
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    return res.send(pngBuffer);
+  } catch (error) {
+    logger.error({ err: error.message, requestId: req.requestId }, 'GET /share/image/:wallet.png error');
+    return res.status(500).json({ error: 'Server error', requestId: req.requestId });
+  }
+});
+
 router.get('/share/page/:wallet', readLimiter, async (req, res) => {
   try {
     const wallet = String(req.params.wallet || '').trim().toLowerCase();
@@ -730,7 +787,7 @@ router.get('/share/page/:wallet', readLimiter, async (req, res) => {
 
     const baseUrl = getPublicBaseUrl(req);
     const score = shareContext.scoreForShare;
-    const shareImageUrl = `${baseUrl}/api/leaderboard/share/image/${wallet}.svg`;
+    const shareImageUrl = `${baseUrl}/api/leaderboard/share/image/${wallet}.png`;
     const referralLink = '';
     const postText = buildSharePostText(score, referralLink);
     const title = `I scored ${score} in Ursass Tube 🐻`;
