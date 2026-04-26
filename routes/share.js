@@ -51,7 +51,7 @@ router.post('/start', shareStartLimiter, requireAuth, async (req, res) => {
 
     const referralUrl = player.referralCode
       ? buildReferralUrl(player.referralCode, req)
-      : buildReferralUrl('', req).replace('/?ref=', '/');
+      : null;
 
     const postText = buildSharePostText(player.bestScore || 0, player.referralCode ? referralUrl : '');
 
@@ -116,18 +116,19 @@ router.post('/confirm', shareConfirmLimiter, requireAuth, async (req, res) => {
     const { shareId } = req.body;
     const primaryId = req.primaryId;
 
-    if (!shareId) {
+    if (!shareId || typeof shareId !== 'string') {
       return res.status(400).json({ error: 'Missing shareId' });
     }
 
-    // Atomic: find and lock the event so only one confirm wins
-    const event = await ShareEvent.findOneAndUpdate(
-      { shareId, primaryId, confirmedAt: null },
-      { $set: { confirmedAt: new Date() } },
-      { new: false }
-    );
+    // Validate shareId is a UUID to prevent injection
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!UUID_RE.test(shareId)) {
+      return res.status(400).json({ error: 'Invalid shareId format' });
+    }
 
-    if (!event) {
+    // First check timing without modifying
+    const pending = await ShareEvent.findOne({ shareId, primaryId, confirmedAt: null });
+    if (!pending) {
       // Either not found or already confirmed
       const existing = await ShareEvent.findOne({ shareId, primaryId });
       if (!existing) {
@@ -143,15 +144,31 @@ router.post('/confirm', shareConfirmLimiter, requireAuth, async (req, res) => {
       });
     }
 
-    // event is the pre-update doc (confirmedAt was null)
     const now = Date.now();
-    const elapsed = now - new Date(event.startedAt).getTime();
+    const elapsed = now - new Date(pending.startedAt).getTime();
 
     if (elapsed < SHARE_REWARD_DELAY_MS) {
-      // Undo the confirmedAt we just set
-      await ShareEvent.findOneAndUpdate({ shareId, primaryId }, { $set: { confirmedAt: null } });
       const secondsLeft = Math.ceil((SHARE_REWARD_DELAY_MS - elapsed) / 1000);
       return res.status(425).json({ error: 'too_early', secondsLeft });
+    }
+
+    // Now do the atomic confirm — ensures only one request wins even under concurrent load
+    const event = await ShareEvent.findOneAndUpdate(
+      { shareId, primaryId, confirmedAt: null },
+      { $set: { confirmedAt: new Date() } },
+      { new: false }
+    );
+
+    if (!event) {
+      // Lost the race — another concurrent request already confirmed it
+      const existing = await ShareEvent.findOne({ shareId, primaryId });
+      const player = await Player.findOne({ wallet: primaryId });
+      return res.json({
+        awarded: existing ? existing.goldAwarded > 0 : false,
+        goldAwarded: existing ? existing.goldAwarded : 0,
+        shareStreak: player ? player.shareStreak : 0,
+        totalGold: player ? player.gold : 0
+      });
     }
 
     const today = getUtcDayKey();

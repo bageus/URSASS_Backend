@@ -11,16 +11,23 @@ function generateReferralCode() {
   return generateNanoid();
 }
 
+function stripTrailingSlash(url) {
+  let result = url;
+  while (result.endsWith('/')) {
+    result = result.slice(0, -1);
+  }
+  return result;
+}
+
 /**
  * Build the public referral URL for a given code.
  * Uses FRONTEND_BASE_URL env first, then PUBLIC_BASE_URL, then derives from req.
  */
 function buildReferralUrl(code, req) {
-  const base = (
-    process.env.FRONTEND_BASE_URL ||
-    process.env.PUBLIC_BASE_URL ||
-    (req ? `${req.protocol}://${req.get('host')}` : '')
-  ).replace(/\/+$/, '');
+  const configured = process.env.FRONTEND_BASE_URL || process.env.PUBLIC_BASE_URL || '';
+  const base = configured
+    ? stripTrailingSlash(configured)
+    : (req ? `${req.protocol}://${req.get('host')}` : '');
 
   return `${base}/?ref=${code}`;
 }

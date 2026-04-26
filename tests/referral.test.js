@@ -11,7 +11,7 @@ test('generateReferralCode produces 8-character string', () => {
 });
 
 test('generateReferralCode uses only allowed alphabet characters', () => {
-  const ALLOWED = new Set('23456789ABCDEFGHJKLMNPQRSTUVWXYZ');
+  const ALLOWED = new Set('23456789ABCDEFGHJKMNPQRSTUVWXYZ');
   for (let i = 0; i < 50; i++) {
     const code = generateReferralCode();
     for (const ch of code) {
