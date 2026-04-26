@@ -40,6 +40,10 @@ async function findLink(rawPrimaryId, rawWallet, initData) {
   }
 
   if (initData) {
+    if (!process.env.TELEGRAM_BOT_TOKEN) {
+      logger.warn({}, 'requireAuth: TELEGRAM_BOT_TOKEN is not configured; cannot validate Telegram initData');
+      return { __invalid: 'initdata' };
+    }
     const validation = validateTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN);
     if (!validation.valid) return { __invalid: 'initdata' };
     const tgId = String(validation.user.id);

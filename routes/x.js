@@ -22,6 +22,9 @@ const { findLink } = require('../middleware/requireAuth');
 
 const FRONTEND_BASE_URL = () => (process.env.FRONTEND_BASE_URL || 'https://ursasstube.fun').replace(/\/+$/, '');
 
+// Minimum primaryId length to show partial chars instead of fully redacting
+const MIN_ID_LENGTH_FOR_MASKING = 6;
+
 function getClientIp(req) {
   const xff = req.get('x-forwarded-for');
   if (xff && typeof xff === 'string') {
@@ -111,7 +114,7 @@ router.get('/oauth/start', oauthStartLimiter, requireXOAuth, async (req, res) =>
     }
 
     const primaryId = link.primaryId;
-    const maskedId = primaryId.length > 6 ? `${primaryId.slice(0, 3)}***${primaryId.slice(-3)}` : '***';
+    const maskedId = primaryId.length > MIN_ID_LENGTH_FOR_MASKING ? `${primaryId.slice(0, 3)}***${primaryId.slice(-3)}` : '***';
     logger.info({ primaryId: maskedId, mode: req.query.mode || 'redirect' }, 'GET /x/oauth/start');
 
     const state = crypto.randomBytes(32).toString('hex');
