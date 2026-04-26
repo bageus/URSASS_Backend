@@ -10,6 +10,7 @@ const donationsRoutes = require('./routes/donations');
 const analyticsRoutes = require('./routes/analytics');
 const referralRoutes = require('./routes/referral');
 const shareRoutes = require('./routes/share');
+const xRoutes = require('./routes/x');
 const logger = require('./utils/logger');
 const { metricsMiddleware, renderMetricsText } = require('./middleware/requestMetrics');
 
@@ -106,6 +107,7 @@ function createApp() {
   app.use('/api/telemetry', analyticsRoutes);
   app.use('/api/referral', referralRoutes);
   app.use('/api/share', shareRoutes);
+  app.use('/api/x', xRoutes);
 
   app.use('/api/v1/leaderboard', leaderboardRoutes);
   app.use('/api/v1/store', storeRoutes);
@@ -116,6 +118,12 @@ function createApp() {
   app.use('/api/v1/telemetry', analyticsRoutes);
   app.use('/api/v1/referral', referralRoutes);
   app.use('/api/v1/share', shareRoutes);
+  app.use('/api/v1/x', xRoutes);
+
+  // JSON 404 for any unmatched /api/* route (prevents Express default HTML response)
+  app.use('/api', (req, res) => {
+    res.status(404).json({ error: 'not_found' });
+  });
 
   app.get('/health', (req, res) => {
     const mongoStates = {

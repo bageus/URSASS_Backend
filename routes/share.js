@@ -1,10 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
+const rateLimit = require('express-rate-limit');
 const Player = require('../models/Player');
 const ShareEvent = require('../models/ShareEvent');
-const { shareStartLimiter, shareConfirmLimiter } = require('../middleware/rateLimiter');
-const { requireAuth } = require('../middleware/requireAuth');
+const AccountLink = require('../models/AccountLink');
 const { getUtcDayKey, getYesterdayUtcDayKey } = require('../utils/utcDay');
 const { buildReferralUrl } = require('../utils/referral');
 const { addGold } = require('../utils/goldWallet');
@@ -13,16 +13,61 @@ const logger = require('../utils/logger');
 const SHARE_REWARD_DELAY_MS = Number(process.env.SHARE_REWARD_DELAY_MS || 30000);
 const SHARE_DAILY_REWARD_GOLD = Number(process.env.SHARE_DAILY_REWARD_GOLD || 20);
 
-function getPublicBaseUrl(req) {
-  const configured = (process.env.PUBLIC_BASE_URL || process.env.APP_BASE_URL || '').trim();
-  if (configured) {
-    return configured.replace(/\/+$/, '');
-  }
-  return `${req.protocol}://${req.get('host')}`;
-}
-
 const SHARE_COPY_TEMPLATE = 'I scored {score} in Ursass Tube 🐻\nCan you beat me?';
 const SHARE_HASHTAGS = '#UrsassTube #Ursas #Ursasplanet #GameChallenge #HighScore';
+
+function getClientIp(req) {
+  const xff = req.get('x-forwarded-for');
+  if (xff && typeof xff === 'string') {
+    const first = xff.split(',').map((v) => v.trim()).find(Boolean);
+    if (first) return first;
+  }
+  return req.ip || req.connection?.remoteAddress || 'unknown';
+}
+
+const shareStartLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  message: 'Too many share start requests. Please wait.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: getClientIp
+});
+
+const shareConfirmLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  message: 'Too many share confirm requests. Please wait.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: getClientIp
+});
+
+/**
+ * Resolve authenticated primaryId from request headers or body.
+ * Returns AccountLink if valid, null otherwise.
+ */
+async function resolveAuth(req) {
+  const primaryId = (
+    req.get('x-primary-id') ||
+    req.get('X-Primary-Id') ||
+    req.body?.primaryId ||
+    ''
+  ).trim().toLowerCase();
+
+  if (!primaryId) return null;
+
+  const link = await AccountLink.findOne({ primaryId });
+  if (!link) return null;
+
+  return link;
+}
+
+function getPublicBaseUrl(req) {
+  const configured = (process.env.PUBLIC_BASE_URL || process.env.APP_BASE_URL || '').trim();
+  if (configured) return configured.replace(/\/+$/, '');
+  return `${req.protocol}://${req.get('host')}`;
+}
 
 function buildSharePostText(score, referralUrl) {
   const normalizedScore = Math.max(0, Math.floor(Number(score || 0)));
@@ -33,34 +78,36 @@ function buildSharePostText(score, referralUrl) {
 
 /**
  * POST /api/share/start
- * Begin a share session. Returns share payload.
- * Auth required.
+ * Begin a share flow. Creates a ShareEvent and returns share metadata.
  */
-router.post('/start', shareStartLimiter, requireAuth, async (req, res) => {
+router.post('/start', shareStartLimiter, async (req, res) => {
   try {
-    const primaryId = req.primaryId;
-    const link = req.authLink;
+    const link = await resolveAuth(req);
+    if (!link) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    const primaryId = link.primaryId;
 
     const player = await Player.findOne({ wallet: primaryId });
     if (!player) {
-      return res.status(404).json({ error: 'Player not found' });
+      return res.status(404).json({ error: 'Player not found. Play at least one game first.' });
     }
 
     const today = getUtcDayKey();
     const canShareToday = player.lastShareDay !== today;
 
-    const referralUrl = player.referralCode
-      ? buildReferralUrl(player.referralCode, req)
-      : null;
-
-    const postText = buildSharePostText(player.bestScore || 0, player.referralCode ? referralUrl : '');
-
+    const referralUrl = buildReferralUrl(player.referralCode || '', req);
+    const scoreAtShare = player.bestScore || 0;
     const baseUrl = getPublicBaseUrl(req);
-    const wallet = link.wallet;
-    const imageUrl = wallet
-      ? `${baseUrl}/api/leaderboard/share/image/${wallet}.png`
-      : `${baseUrl}/api/leaderboard/share/image/${primaryId.replace('tg_', '')}.svg`;
 
+    // Determine image URL — use wallet for PNG if available, SVG fallback for tg-only
+    const walletAddress = link.wallet || null;
+    const imageUrl = walletAddress
+      ? `${baseUrl}/api/leaderboard/share/image/${walletAddress}.png`
+      : `${baseUrl}/api/leaderboard/share/image/default.svg`;
+
+    const postText = buildSharePostText(scoreAtShare, referralUrl);
     const intentUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(postText)}`;
 
     if (!canShareToday) {
@@ -70,26 +117,26 @@ router.post('/start', shareStartLimiter, requireAuth, async (req, res) => {
         shareUrl: referralUrl,
         postText,
         imageUrl,
+        intentUrl,
         eligibleForReward: false,
         secondsUntilReward: 0,
-        intentUrl
+        referralUrl
       });
     }
 
     const shareId = crypto.randomUUID();
-    const now = new Date();
 
     await ShareEvent.create({
       primaryId,
-      wallet: wallet || null,
+      wallet: walletAddress,
       shareId,
-      startedAt: now,
-      scoreAtShare: player.bestScore || 0,
+      startedAt: new Date(),
+      scoreAtShare,
       postText,
       imageUrl
     });
 
-    logger.info({ primaryId, shareId }, 'Share session started');
+    logger.info({ primaryId, shareId }, 'Share started');
 
     return res.json({
       shareId,
@@ -100,142 +147,142 @@ router.post('/start', shareStartLimiter, requireAuth, async (req, res) => {
       eligibleForReward: true,
       secondsUntilReward: Math.ceil(SHARE_REWARD_DELAY_MS / 1000)
     });
-  } catch (err) {
-    logger.error({ err: err.message }, 'POST /api/share/start error');
+
+  } catch (error) {
+    logger.error({ err: error }, 'POST /share/start error');
     return res.status(500).json({ error: 'Server error' });
   }
 });
 
 /**
  * POST /api/share/confirm
- * Confirm a share session and award gold if eligible.
- * Auth required.
+ * Confirm a share and award gold if eligible.
+ * Uses atomic findOneAndUpdate to prevent double-awarding in race conditions.
  */
-router.post('/confirm', shareConfirmLimiter, requireAuth, async (req, res) => {
+router.post('/confirm', shareConfirmLimiter, async (req, res) => {
   try {
-    const { shareId } = req.body;
-    const primaryId = req.primaryId;
+    const link = await resolveAuth(req);
+    if (!link) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
 
-    if (!shareId || typeof shareId !== 'string') {
+    const primaryId = link.primaryId;
+    const shareId = String(req.body?.shareId || '').trim();
+
+    if (!shareId) {
       return res.status(400).json({ error: 'Missing shareId' });
     }
 
-    // Validate shareId is a UUID to prevent injection
-    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (!UUID_RE.test(shareId)) {
-      return res.status(400).json({ error: 'Invalid shareId format' });
+    // Find the share event belonging to this player
+    const shareEvent = await ShareEvent.findOne({ shareId, primaryId });
+    if (!shareEvent) {
+      return res.status(404).json({ error: 'Share event not found' });
     }
 
-    // First check timing without modifying
-    const pending = await ShareEvent.findOne({ shareId, primaryId, confirmedAt: null });
-    if (!pending) {
-      // Either not found or already confirmed
-      const existing = await ShareEvent.findOne({ shareId, primaryId });
-      if (!existing) {
-        return res.status(404).json({ error: 'Share event not found' });
-      }
-      // Already confirmed — return idempotent result
+    // Idempotent: already confirmed
+    if (shareEvent.confirmedAt) {
       const player = await Player.findOne({ wallet: primaryId });
       return res.json({
-        awarded: existing.goldAwarded > 0,
-        goldAwarded: existing.goldAwarded,
+        awarded: shareEvent.goldAwarded > 0,
+        goldAwarded: shareEvent.goldAwarded,
         shareStreak: player ? player.shareStreak : 0,
         totalGold: player ? player.gold : 0
       });
     }
 
-    const now = Date.now();
-    const elapsed = now - new Date(pending.startedAt).getTime();
-
+    // Too early
+    const elapsed = Date.now() - new Date(shareEvent.startedAt).getTime();
     if (elapsed < SHARE_REWARD_DELAY_MS) {
       const secondsLeft = Math.ceil((SHARE_REWARD_DELAY_MS - elapsed) / 1000);
       return res.status(425).json({ error: 'too_early', secondsLeft });
     }
 
-    // Now do the atomic confirm — ensures only one request wins even under concurrent load
-    const event = await ShareEvent.findOneAndUpdate(
-      { shareId, primaryId, confirmedAt: null },
-      { $set: { confirmedAt: new Date() } },
-      { new: false }
-    );
+    // Check if another ShareEvent for today already got a reward
+    const today = getUtcDayKey();
+    const alreadyRewarded = await ShareEvent.findOne({
+      primaryId,
+      dayKey: today,
+      goldAwarded: { $gt: 0 }
+    });
 
-    if (!event) {
-      // Lost the race — another concurrent request already confirmed it
-      const existing = await ShareEvent.findOne({ shareId, primaryId });
+    if (alreadyRewarded) {
+      // Still mark as confirmed (so confirm won't try again), but no reward
+      await ShareEvent.findOneAndUpdate(
+        { shareId, primaryId, confirmedAt: null },
+        { $set: { confirmedAt: new Date(), dayKey: today } }
+      );
       const player = await Player.findOne({ wallet: primaryId });
       return res.json({
-        awarded: existing ? existing.goldAwarded > 0 : false,
-        goldAwarded: existing ? existing.goldAwarded : 0,
+        awarded: false,
+        reason: 'already_rewarded_today',
         shareStreak: player ? player.shareStreak : 0,
         totalGold: player ? player.gold : 0
       });
     }
 
-    const today = getUtcDayKey();
+    // Atomic confirm — prevent double-awarding in concurrent requests
+    const now = new Date();
+    const confirmed = await ShareEvent.findOneAndUpdate(
+      { shareId, primaryId, confirmedAt: null },
+      {
+        $set: {
+          confirmedAt: now,
+          rewardedAt: now,
+          goldAwarded: SHARE_DAILY_REWARD_GOLD,
+          dayKey: today
+        }
+      },
+      { new: true }
+    );
 
-    // Check if another ShareEvent already rewarded today
-    const alreadyRewardedToday = await ShareEvent.findOne({
-      primaryId,
-      dayKey: today,
-      goldAwarded: { $gt: 0 },
-      shareId: { $ne: shareId }
-    });
-
-    if (alreadyRewardedToday) {
-      await ShareEvent.findOneAndUpdate(
-        { shareId, primaryId },
-        { $set: { dayKey: today } }
-      );
-      return res.json({ awarded: false, reason: 'already_rewarded_today' });
+    if (!confirmed) {
+      // Another concurrent request already confirmed it
+      const shareEventRefreshed = await ShareEvent.findOne({ shareId, primaryId });
+      const player = await Player.findOne({ wallet: primaryId });
+      return res.json({
+        awarded: (shareEventRefreshed?.goldAwarded || 0) > 0,
+        goldAwarded: shareEventRefreshed?.goldAwarded || 0,
+        shareStreak: player ? player.shareStreak : 0,
+        totalGold: player ? player.gold : 0
+      });
     }
 
+    // Update player streak and lastShareDay
     const player = await Player.findOne({ wallet: primaryId });
     if (!player) {
       return res.status(404).json({ error: 'Player not found' });
     }
 
     const yesterday = getYesterdayUtcDayKey();
-    let newStreak;
     if (player.lastShareDay === yesterday) {
-      newStreak = (player.shareStreak || 0) + 1;
+      player.shareStreak = (player.shareStreak || 0) + 1;
     } else {
-      newStreak = 1;
+      player.shareStreak = 1;
     }
 
-    // Update player
-    player.shareStreak = newStreak;
     player.lastShareDay = today;
-    player.lastShareAt = new Date();
+    player.lastShareAt = now;
     await player.save();
 
     // Award gold
-    const newGoldBalance = await addGold(primaryId, SHARE_DAILY_REWARD_GOLD, 'share_daily');
-
-    // Finalize the ShareEvent
-    await ShareEvent.findOneAndUpdate(
-      { shareId, primaryId },
-      {
-        $set: {
-          dayKey: today,
-          goldAwarded: SHARE_DAILY_REWARD_GOLD,
-          rewardedAt: new Date()
-        }
-      }
-    );
+    const newGoldBalance = await addGold(primaryId, SHARE_DAILY_REWARD_GOLD, 'share_daily', {
+      requestId: req.requestId
+    });
 
     logger.info(
-      { primaryId, shareId, goldAwarded: SHARE_DAILY_REWARD_GOLD, shareStreak: newStreak },
-      'Share confirmed and gold awarded'
+      { primaryId, shareId, goldAwarded: SHARE_DAILY_REWARD_GOLD, shareStreak: player.shareStreak },
+      'Share confirmed and rewarded'
     );
 
     return res.json({
       awarded: true,
       goldAwarded: SHARE_DAILY_REWARD_GOLD,
-      shareStreak: newStreak,
-      totalGold: newGoldBalance
+      shareStreak: player.shareStreak,
+      totalGold: newGoldBalance !== null ? newGoldBalance : player.gold
     });
-  } catch (err) {
-    logger.error({ err: err.message }, 'POST /api/share/confirm error');
+
+  } catch (error) {
+    logger.error({ err: error }, 'POST /share/confirm error');
     return res.status(500).json({ error: 'Server error' });
   }
 });

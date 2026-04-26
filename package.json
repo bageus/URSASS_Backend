@@ -13,6 +13,7 @@
     "test": "NODE_ENV=test node --test tests/*.test.js"
   },
   "dependencies": {
+    "axios": "^1.15.2",
     "cors": "^2.8.5",
     "dotenv": "^16.0.3",
     "ethers": "^5.7.2",

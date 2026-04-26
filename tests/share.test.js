@@ -1,134 +1,307 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('crypto');
 
-const { getUtcDayKey, getYesterdayUtcDayKey } = require('../utils/utcDay');
+const Player = require('../models/Player');
+const AccountLink = require('../models/AccountLink');
+const ShareEvent = require('../models/ShareEvent');
+const { createApp } = require('../app');
 
-// ── utcDay helpers ────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-test('getUtcDayKey returns YYYY-MM-DD format', () => {
-  const key = getUtcDayKey(new Date('2026-04-26T12:00:00Z'));
-  assert.equal(key, '2026-04-26');
-});
-
-test('getUtcDayKey handles midnight boundaries correctly', () => {
-  assert.equal(getUtcDayKey(new Date('2026-01-01T00:00:00Z')), '2026-01-01');
-  assert.equal(getUtcDayKey(new Date('2026-12-31T23:59:59Z')), '2026-12-31');
-});
-
-test('getYesterdayUtcDayKey returns a date before today', () => {
-  const today = getUtcDayKey();
-  const yesterday = getYesterdayUtcDayKey();
-  assert.ok(yesterday < today, `yesterday (${yesterday}) should be < today (${today})`);
-});
-
-// ── Share flow logic (simulated, no DB) ──────────────────────────────────────
-
-const SHARE_REWARD_DELAY_MS = 30000;
-
-function simulateConfirm({ startedAt, elapsed, alreadyConfirmed = false, alreadyRewardedToday = false }) {
-  if (alreadyConfirmed) {
-    return { result: 'idempotent' };
-  }
-
-  const now = startedAt + elapsed;
-  if (elapsed < SHARE_REWARD_DELAY_MS) {
-    return { result: 'too_early', secondsLeft: Math.ceil((SHARE_REWARD_DELAY_MS - elapsed) / 1000) };
-  }
-
-  if (alreadyRewardedToday) {
-    return { result: 'already_rewarded_today' };
-  }
-
-  return { result: 'awarded', goldAwarded: 20 };
+async function startServer() {
+  const app = createApp();
+  return new Promise((resolve) => {
+    const server = app.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      resolve({ server, baseUrl: `http://127.0.0.1:${port}` });
+    });
+  });
 }
 
-test('share confirm: too early if < 30 seconds elapsed', () => {
-  const startedAt = Date.now();
-  const res = simulateConfirm({ startedAt, elapsed: 15000 });
-  assert.equal(res.result, 'too_early');
-  assert.equal(res.secondsLeft, 15);
-});
-
-test('share confirm: exactly at 30s boundary succeeds', () => {
-  const startedAt = Date.now();
-  const res = simulateConfirm({ startedAt, elapsed: 30000 });
-  assert.equal(res.result, 'awarded');
-  assert.equal(res.goldAwarded, 20);
-});
-
-test('share confirm: > 30 seconds succeeds and awards 20 gold', () => {
-  const startedAt = Date.now();
-  const res = simulateConfirm({ startedAt, elapsed: 60000 });
-  assert.equal(res.result, 'awarded');
-  assert.equal(res.goldAwarded, 20);
-});
-
-test('share confirm: repeat in same day does not re-award', () => {
-  const startedAt = Date.now();
-  const res = simulateConfirm({ startedAt, elapsed: 60000, alreadyRewardedToday: true });
-  assert.equal(res.result, 'already_rewarded_today');
-});
-
-test('share confirm: already confirmed returns idempotent result', () => {
-  const startedAt = Date.now();
-  const res = simulateConfirm({ startedAt, elapsed: 60000, alreadyConfirmed: true });
-  assert.equal(res.result, 'idempotent');
-});
-
-// ── Share streak logic ────────────────────────────────────────────────────────
-
-function computeNewStreak(lastShareDay, currentShareStreak, today, yesterday) {
-  if (lastShareDay === yesterday) {
-    return currentShareStreak + 1;
-  }
-  return 1;
+async function post(baseUrl, path, body, headers = {}) {
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify(body)
+  });
+  const json = await res.json().catch(() => ({}));
+  return { status: res.status, body: json };
 }
 
-function computeDisplayStreak(lastShareDay, shareStreak, today, yesterday) {
-  if (lastShareDay && lastShareDay < yesterday) {
-    return 0;
-  }
-  return shareStreak;
+function makePlayer(overrides = {}) {
+  return {
+    wallet: 'tg_player1',
+    referralCode: 'PLAY1234',
+    referredBy: null,
+    bestScore: 500,
+    gold: 0,
+    shareStreak: 0,
+    lastShareDay: null,
+    lastShareAt: null,
+    save: async function() { return this; },
+    ...overrides
+  };
 }
 
-test('streak: increments by 1 when lastShareDay is yesterday', () => {
-  const today = '2026-04-26';
-  const yesterday = '2026-04-25';
-  const streak = computeNewStreak('2026-04-25', 3, today, yesterday);
-  assert.equal(streak, 4);
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+test('POST /api/share/start - requires auth', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    AccountLink.findOne = async () => null;
+    const r = await post(baseUrl, '/api/share/start', {});
+    assert.equal(r.status, 401);
+  } finally {
+    server.close();
+  }
 });
 
-test('streak: resets to 1 when lastShareDay is not yesterday', () => {
-  const today = '2026-04-26';
-  const yesterday = '2026-04-25';
-  const streak = computeNewStreak('2026-04-20', 7, today, yesterday);
-  assert.equal(streak, 1);
+test('POST /api/share/start - returns shareId when eligible', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    process.env.FRONTEND_BASE_URL = 'https://ursasstube.fun';
+    const link = { primaryId: 'tg_player1', telegramId: '1', wallet: null };
+    AccountLink.findOne = async (q) => (q.primaryId === 'tg_player1' ? link : null);
+    Player.findOne = async () => makePlayer();
+
+    const created = [];
+    ShareEvent.create = async (doc) => {
+      created.push(doc);
+      return { ...doc };
+    };
+
+    const r = await post(baseUrl, '/api/share/start', {}, { 'X-Primary-Id': 'tg_player1' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.ok(r.body.shareId, 'shareId should be present');
+    assert.ok(r.body.eligibleForReward === true);
+    assert.ok(r.body.secondsUntilReward > 0);
+    assert.equal(created.length, 1);
+  } finally {
+    delete process.env.FRONTEND_BASE_URL;
+    server.close();
+  }
 });
 
-test('streak: resets to 1 on first share ever', () => {
-  const today = '2026-04-26';
-  const yesterday = '2026-04-25';
-  const streak = computeNewStreak(null, 0, today, yesterday);
-  assert.equal(streak, 1);
+test('POST /api/share/start - already_shared_today returns no shareId', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const link = { primaryId: 'tg_player2', telegramId: '2', wallet: null };
+    AccountLink.findOne = async (q) => (q.primaryId === 'tg_player2' ? link : null);
+    Player.findOne = async () => makePlayer({ wallet: 'tg_player2', lastShareDay: today });
+    ShareEvent.create = async () => ({});
+
+    const r = await post(baseUrl, '/api/share/start', {}, { 'X-Primary-Id': 'tg_player2' });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.shareId, null);
+    assert.equal(r.body.reason, 'already_shared_today');
+  } finally {
+    server.close();
+  }
 });
 
-test('display streak: returns 0 if lastShareDay is older than yesterday', () => {
-  const today = '2026-04-26';
-  const yesterday = '2026-04-25';
-  const display = computeDisplayStreak('2026-04-20', 5, today, yesterday);
-  assert.equal(display, 0);
+test('POST /api/share/confirm - 425 when confirmed too early', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const shareId = crypto.randomUUID();
+    const link = { primaryId: 'tg_early', telegramId: '3', wallet: null };
+    AccountLink.findOne = async (q) => (q.primaryId === 'tg_early' ? link : null);
+    Player.findOne = async () => makePlayer({ wallet: 'tg_early' });
+
+    const event = {
+      primaryId: 'tg_early',
+      shareId,
+      startedAt: new Date(), // just now — not 30s elapsed
+      confirmedAt: null,
+      goldAwarded: 0
+    };
+    ShareEvent.findOne = async (q) => {
+      if (q.shareId === shareId && q.primaryId === 'tg_early') return event;
+      return null;
+    };
+    ShareEvent.findOneAndUpdate = async () => null;
+
+    const r = await post(baseUrl, '/api/share/confirm', { shareId }, { 'X-Primary-Id': 'tg_early' });
+    assert.equal(r.status, 425, JSON.stringify(r.body));
+    assert.equal(r.body.error, 'too_early');
+    assert.ok(r.body.secondsLeft > 0);
+  } finally {
+    server.close();
+  }
 });
 
-test('display streak: returns actual streak if lastShareDay is yesterday', () => {
-  const today = '2026-04-26';
-  const yesterday = '2026-04-25';
-  const display = computeDisplayStreak('2026-04-25', 4, today, yesterday);
-  assert.equal(display, 4);
+test('POST /api/share/confirm - awards 20 gold after 30s', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const shareId = crypto.randomUUID();
+    const link = { primaryId: 'tg_gold', telegramId: '4', wallet: null };
+    AccountLink.findOne = async (q) => (q.primaryId === 'tg_gold' ? link : null);
+
+    const player = makePlayer({ wallet: 'tg_gold', gold: 0, shareStreak: 0, lastShareDay: null });
+    Player.findOne = async () => ({ ...player, save: player.save });
+    Player.findOneAndUpdate = async (q, update) => {
+      player.gold = (player.gold || 0) + (update.$inc?.gold || 0);
+      return player;
+    };
+
+    const event = {
+      primaryId: 'tg_gold',
+      shareId,
+      startedAt: new Date(Date.now() - 35000), // 35s ago
+      confirmedAt: null,
+      goldAwarded: 0
+    };
+    ShareEvent.findOne = async (q) => {
+      if (q.shareId === shareId) return event;
+      if (q.primaryId === 'tg_gold' && q.dayKey) return null; // no prior reward today
+      return null;
+    };
+    ShareEvent.findOneAndUpdate = async (q, update, opts) => {
+      if (q.shareId === shareId && q.confirmedAt === null) {
+        Object.assign(event, update.$set);
+        return event;
+      }
+      return null;
+    };
+
+    const r = await post(baseUrl, '/api/share/confirm', { shareId }, { 'X-Primary-Id': 'tg_gold' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.awarded, true);
+    assert.equal(r.body.goldAwarded, 20);
+    assert.ok(r.body.shareStreak >= 1);
+  } finally {
+    server.close();
+  }
 });
 
-test('display streak: returns actual streak if lastShareDay is today', () => {
-  const today = '2026-04-26';
-  const yesterday = '2026-04-25';
-  const display = computeDisplayStreak('2026-04-26', 2, today, yesterday);
-  assert.equal(display, 2);
+test('POST /api/share/confirm - repeat same day returns no reward', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const shareId = crypto.randomUUID();
+    const today = new Date().toISOString().slice(0, 10);
+    const link = { primaryId: 'tg_repeat', telegramId: '5', wallet: null };
+    AccountLink.findOne = async (q) => (q.primaryId === 'tg_repeat' ? link : null);
+
+    const player = makePlayer({ wallet: 'tg_repeat', gold: 20, shareStreak: 1, lastShareDay: today });
+    Player.findOne = async () => ({ ...player, save: player.save });
+
+    const event = {
+      primaryId: 'tg_repeat',
+      shareId,
+      startedAt: new Date(Date.now() - 35000),
+      confirmedAt: null,
+      goldAwarded: 0
+    };
+    const alreadyRewarded = { primaryId: 'tg_repeat', dayKey: today, goldAwarded: 20 };
+
+    ShareEvent.findOne = async (q) => {
+      if (q.shareId === shareId) return event;
+      if (q.primaryId === 'tg_repeat' && q.dayKey === today) return alreadyRewarded;
+      return null;
+    };
+    ShareEvent.findOneAndUpdate = async (q, update) => {
+      Object.assign(event, update.$set);
+      return event;
+    };
+
+    const r = await post(baseUrl, '/api/share/confirm', { shareId }, { 'X-Primary-Id': 'tg_repeat' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.awarded, false);
+    assert.equal(r.body.reason, 'already_rewarded_today');
+  } finally {
+    server.close();
+  }
+});
+
+test('POST /api/share/confirm - streak increments when last share was yesterday', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const shareId = crypto.randomUUID();
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const link = { primaryId: 'tg_streak', telegramId: '6', wallet: null };
+    AccountLink.findOne = async (q) => (q.primaryId === 'tg_streak' ? link : null);
+
+    const player = makePlayer({
+      wallet: 'tg_streak',
+      gold: 0,
+      shareStreak: 3,
+      lastShareDay: yesterday
+    });
+    Player.findOne = async () => ({ ...player, save: async function() { Object.assign(player, this); return this; } });
+    Player.findOneAndUpdate = async (q, update) => {
+      player.gold = (player.gold || 0) + (update.$inc?.gold || 0);
+      return player;
+    };
+
+    const event = {
+      primaryId: 'tg_streak',
+      shareId,
+      startedAt: new Date(Date.now() - 35000),
+      confirmedAt: null,
+      goldAwarded: 0
+    };
+    ShareEvent.findOne = async (q) => {
+      if (q.shareId === shareId) return event;
+      if (q.dayKey) return null;
+      return null;
+    };
+    ShareEvent.findOneAndUpdate = async (q, update, opts) => {
+      Object.assign(event, update.$set);
+      return event;
+    };
+
+    const r = await post(baseUrl, '/api/share/confirm', { shareId }, { 'X-Primary-Id': 'tg_streak' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.awarded, true);
+    assert.equal(r.body.shareStreak, 4, 'Streak should increment from 3 to 4');
+  } finally {
+    server.close();
+  }
+});
+
+test('POST /api/share/confirm - streak resets to 1 when last share was 2+ days ago', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const shareId = crypto.randomUUID();
+    const twoDaysAgo = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10);
+    const link = { primaryId: 'tg_reset', telegramId: '7', wallet: null };
+    AccountLink.findOne = async (q) => (q.primaryId === 'tg_reset' ? link : null);
+
+    const player = makePlayer({
+      wallet: 'tg_reset',
+      gold: 0,
+      shareStreak: 5,
+      lastShareDay: twoDaysAgo
+    });
+    Player.findOne = async () => ({ ...player, save: async function() { Object.assign(player, this); return this; } });
+    Player.findOneAndUpdate = async (q, update) => {
+      player.gold = (player.gold || 0) + (update.$inc?.gold || 0);
+      return player;
+    };
+
+    const event = {
+      primaryId: 'tg_reset',
+      shareId,
+      startedAt: new Date(Date.now() - 35000),
+      confirmedAt: null,
+      goldAwarded: 0
+    };
+    ShareEvent.findOne = async (q) => {
+      if (q.shareId === shareId) return event;
+      if (q.dayKey) return null;
+      return null;
+    };
+    ShareEvent.findOneAndUpdate = async (q, update, opts) => {
+      Object.assign(event, update.$set);
+      return event;
+    };
+
+    const r = await post(baseUrl, '/api/share/confirm', { shareId }, { 'X-Primary-Id': 'tg_reset' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.awarded, true);
+    assert.equal(r.body.shareStreak, 1, 'Streak should reset to 1 after a gap');
+  } finally {
+    server.close();
+  }
 });

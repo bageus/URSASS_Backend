@@ -69,22 +69,22 @@ const playerSchema = new mongoose.Schema({
     }
   ],
   
-  // Referral system
+  // ── Referral system ───────────────────────────────────────────────────────
   referralCode: { type: String, unique: true, sparse: true, index: true },
   referredBy: { type: String, default: null, index: true },
   referralRewardGranted: { type: Boolean, default: false },
 
-  // X (Twitter) OAuth stubs — real integration in PR-2
+  // ── X (Twitter) OAuth — stubs for PR-2 ───────────────────────────────────
   xUserId: { type: String, default: null, index: true, sparse: true },
   xUsername: { type: String, default: null },
   xAccessToken: { type: String, default: null, select: false },
   xRefreshToken: { type: String, default: null, select: false },
   xConnectedAt: { type: Date, default: null },
 
-  // Reward gold balance (from referrals, daily share, etc.)
+  // ── Gold reward wallet (share/referral rewards; separate from in-game coins)
   gold: { type: Number, default: 0 },
 
-  // Share streak
+  // ── Daily share streak ────────────────────────────────────────────────────
   shareStreak: { type: Number, default: 0 },
   lastShareDay: { type: String, default: null },
   lastShareAt: { type: Date, default: null },
@@ -100,23 +100,22 @@ const playerSchema = new mongoose.Schema({
   }
 });
 
-const MAX_CODE_ATTEMPTS = 5;
+// Generate a unique referralCode before first save if not already set.
+playerSchema.pre('save', async function generateCode() {
+  if (this.referralCode) return;
 
-playerSchema.pre('save', async function generateReferralCodeHook(next) {
-  if (this.referralCode) {
-    return next();
-  }
-
-  for (let attempt = 0; attempt < MAX_CODE_ATTEMPTS; attempt++) {
+  const MAX_ATTEMPTS = 5;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const code = generateReferralCode();
-    const exists = await mongoose.model('Player').findOne({ referralCode: code }).lean();
+    const exists = await this.constructor.findOne({ referralCode: code }).select('_id').lean();
     if (!exists) {
       this.referralCode = code;
-      return next();
+      return;
     }
   }
 
-  return next(new Error('Failed to generate unique referral code after max attempts'));
+  // Extremely unlikely but surface the error clearly
+  throw new Error('Could not generate a unique referral code after 5 attempts');
 });
 
 module.exports = mongoose.model('Player', playerSchema);

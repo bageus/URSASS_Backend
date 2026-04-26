@@ -17,8 +17,9 @@ const logger = require('../utils/logger');
 const { normalizeWallet, validateTimestampWindow } = require('../utils/security');
 const { validateTelegramInitData } = require('../utils/telegramAuth');
 const { computeRank } = require('../services/leaderboardInsightsService');
-const { getUtcDayKey, getYesterdayUtcDayKey } = require('../utils/utcDay');
 const { buildReferralUrl } = require('../utils/referral');
+const { getUtcDayKey, getYesterdayUtcDayKey } = require('../utils/utcDay');
+const { findLink } = require('../middleware/requireAuth');
 
 const WALLET_TIMESTAMP_WINDOW_MS = Number(process.env.WALLET_AUTH_TIMESTAMP_WINDOW_MS || 10 * 60 * 1000);
 
@@ -375,6 +376,79 @@ router.get('/info/:identifier', readLimiter, async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'GET /info error');
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * GET /api/account/me/profile
+ * Returns full player profile including rank, referral info, share streak.
+ * Auth: X-Primary-Id or X-Wallet header (both fields tried, with cross-field fallback).
+ */
+router.get('/me/profile', readLimiter, async (req, res) => {
+  try {
+    const rawPrimaryId = (req.get('x-primary-id') || '').trim().toLowerCase();
+    const rawWallet = (req.get('x-wallet') || '').trim().toLowerCase();
+    const initData = req.get('x-telegram-init-data') || req.get('X-Telegram-Init-Data') || '';
+
+    if (!rawPrimaryId && !rawWallet && !initData) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    const link = await findLink(rawPrimaryId, rawWallet, initData);
+    if (!link || link.__invalid) {
+      return res.status(401).json({ error: 'Account not found' });
+    }
+
+    const primaryId = link.primaryId;
+    const player = await Player.findOne({ wallet: primaryId });
+    if (!player) {
+      return res.status(404).json({ error: 'Player not found. Play at least one game first.' });
+    }
+
+    const { rank, totalRankedPlayers } = await computeRank(player.bestScore || 0);
+    const referralUrl = buildReferralUrl(player.referralCode || '', req);
+
+    const today = getUtcDayKey();
+    const yesterday = getYesterdayUtcDayKey();
+
+    const canShareToday = player.lastShareDay !== today;
+
+    // For display: if streak is stale (missed yesterday), show 0 without mutating DB
+    const displayShareStreak =
+      player.lastShareDay && player.lastShareDay < yesterday
+        ? 0
+        : player.shareStreak || 0;
+
+    return res.json({
+      primaryId,
+      rank: rank || null,
+      totalRankedPlayers: totalRankedPlayers || 0,
+      bestScore: player.bestScore || 0,
+      gold: player.gold || 0,
+      referralCode: player.referralCode || null,
+      referralUrl,
+      telegram: {
+        connected: Boolean(link.telegramId),
+        username: link.telegramUsername || null,
+        id: link.telegramId || null
+      },
+      wallet: {
+        connected: Boolean(link.wallet),
+        address: link.wallet || null
+      },
+      x: {
+        connected: Boolean(player.xUserId),
+        username: player.xUsername || null
+      },
+      shareStreak: displayShareStreak,
+      canShareToday,
+      goldRewardToday: Number(process.env.SHARE_DAILY_REWARD_GOLD || 20),
+      lastShareDay: player.lastShareDay || null
+    });
+
+  } catch (error) {
+    logger.error({ err: error }, 'GET /me/profile error');
+    return res.status(500).json({ error: 'Server error' });
   }
 });
 

@@ -114,7 +114,24 @@ Versioned aliases are also available under `/api/v1/*` (backward-compatible with
 - API requests must target the deployed backend host (for example, Railway), not the frontend host itself.
 - If you send `POST https://bageus-github-io.vercel.app/api/analytics/events`, Vercel frontend hosting may return `404 Not Found` because that route is not served there.
 
+## Auth Headers
 
+Authenticated endpoints resolve the caller identity from one of three request headers (checked in order):
+
+| Header | Description |
+|---|---|
+| `X-Primary-Id` | **Preferred.** The canonical `primaryId` of the AccountLink record (e.g. `tg_123` or `0xabc`). |
+| `X-Wallet` | **Fallback.** Wallet address *or* telegram primaryId (e.g. `tg_123`). The middleware tries `wallet` field first, then `primaryId` field. |
+| `X-Telegram-Init-Data` | Raw Telegram WebApp `initData` string. Validated via HMAC; account looked up by `telegramId`. |
+
+The auth middleware (`middleware/requireAuth.js`) performs cross-field lookups for robustness:
+
+- When `X-Primary-Id` is provided: tries `{ primaryId }` first, then `{ wallet }` as fallback.
+- When `X-Wallet` is provided: tries `{ wallet }` first, then `{ primaryId }` as fallback.
+
+This ensures Telegram-only users (whose `primaryId` is `tg_<id>`) can authenticate even when the frontend sends their identifier in the `X-Wallet` header.
+
+Any unmatched `/api/*` route returns `404 application/json { "error": "not_found" }` instead of an HTML page.
 
 ## Referral & Share Flow
 
@@ -232,3 +249,191 @@ The server is deployed on [Railway](https://railway.app). Set the environment va
 For better isolation under load, you can run the bot in a separate worker process:
 - API: `npm run start:api` with `BOT_MODE=worker` (or `START_BOT_IN_PROCESS=false`)
 - Bot worker: `npm run start:bot`
+
+## Referral & Share Flow
+
+### New Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `FRONTEND_BASE_URL` | *(none)* | Base URL for referral links, e.g. `https://ursasstube.fun` |
+| `SHARE_REWARD_DELAY_MS` | `30000` | Milliseconds a user must wait after `/share/start` before confirming |
+| `SHARE_DAILY_REWARD_GOLD` | `20` | Gold awarded per confirmed daily share |
+| `REFERRAL_REWARD_REFERRER_GOLD` | `50` | Gold awarded to the referrer when the referee completes their first run |
+| `REFERRAL_REWARD_REFEREE_GOLD` | `100` | Gold awarded to the referee on first run after being referred |
+
+### Endpoints
+
+#### Player Profile
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/account/me/profile` | `X-Primary-Id` header | Returns rank, bestScore, gold, referralUrl, share streak, connection status |
+
+**Response:**
+```json
+{
+  "primaryId": "tg_123",
+  "rank": 42,
+  "totalRankedPlayers": 12500,
+  "bestScore": 8350,
+  "gold": 1240,
+  "referralCode": "K7M3X9PA",
+  "referralUrl": "https://ursasstube.fun/?ref=K7M3X9PA",
+  "telegram": { "connected": true, "username": "vasya", "id": "123" },
+  "wallet": { "connected": true, "address": "0x..." },
+  "x": { "connected": false, "username": null },
+  "shareStreak": 3,
+  "canShareToday": true,
+  "goldRewardToday": 20,
+  "lastShareDay": "2026-04-25"
+}
+```
+
+#### Referral Tracking
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/referral/track` | `X-Primary-Id` header | Attach a referral code to the current player |
+
+**Body:** `{ "ref": "K7M3X9PA" }`
+
+**Notes:**
+- Idempotent — calling it twice returns `{ "already": true }`
+- Self-referral is rejected (400)
+- Rewards (+50 gold for referrer, +100 gold for referee) are granted automatically after the referee's **first valid game run**
+
+#### Share Flow
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/share/start` | `X-Primary-Id` header | Start a share event; returns shareId, postText, imageUrl, intentUrl |
+| `POST` | `/api/share/confirm` | `X-Primary-Id` header | Confirm the share after ≥30 s; awards 20 gold and updates streak |
+
+**`/api/share/start` response:**
+```json
+{
+  "shareId": "uuid",
+  "postText": "I scored 8350 in Ursass Tube 🐻\n...",
+  "referralUrl": "https://ursasstube.fun/?ref=K7M3X9PA",
+  "imageUrl": "https://api.ursasstube.fun/api/leaderboard/share/image/0x....png",
+  "intentUrl": "https://twitter.com/intent/tweet?text=...",
+  "eligibleForReward": true,
+  "secondsUntilReward": 30
+}
+```
+
+**`/api/share/confirm` response (success):**
+```json
+{
+  "awarded": true,
+  "goldAwarded": 20,
+  "shareStreak": 4,
+  "totalGold": 1260
+}
+```
+
+**Streak logic:**
+- Streak +1 if `lastShareDay === yesterday`
+- Streak resets to 1 if the player missed a day
+- `/me/profile` returns `shareStreak: 0` for display if streak is stale (DB not mutated until next confirm)
+
+### Migration
+
+Run once after deployment to backfill `referralCode` for existing players and create necessary indexes:
+
+```bash
+node scripts/migrations/2026-04-26-referral-and-share.js
+```
+
+The migration is **idempotent** — safe to run multiple times.
+
+---
+
+## X (Twitter) OAuth
+
+> **Note:** Real tweet-level verification (checking that a post with a given tweetId was actually published) is a future PR. This section describes the OAuth connect/disconnect foundation.
+
+### Setup in X Developer Portal
+
+1. Create an application at [developer.twitter.com](https://developer.twitter.com).
+2. Enable **OAuth 2.0** in the app settings.
+3. Set the **Callback URL** to your `X_OAUTH_REDIRECT_URI`, e.g. `https://api.ursasstube.fun/api/x/oauth/callback`.
+4. Request at least these **Scopes**: `tweet.read users.read offline.access`.
+5. Copy your **Client ID** (and **Client Secret** for confidential clients) into the environment variables below.
+
+### Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `X_OAUTH_CLIENT_ID` | *(required)* | OAuth 2.0 Client ID from X Developer Portal |
+| `X_OAUTH_CLIENT_SECRET` | *(required for confidential clients)* | Client Secret; omit if using public client |
+| `X_OAUTH_PUBLIC_CLIENT` | `false` | Set `true` to skip Basic auth on token exchange (public client) |
+| `X_OAUTH_REDIRECT_URI` | *(required)* | e.g. `https://api.ursasstube.fun/api/x/oauth/callback` |
+| `X_OAUTH_SCOPES` | `tweet.read users.read offline.access` | Space-separated scopes |
+
+If `X_OAUTH_CLIENT_ID` or `X_OAUTH_REDIRECT_URI` are missing, all `/api/x/*` endpoints return **503 `application/json { error: "x_oauth_not_configured" }`** — the server does not crash.
+
+### Endpoints
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/x/oauth/start` | `X-Primary-Id` or `X-Wallet` header | Start OAuth flow; redirects to X or returns `{ authorizeUrl }` with `?mode=json` |
+| `GET` | `/api/x/oauth/callback` | *(none — X redirects here)* | Handles code exchange; redirects back to frontend |
+| `POST` | `/api/x/disconnect` | `X-Primary-Id` or `X-Wallet` header | Revoke tokens and unlink X account |
+| `GET` | `/api/x/status` | `X-Primary-Id` or `X-Wallet` header | Returns current X connection status |
+
+Versioned aliases at `/api/v1/x/*` also work.
+
+#### `GET /api/x/oauth/start`
+
+- Generates PKCE pair, stores `OAuthState` (TTL 5 min), redirects 302 to X authorization URL.
+- Add `?mode=json` to receive `{ "authorizeUrl": "..." }` instead of a redirect (useful for SPAs opening a popup/tab).
+- When env variables are absent returns `503 application/json { error: "x_oauth_not_configured" }`.
+
+#### `GET /api/x/oauth/callback`
+
+Handles the redirect from X after user grants or denies access.
+
+**Success redirect:**
+```
+${FRONTEND_BASE_URL}/?x=connected&username=<x_username>
+```
+
+**Error redirect:**
+```
+${FRONTEND_BASE_URL}/?x=error&reason=<reason>
+```
+
+Possible `reason` values:
+
+| reason | Description |
+|---|---|
+| `access_denied` | User denied the X authorization |
+| `missing_params` | `code` or `state` missing in callback |
+| `invalid_state` | `state` not found or expired (CSRF protection) |
+| `already_linked_to_another_player` | This X account is already connected to a different player. A security event is logged with both `primaryId` values for audit. |
+| `token_exchange_failed` | Error calling X token endpoint |
+| `fetch_user_failed` | Error fetching user info from X |
+| `player_not_found` | Player record not found |
+| `server_error` | Unexpected server error |
+
+#### `POST /api/x/disconnect`
+
+Unlinks the connected X account. Attempts best-effort token revocation.
+
+**Response:**
+```json
+{ "disconnected": true }
+```
+
+#### `GET /api/x/status`
+
+**Response:**
+```json
+{
+  "connected": true,
+  "username": "bearplayer",
+  "connectedAt": "2026-04-25T12:00:00.000Z"
+}
+```

@@ -2,29 +2,36 @@ const Player = require('../models/Player');
 const logger = require('./logger');
 
 /**
- * Atomically add gold to a player's gold balance.
- * @param {string} primaryId - The player's primaryId (wallet or tg_<id>)
- * @param {number} amount - Amount of gold to add
- * @param {string} reason - Reason for the gold award (for logging)
- * @returns {Promise<number>} New gold balance
+ * Atomically add gold to a player's reward wallet.
+ *
+ * @param {string} primaryId - Player's primaryId (wallet address or tg_xxx)
+ * @param {number} amount    - Amount of gold to add (positive integer)
+ * @param {string} reason    - Reason label for logging (e.g. 'share_daily', 'referral_referrer')
+ * @param {object} [opts]
+ * @param {string} [opts.requestId] - Request ID for log correlation
+ * @returns {Promise<number|null>} New gold balance, or null if player not found
  */
-async function addGold(primaryId, amount, reason) {
+async function addGold(primaryId, amount, reason, opts = {}) {
   if (!primaryId || typeof amount !== 'number' || amount <= 0) {
-    throw new Error(`addGold: invalid arguments primaryId=${primaryId} amount=${amount}`);
+    logger.warn({ primaryId, amount, reason }, 'addGold: invalid arguments');
+    return null;
   }
 
   const result = await Player.findOneAndUpdate(
     { wallet: primaryId },
-    { $inc: { gold: amount }, $set: { updatedAt: new Date() } },
-    { new: true, upsert: false }
+    { $inc: { gold: amount } },
+    { new: true }
   );
 
   if (!result) {
     logger.warn({ primaryId, amount, reason }, 'addGold: player not found');
-    throw new Error(`addGold: player not found for primaryId=${primaryId}`);
+    return null;
   }
 
-  logger.info({ primaryId, amount, reason, newBalance: result.gold }, 'Gold awarded');
+  logger.info(
+    { primaryId, amount, reason, newBalance: result.gold, requestId: opts.requestId },
+    'Gold awarded'
+  );
 
   return result.gold;
 }

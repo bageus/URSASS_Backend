@@ -1,213 +1,178 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { getUtcDayKey, getYesterdayUtcDayKey } = require('../utils/utcDay');
-const { buildReferralUrl } = require('../utils/referral');
+const Player = require('../models/Player');
+const AccountLink = require('../models/AccountLink');
+const PlayerRun = require('../models/PlayerRun');
+const { createApp } = require('../app');
 
-// ── Profile response construction (unit level, no DB) ───────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-function buildProfileResponse({ player, link, rank, totalRankedPlayers, req = null }) {
-  const today = getUtcDayKey();
-  const yesterday = getYesterdayUtcDayKey();
+async function startServer() {
+  const app = createApp();
+  return new Promise((resolve) => {
+    const server = app.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      resolve({ server, baseUrl: `http://127.0.0.1:${port}` });
+    });
+  });
+}
 
-  const canShareToday = player.lastShareDay !== today;
+async function get(baseUrl, path, headers = {}) {
+  const res = await fetch(`${baseUrl}${path}`, {
+    headers
+  });
+  const json = await res.json().catch(() => ({}));
+  return { status: res.status, body: json };
+}
 
-  let displayStreak = player.shareStreak || 0;
-  if (player.lastShareDay && player.lastShareDay < yesterday) {
-    displayStreak = 0;
-  }
-
-  const referralCode = player.referralCode || null;
-  const referralUrl = referralCode ? buildReferralUrl(referralCode, req) : null;
-
+function makePlayer(overrides = {}) {
   return {
-    primaryId: link.primaryId,
-    rank: rank || null,
-    totalRankedPlayers: totalRankedPlayers || 0,
-    bestScore: player.bestScore || 0,
-    gold: player.gold || 0,
-    referralCode,
-    referralUrl,
-    telegram: {
-      connected: !!link.telegramId,
-      username: link.telegramUsername || null,
-      id: link.telegramId || null
-    },
-    wallet: {
-      connected: !!link.wallet,
-      address: link.wallet || null
-    },
-    x: {
-      connected: !!player.xUserId,
-      username: player.xUsername || null
-    },
-    shareStreak: displayStreak,
-    canShareToday,
-    goldRewardToday: 20,
-    lastShareDay: player.lastShareDay || null
+    wallet: 'tg_profile1',
+    referralCode: 'PROF1234',
+    referredBy: null,
+    bestScore: 8350,
+    gold: 1240,
+    shareStreak: 3,
+    lastShareDay: null,
+    lastShareAt: null,
+    xUserId: null,
+    xUsername: null,
+    ...overrides
   };
 }
 
-const mockLink = {
-  primaryId: 'tg_123',
-  telegramId: '123',
-  telegramUsername: 'vasya',
-  wallet: '0xabc123'
-};
-
-test('profile: returns correct rank and referral URL', () => {
-  process.env.FRONTEND_BASE_URL = 'https://ursasstube.fun';
-
-  const player = {
-    wallet: 'tg_123',
-    bestScore: 8350,
-    gold: 1240,
-    referralCode: 'K7M3X9PA',
-    shareStreak: 3,
-    lastShareDay: getYesterdayUtcDayKey(),
-    xUserId: null,
-    xUsername: null
+function makeLink(overrides = {}) {
+  return {
+    primaryId: 'tg_profile1',
+    telegramId: '123',
+    wallet: '0xabc',
+    telegramUsername: 'vasya',
+    ...overrides
   };
+}
 
-  const profile = buildProfileResponse({
-    player,
-    link: mockLink,
-    rank: 42,
-    totalRankedPlayers: 12500
-  });
+// ── Tests ────────────────────────────────────────────────────────────────────
 
-  assert.equal(profile.rank, 42);
-  assert.equal(profile.totalRankedPlayers, 12500);
-  assert.equal(profile.bestScore, 8350);
-  assert.equal(profile.gold, 1240);
-  assert.equal(profile.referralCode, 'K7M3X9PA');
-  assert.equal(profile.referralUrl, 'https://ursasstube.fun/?ref=K7M3X9PA');
-  assert.equal(profile.primaryId, 'tg_123');
-
-  delete process.env.FRONTEND_BASE_URL;
+test('GET /api/account/me/profile - requires auth', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const r = await get(baseUrl, '/api/account/me/profile');
+    assert.equal(r.status, 401);
+  } finally {
+    server.close();
+  }
 });
 
-test('profile: canShareToday is true when lastShareDay is not today', () => {
-  const player = {
-    wallet: 'tg_123',
-    bestScore: 0,
-    gold: 0,
-    referralCode: 'AAAAAAAA',
-    shareStreak: 0,
-    lastShareDay: getYesterdayUtcDayKey(),
-    xUserId: null,
-    xUsername: null
-  };
-  const profile = buildProfileResponse({ player, link: mockLink, rank: null, totalRankedPlayers: 0 });
-  assert.equal(profile.canShareToday, true);
+test('GET /api/account/me/profile - returns full profile', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    process.env.FRONTEND_BASE_URL = 'https://ursasstube.fun';
+    const link = makeLink();
+    AccountLink.findOne = async (q) => {
+      if (q.primaryId === 'tg_profile1') return link;
+      return null;
+    };
+
+    const player = makePlayer();
+    Player.findOne = async () => player;
+    Player.countDocuments = async (q) => {
+      if (q?.bestScore?.$gt > 0) return 41; // 41 players better than 8350
+      return 100; // total ranked (bestScore > 0)
+    };
+    PlayerRun.countDocuments = async () => 0;
+    PlayerRun.findOne = () => ({ sort: async () => null });
+
+    const r = await get(baseUrl, '/api/account/me/profile', { 'X-Primary-Id': 'tg_profile1' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    assert.equal(r.body.primaryId, 'tg_profile1');
+    assert.equal(r.body.bestScore, 8350);
+    assert.equal(r.body.gold, 1240);
+    assert.equal(r.body.referralCode, 'PROF1234');
+    assert.ok(r.body.referralUrl.includes('PROF1234'), `referralUrl should contain code: ${r.body.referralUrl}`);
+    assert.equal(r.body.rank, 42, 'rank = 41 + 1 = 42');
+    assert.equal(r.body.totalRankedPlayers, 100);
+    assert.equal(r.body.telegram.connected, true);
+    assert.equal(r.body.telegram.username, 'vasya');
+    assert.equal(r.body.telegram.id, '123');
+    assert.equal(r.body.wallet.connected, true);
+    assert.equal(r.body.wallet.address, '0xabc');
+    assert.equal(r.body.x.connected, false);
+    assert.equal(r.body.x.username, null);
+    assert.equal(r.body.shareStreak, 3);
+    assert.equal(r.body.canShareToday, true);
+    assert.ok(typeof r.body.goldRewardToday === 'number');
+  } finally {
+    delete process.env.FRONTEND_BASE_URL;
+    server.close();
+  }
 });
 
-test('profile: canShareToday is false when lastShareDay is today', () => {
-  const player = {
-    wallet: 'tg_123',
-    bestScore: 0,
-    gold: 0,
-    referralCode: 'AAAAAAAA',
-    shareStreak: 1,
-    lastShareDay: getUtcDayKey(),
-    xUserId: null,
-    xUsername: null
-  };
-  const profile = buildProfileResponse({ player, link: mockLink, rank: null, totalRankedPlayers: 0 });
-  assert.equal(profile.canShareToday, false);
+test('GET /api/account/me/profile - canShareToday false when already shared today', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const link = makeLink({ primaryId: 'tg_today', telegramId: '200', wallet: '0xdef' });
+    AccountLink.findOne = async (q) => (q.primaryId === 'tg_today' ? link : null);
+
+    Player.findOne = async () => makePlayer({ wallet: 'tg_today', lastShareDay: today, shareStreak: 2 });
+    Player.countDocuments = async () => 0;
+    PlayerRun.countDocuments = async () => 0;
+    PlayerRun.findOne = () => ({ sort: async () => null });
+
+    const r = await get(baseUrl, '/api/account/me/profile', { 'X-Primary-Id': 'tg_today' });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.canShareToday, false);
+  } finally {
+    server.close();
+  }
 });
 
-test('profile: shareStreak shows 0 when lastShareDay is 2+ days ago', () => {
-  const player = {
-    wallet: 'tg_123',
-    bestScore: 0,
-    gold: 0,
-    referralCode: 'AAAAAAAA',
-    shareStreak: 7,
-    lastShareDay: '2020-01-01',
-    xUserId: null,
-    xUsername: null
-  };
-  const profile = buildProfileResponse({ player, link: mockLink, rank: null, totalRankedPlayers: 0 });
-  assert.equal(profile.shareStreak, 0, 'should show 0 streak because day is old');
+test('GET /api/account/me/profile - shareStreak shown as 0 when streak is stale (2+ days ago)', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const twoDaysAgo = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10);
+    const link = makeLink({ primaryId: 'tg_stale', telegramId: '300', wallet: '0xghi' });
+    AccountLink.findOne = async (q) => (q.primaryId === 'tg_stale' ? link : null);
+
+    Player.findOne = async () => makePlayer({
+      wallet: 'tg_stale',
+      lastShareDay: twoDaysAgo,
+      shareStreak: 5
+    });
+    Player.countDocuments = async () => 0;
+    PlayerRun.countDocuments = async () => 0;
+    PlayerRun.findOne = () => ({ sort: async () => null });
+
+    const r = await get(baseUrl, '/api/account/me/profile', { 'X-Primary-Id': 'tg_stale' });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.shareStreak, 0, 'Stale streak should display as 0');
+    assert.equal(r.body.canShareToday, true);
+    assert.equal(r.body.lastShareDay, twoDaysAgo);
+  } finally {
+    server.close();
+  }
 });
 
-test('profile: shareStreak preserved when lastShareDay is yesterday', () => {
-  const player = {
-    wallet: 'tg_123',
-    bestScore: 0,
-    gold: 0,
-    referralCode: 'AAAAAAAA',
-    shareStreak: 5,
-    lastShareDay: getYesterdayUtcDayKey(),
-    xUserId: null,
-    xUsername: null
-  };
-  const profile = buildProfileResponse({ player, link: mockLink, rank: null, totalRankedPlayers: 0 });
-  assert.equal(profile.shareStreak, 5);
-});
+test('GET /api/account/me/profile - referralUrl is consistent', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    process.env.FRONTEND_BASE_URL = 'https://example.com';
+    const link = makeLink({ primaryId: 'tg_url', telegramId: '400', wallet: null });
+    AccountLink.findOne = async (q) => (q.primaryId === 'tg_url' ? link : null);
 
-test('profile: telegram section populated correctly', () => {
-  const player = {
-    wallet: 'tg_123',
-    bestScore: 0,
-    gold: 0,
-    referralCode: null,
-    shareStreak: 0,
-    lastShareDay: null,
-    xUserId: null,
-    xUsername: null
-  };
-  const profile = buildProfileResponse({ player, link: mockLink, rank: null, totalRankedPlayers: 0 });
-  assert.equal(profile.telegram.connected, true);
-  assert.equal(profile.telegram.username, 'vasya');
-  assert.equal(profile.telegram.id, '123');
-});
+    Player.findOne = async () => makePlayer({ wallet: 'tg_url', referralCode: 'URL12345' });
+    Player.countDocuments = async () => 0;
+    PlayerRun.countDocuments = async () => 0;
+    PlayerRun.findOne = () => ({ sort: async () => null });
 
-test('profile: wallet section populated correctly', () => {
-  const player = {
-    wallet: 'tg_123',
-    bestScore: 0,
-    gold: 0,
-    referralCode: null,
-    shareStreak: 0,
-    lastShareDay: null,
-    xUserId: null,
-    xUsername: null
-  };
-  const profile = buildProfileResponse({ player, link: mockLink, rank: null, totalRankedPlayers: 0 });
-  assert.equal(profile.wallet.connected, true);
-  assert.equal(profile.wallet.address, '0xabc123');
-});
-
-test('profile: x section shows not connected when no xUserId', () => {
-  const player = {
-    wallet: 'tg_123',
-    bestScore: 0,
-    gold: 0,
-    referralCode: null,
-    shareStreak: 0,
-    lastShareDay: null,
-    xUserId: null,
-    xUsername: null
-  };
-  const profile = buildProfileResponse({ player, link: mockLink, rank: null, totalRankedPlayers: 0 });
-  assert.equal(profile.x.connected, false);
-  assert.equal(profile.x.username, null);
-});
-
-test('profile: referralUrl is null when no referralCode', () => {
-  const player = {
-    wallet: 'tg_123',
-    bestScore: 0,
-    gold: 0,
-    referralCode: null,
-    shareStreak: 0,
-    lastShareDay: null,
-    xUserId: null,
-    xUsername: null
-  };
-  const profile = buildProfileResponse({ player, link: mockLink, rank: null, totalRankedPlayers: 0 });
-  assert.equal(profile.referralCode, null);
-  assert.equal(profile.referralUrl, null);
+    const r = await get(baseUrl, '/api/account/me/profile', { 'X-Primary-Id': 'tg_url' });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.referralUrl, 'https://example.com/?ref=URL12345');
+    assert.equal(r.body.referralCode, 'URL12345');
+  } finally {
+    delete process.env.FRONTEND_BASE_URL;
+    server.close();
+  }
 });

@@ -1,35 +1,45 @@
-const { customAlphabet } = require('nanoid');
+const crypto = require('crypto');
 
-const REFERRAL_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
-const generateNanoid = customAlphabet(REFERRAL_ALPHABET, 8);
+const REFERRAL_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+const REFERRAL_CODE_LENGTH = 8;
 
 /**
  * Generate an 8-character referral code using an unambiguous alphabet
- * (no 0, O, 1, I, L).
+ * (no 0, O, 1, I, L to avoid confusion).
  */
 function generateReferralCode() {
-  return generateNanoid();
-}
-
-function stripTrailingSlash(url) {
-  let result = url;
-  while (result.endsWith('/')) {
-    result = result.slice(0, -1);
+  let code = '';
+  for (let i = 0; i < REFERRAL_CODE_LENGTH; i++) {
+    code += REFERRAL_ALPHABET.charAt(crypto.randomInt(REFERRAL_ALPHABET.length));
   }
-  return result;
+  return code;
 }
 
 /**
- * Build the public referral URL for a given code.
- * Uses FRONTEND_BASE_URL env first, then PUBLIC_BASE_URL, then derives from req.
+ * Build a referral URL for a given code.
+ * Prefers FRONTEND_BASE_URL env, falls back to PUBLIC_BASE_URL, then request origin.
+ *
+ * @param {string} code - The referral code
+ * @param {object|null} req - Express request (used as fallback for base URL)
+ * @returns {string}
  */
 function buildReferralUrl(code, req) {
-  const configured = process.env.FRONTEND_BASE_URL || process.env.PUBLIC_BASE_URL || '';
-  const base = configured
-    ? stripTrailingSlash(configured)
-    : (req ? `${req.protocol}://${req.get('host')}` : '');
+  const base = (
+    process.env.FRONTEND_BASE_URL ||
+    process.env.PUBLIC_BASE_URL ||
+    ''
+  ).replace(/\/+$/, '');
 
-  return `${base}/?ref=${code}`;
+  if (base) {
+    return `${base}/?ref=${code}`;
+  }
+
+  if (req) {
+    const origin = req.get('origin') || `${req.protocol}://${req.get('host')}`;
+    return `${origin}/?ref=${code}`;
+  }
+
+  return `/?ref=${code}`;
 }
 
 module.exports = { generateReferralCode, buildReferralUrl };

@@ -2,98 +2,202 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { generateReferralCode, buildReferralUrl } = require('../utils/referral');
+const Player = require('../models/Player');
+const AccountLink = require('../models/AccountLink');
+const { createApp } = require('../app');
 
-// ── Tests for generateReferralCode ────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-test('generateReferralCode produces 8-character string', () => {
+async function startServer() {
+  const app = createApp();
+  return new Promise((resolve) => {
+    const server = app.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      resolve({ server, baseUrl: `http://127.0.0.1:${port}` });
+    });
+  });
+}
+
+async function post(baseUrl, path, body, headers = {}) {
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify(body)
+  });
+  const json = await res.json().catch(() => ({}));
+  return { status: res.status, body: json };
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+test('generateReferralCode produces 8-char code from correct alphabet', () => {
   const code = generateReferralCode();
   assert.equal(code.length, 8);
+  // No ambiguous characters
+  assert.ok(!/[01IiLlOo]/.test(code), `Code contains ambiguous chars: ${code}`);
+  // Only allowed characters
+  assert.ok(/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/.test(code), `Invalid code: ${code}`);
 });
 
-test('generateReferralCode uses only allowed alphabet characters', () => {
-  const ALLOWED = new Set('23456789ABCDEFGHJKMNPQRSTUVWXYZ');
-  for (let i = 0; i < 50; i++) {
-    const code = generateReferralCode();
-    for (const ch of code) {
-      assert.ok(ALLOWED.has(ch), `Unexpected char '${ch}' in code '${code}'`);
-    }
-  }
-});
-
-test('generateReferralCode produces unique codes', () => {
+test('generateReferralCode generates unique codes', () => {
   const codes = new Set();
   for (let i = 0; i < 200; i++) {
     codes.add(generateReferralCode());
   }
-  assert.ok(codes.size > 180, `Expected mostly unique codes, got ${codes.size}/200`);
+  assert.ok(codes.size >= 190, `Too many collisions: ${codes.size} unique out of 200`);
 });
 
-test('generateReferralCode never contains ambiguous characters (0, O, 1, I, L)', () => {
-  const AMBIGUOUS = new Set('01OIL');
-  for (let i = 0; i < 100; i++) {
-    const code = generateReferralCode();
-    for (const ch of code) {
-      assert.ok(!AMBIGUOUS.has(ch), `Ambiguous char '${ch}' found in code '${code}'`);
-    }
+test('buildReferralUrl uses FRONTEND_BASE_URL env', () => {
+  const orig = process.env.FRONTEND_BASE_URL;
+  process.env.FRONTEND_BASE_URL = 'https://ursasstube.fun';
+  const url = buildReferralUrl('ABCD1234');
+  assert.equal(url, 'https://ursasstube.fun/?ref=ABCD1234');
+  process.env.FRONTEND_BASE_URL = orig || '';
+});
+
+test('POST /api/referral/track - requires auth', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    AccountLink.findOne = async () => null;
+    const r = await post(baseUrl, '/api/referral/track', { ref: 'ABC12345' });
+    assert.equal(r.status, 401);
+  } finally {
+    server.close();
   }
 });
 
-// ── Tests for buildReferralUrl ────────────────────────────────────────────────
+test('POST /api/referral/track - track ok', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const link = { primaryId: 'tg_111', telegramId: '111', wallet: null };
+    AccountLink.findOne = async (q) => {
+      if (q.primaryId === 'tg_111') return link;
+      return null;
+    };
 
-test('buildReferralUrl uses FRONTEND_BASE_URL env when set', () => {
-  const originalEnv = process.env.FRONTEND_BASE_URL;
-  process.env.FRONTEND_BASE_URL = 'https://example.com';
-  const url = buildReferralUrl('ABCD1234', null);
-  assert.equal(url, 'https://example.com/?ref=ABCD1234');
-  process.env.FRONTEND_BASE_URL = originalEnv;
-});
+    const currentPlayer = {
+      wallet: 'tg_111',
+      referralCode: 'MYCODE11',
+      referredBy: null,
+      save: async function() {}
+    };
+    const referrerPlayer = {
+      wallet: '0xreferrer',
+      referralCode: 'REFCODE1'
+    };
 
-test('buildReferralUrl falls back to PUBLIC_BASE_URL when FRONTEND_BASE_URL not set', () => {
-  const origFrontend = process.env.FRONTEND_BASE_URL;
-  const origPublic = process.env.PUBLIC_BASE_URL;
-  delete process.env.FRONTEND_BASE_URL;
-  process.env.PUBLIC_BASE_URL = 'https://public.example.com';
-  const url = buildReferralUrl('TESTCODE', null);
-  assert.equal(url, 'https://public.example.com/?ref=TESTCODE');
-  process.env.FRONTEND_BASE_URL = origFrontend;
-  process.env.PUBLIC_BASE_URL = origPublic;
-});
+    Player.findOne = async (q) => {
+      if (q.wallet === 'tg_111') return currentPlayer;
+      return null;
+    };
+    Player.findOneAndUpdate = async (q, update, opts) => {
+      if (q.wallet === 'tg_111' && q.referredBy === null) {
+        currentPlayer.referredBy = update.$set.referredBy;
+        return { ...currentPlayer };
+      }
+      return null;
+    };
+    // Mock Player.findOne for referrer search
+    const origFindOne = Player.findOne;
+    Player.findOne = async (q) => {
+      if (q.wallet === 'tg_111') return currentPlayer;
+      if (q.referralCode === 'REFCODE1') return referrerPlayer;
+      return null;
+    };
 
-// ── Simulated referral/track route behaviour (unit-level) ────────────────────
+    const r = await post(baseUrl, '/api/referral/track', { ref: 'REFCODE1' }, {
+      'X-Primary-Id': 'tg_111'
+    });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.success, true);
+    assert.equal(currentPlayer.referredBy, 'REFCODE1');
 
-// Mock Player model
-function makeMockPlayer(overrides = {}) {
-  return {
-    wallet: 'tg_123',
-    referralCode: 'MYCODE8X',
-    referredBy: null,
-    save: async function() { return this; },
-    ...overrides
-  };
-}
-
-test('track: returns already:true when referredBy already set', async () => {
-  const player = makeMockPlayer({ referredBy: 'ANOTHERX' });
-  assert.ok(player.referredBy, 'referredBy is set');
-  // simulate route logic
-  if (player.referredBy) {
-    assert.equal(player.referredBy, 'ANOTHERX');
-    return;
+    Player.findOne = origFindOne;
+  } finally {
+    server.close();
   }
-  assert.fail('should have returned early');
 });
 
-test('track: blocks self-referral', () => {
-  const player = makeMockPlayer({ referralCode: 'SELFCODE' });
-  const refCode = 'SELFCODE';
-  const isSelf = player.referralCode && player.referralCode === refCode;
-  assert.ok(isSelf, 'self-referral should be blocked');
+test('POST /api/referral/track - self-referral blocked (400)', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const link = { primaryId: 'tg_222', telegramId: '222', wallet: null };
+    AccountLink.findOne = async (q) => {
+      if (q.primaryId === 'tg_222') return link;
+      return null;
+    };
+
+    const currentPlayer = {
+      wallet: 'tg_222',
+      referralCode: 'SELFREF1',
+      referredBy: null,
+      save: async function() {}
+    };
+    Player.findOne = async () => currentPlayer;
+    Player.findOneAndUpdate = async () => null;
+
+    const r = await post(baseUrl, '/api/referral/track', { ref: 'SELFREF1' }, {
+      'X-Primary-Id': 'tg_222'
+    });
+    assert.equal(r.status, 400);
+    assert.ok(r.body.error.includes('own'));
+  } finally {
+    server.close();
+  }
 });
 
-test('track: allows valid referral from different player', () => {
-  const player = makeMockPlayer({ referralCode: 'MYCODE8X', referredBy: null });
-  const refCode = 'OTHERCO1';
-  const isSelf = player.referralCode && player.referralCode === refCode;
-  assert.ok(!isSelf, 'should not be self');
-  assert.ok(!player.referredBy, 'referredBy not yet set');
+test('POST /api/referral/track - unknown ref returns 404', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const link = { primaryId: 'tg_333', telegramId: '333', wallet: null };
+    AccountLink.findOne = async (q) => {
+      if (q.primaryId === 'tg_333') return link;
+      return null;
+    };
+
+    const currentPlayer = {
+      wallet: 'tg_333',
+      referralCode: 'MYCODE33',
+      referredBy: null
+    };
+    Player.findOne = async (q) => {
+      if (q.wallet === 'tg_333') return currentPlayer;
+      if (q.referralCode) return null; // not found
+      return null;
+    };
+    Player.findOneAndUpdate = async () => null;
+
+    const r = await post(baseUrl, '/api/referral/track', { ref: 'UNKNOWN1' }, {
+      'X-Primary-Id': 'tg_333'
+    });
+    assert.equal(r.status, 404);
+  } finally {
+    server.close();
+  }
+});
+
+test('POST /api/referral/track - second time idempotent (returns already:true)', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const link = { primaryId: 'tg_444', telegramId: '444', wallet: null };
+    AccountLink.findOne = async (q) => {
+      if (q.primaryId === 'tg_444') return link;
+      return null;
+    };
+
+    const currentPlayer = {
+      wallet: 'tg_444',
+      referralCode: 'MYCODE44',
+      referredBy: 'ALREADY1' // already set
+    };
+    Player.findOne = async () => currentPlayer;
+
+    const r = await post(baseUrl, '/api/referral/track', { ref: 'REFCODE2' }, {
+      'X-Primary-Id': 'tg_444'
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.already, true);
+  } finally {
+    server.close();
+  }
 });

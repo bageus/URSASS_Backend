@@ -1,94 +1,122 @@
-/* eslint-disable no-console */
+#!/usr/bin/env node
 /**
- * Migration: referral system and share events.
+ * Migration: 2026-04-26-referral-and-share
  *
- * Usage:
- *   MONGO_URI='mongodb://localhost:27017/ursass' node scripts/migrations/2026-04-26-referral-and-share.js
+ * - Creates the shareevents collection and its indexes
+ * - Backfills referralCode for all existing Player documents that lack one
+ * - Ensures sparse-unique indexes on players.referralCode and players.xUserId
+ * - Ensures index on players.referredBy
  *
- * Idempotent: safe to run multiple times.
+ * Idempotent — safe to run multiple times.
  */
+
+'use strict';
+
+require('dotenv').config();
 const mongoose = require('mongoose');
 const { generateReferralCode } = require('../../utils/referral');
 
-async function run() {
-  const mongoUri = process.env.MONGO_URI;
-  if (!mongoUri) {
-    throw new Error('MONGO_URI is required');
-  }
+const MONGO_URL = process.env.MONGO_URL || process.env.MONGODB_URI;
 
-  await mongoose.connect(mongoUri);
+if (!MONGO_URL) {
+  console.error('ERROR: MONGO_URL environment variable is required');
+  process.exit(1);
+}
+
+async function run() {
+  await mongoose.connect(MONGO_URL);
+  console.log('Connected to MongoDB');
+
   const db = mongoose.connection.db;
 
-  // 1. Create shareevents collection and indexes
-  await db.createCollection('shareevents').catch((err) => {
-    if (err.codeName !== 'NamespaceExists') throw err;
-  });
+  // ── 1. Ensure shareevents collection and indexes ──────────────────────────
+  const collections = await db.listCollections({ name: 'shareevents' }).toArray();
+  if (collections.length === 0) {
+    await db.createCollection('shareevents');
+    console.log('Created collection: shareevents');
+  } else {
+    console.log('Collection shareevents already exists');
+  }
 
-  await db.collection('shareevents').createIndexes([
-    { key: { shareId: 1 }, name: 'shareId_1', unique: true },
-    { key: { primaryId: 1, dayKey: 1 }, name: 'primaryId_1_dayKey_1' },
-    { key: { primaryId: 1 }, name: 'primaryId_1' },
-    { key: { dayKey: 1 }, name: 'dayKey_1' }
-  ]);
+  const shareCollection = db.collection('shareevents');
+  await shareCollection.createIndex({ shareId: 1 }, { unique: true, sparse: true });
+  await shareCollection.createIndex({ primaryId: 1, dayKey: 1 });
+  await shareCollection.createIndex({ dayKey: 1 });
+  console.log('ShareEvent indexes ensured');
 
-  console.log('shareevents collection and indexes ready.');
+  // ── 2. Ensure player indexes ──────────────────────────────────────────────
+  const playersCollection = db.collection('players');
+  await playersCollection.createIndex(
+    { referralCode: 1 },
+    { unique: true, sparse: true, background: true }
+  );
+  await playersCollection.createIndex(
+    { xUserId: 1 },
+    { unique: true, sparse: true, background: true }
+  );
+  await playersCollection.createIndex(
+    { referredBy: 1 },
+    { sparse: true, background: true }
+  );
+  console.log('Player indexes ensured');
 
-  // 2. Create indexes on players collection
-  await db.collection('players').createIndexes([
-    { key: { referralCode: 1 }, name: 'referralCode_1', unique: true, sparse: true },
-    { key: { referredBy: 1 }, name: 'referredBy_1' },
-    { key: { xUserId: 1 }, name: 'xUserId_1', sparse: true }
-  ]);
+  // ── 3. Backfill referralCode for existing players ─────────────────────────
+  const playersWithoutCode = await playersCollection
+    .find({ referralCode: { $exists: false } })
+    .toArray();
 
-  console.log('players indexes ready.');
+  console.log(`Players without referralCode: ${playersWithoutCode.length}`);
 
-  // 3. Backfill referralCode for players without one
-  const players = await db.collection('players').find({ referralCode: { $exists: false } }).toArray();
-  console.log(`Found ${players.length} players without referralCode. Backfilling...`);
-
-  let backfilled = 0;
+  let updated = 0;
   let skipped = 0;
 
-  for (const player of players) {
-    let code = null;
-    const MAX_ATTEMPTS = 5;
-
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      const candidate = generateReferralCode();
-      const existing = await db.collection('players').findOne({ referralCode: candidate });
-      if (!existing) {
-        code = candidate;
+  for (const player of playersWithoutCode) {
+    let assigned = false;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const code = generateReferralCode();
+      try {
+        await playersCollection.updateOne(
+          { _id: player._id, referralCode: { $exists: false } },
+          { $set: { referralCode: code } }
+        );
+        assigned = true;
         break;
+      } catch (err) {
+        if (err.code === 11000) {
+          // Duplicate key — try another code
+          continue;
+        }
+        throw err;
       }
     }
 
-    if (!code) {
-      console.warn(`  Skipped player ${player.wallet}: could not generate unique code`);
+    if (assigned) {
+      updated++;
+    } else {
+      console.warn(`Could not assign referralCode to player ${player._id} after 10 attempts`);
       skipped++;
-      continue;
     }
-
-    await db.collection('players').updateOne(
-      { _id: player._id, referralCode: { $exists: false } },
-      { $set: { referralCode: code } }
-    );
-    backfilled++;
   }
 
-  console.log(`Backfill done: ${backfilled} updated, ${skipped} skipped.`);
+  console.log(`Backfilled referralCode: updated=${updated}, skipped=${skipped}`);
 
-  const totalPlayers = await db.collection('players').countDocuments();
-  const withCode = await db.collection('players').countDocuments({ referralCode: { $exists: true, $ne: null } });
-  const withReferredBy = await db.collection('players').countDocuments({ referredBy: { $ne: null } });
+  // ── 4. Summary ────────────────────────────────────────────────────────────
+  const totalPlayers = await playersCollection.countDocuments();
+  const withCode = await playersCollection.countDocuments({
+    referralCode: { $exists: true, $ne: null }
+  });
+  const shareEventCount = await shareCollection.countDocuments();
 
-  console.log(`players total: ${totalPlayers}, with referralCode: ${withCode}, with referredBy: ${withReferredBy}`);
+  console.log(`\nSummary:`);
+  console.log(`  Total players:        ${totalPlayers}`);
+  console.log(`  With referralCode:    ${withCode}`);
+  console.log(`  Total share events:   ${shareEventCount}`);
 
-  console.log('Migration completed: referral-and-share.');
   await mongoose.disconnect();
+  console.log('\nMigration complete.');
 }
 
-run().catch(async (err) => {
-  console.error('Migration failed:', err.message);
-  try { await mongoose.disconnect(); } catch (_) {}
+run().catch((err) => {
+  console.error('Migration failed:', err);
   process.exit(1);
 });

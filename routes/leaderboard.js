@@ -550,12 +550,14 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       totalSilverCoins: responsePayload.totalSilverCoins
     }, 'Result saved (VERIFIED)');
 
-    // Grant referral rewards after first valid run (fire-and-forget style, non-blocking)
-    const savedPlayer = await Player.findOne({ wallet: walletLower });
-    if (savedPlayer && runContext?.run?.isFirstRun) {
-      maybeGrantReferralRewards(savedPlayer).catch((err) => {
-        logger.error({ err: err.message, wallet: walletLower }, 'maybeGrantReferralRewards failed');
-      });
+    // Grant referral rewards on first valid run (non-blocking, errors logged internally)
+    try {
+      const savedPlayer = await Player.findOne({ wallet: walletLower });
+      if (savedPlayer) {
+        await maybeGrantReferralRewards(savedPlayer, { requestId: req.requestId });
+      }
+    } catch (refErr) {
+      logger.error({ err: refErr, wallet: walletLower }, 'maybeGrantReferralRewards failed');
     }
 
     const playerForInsights = {
