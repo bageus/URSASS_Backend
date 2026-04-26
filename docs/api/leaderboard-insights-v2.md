@@ -50,6 +50,7 @@ Response adds:
   ],
   "recommendedTarget": {
     "targetType": "rank",
+    "type": "rank",
     "label": "TOP 10",
     "delta": 120
   }
@@ -91,3 +92,22 @@ Target logic:
 - Top-1000 players prioritize Top-100.
 - Top-10000 players prioritize Top-1000.
 - Outside Top-10000 players prioritize entering Top-10000.
+
+## Personal best priority
+
+When the current run score is below the player's personal best score, `recommendedTarget` is a score-based personal best goal instead of a rank-based goal:
+
+```json
+{
+  "targetType": "score",
+  "type": "score",
+  "label": "your best",
+  "delta": 15492
+}
+```
+
+`delta` = `bestScore - currentScore + 1`.
+
+Rank-based targets remain in `nextTargets` and are still available to the frontend.
+
+The `type` field mirrors `targetType` and is provided for forward compatibility with frontends that validate `type/label/delta`.
