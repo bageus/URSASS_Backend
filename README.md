@@ -295,7 +295,7 @@ For better isolation under load, you can run the bot in a separate worker proces
 }
 ```
 
-`rankDelta` is the change in rank since the last profile load (positive = fell N places, negative = rose N places, `null` = no wallet linked or first visit).
+`rankDelta` is the change in rank since the player's last completed game (positive = fell N places, negative = rose N places, `null` for the first read or when no wallet is linked). Updated server-side **only** when the player finishes a new game; reads of `/me/profile` never change the baseline.
 
 **`POST /api/account/me/nickname` Body:** `{ "nickname": "CoolPlayer" }`
 

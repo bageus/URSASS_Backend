@@ -15,7 +15,7 @@ const logger = require('../utils/logger');
 const { markSuspicious } = require('../middleware/requestMetrics');
 const { logSecurityEvent, normalizeWallet, validateTimestampWindow } = require('../utils/security');
 const { hasAiModeAccess, validateAiSettings } = require('../utils/aiModeAccess');
-const { computePlayerInsights, DEFAULTS: leaderboardInsightsConfig } = require('../services/leaderboardInsightsService');
+const { computePlayerInsights, computeRank, DEFAULTS: leaderboardInsightsConfig } = require('../services/leaderboardInsightsService');
 const { buildGameOverPayload } = require('../services/gameOverAgitationService');
 const { maybeGrantReferralRewards } = require('../utils/referralRewards');
 
@@ -601,6 +601,20 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       }
     } catch (refErr) {
       logger.error({ err: refErr, wallet: walletLower }, 'maybeGrantReferralRewards failed');
+    }
+
+    // Update lastSeenRank baseline after completed game (non-blocking)
+    try {
+      const playerForRank = await Player.findOne({ wallet: walletLower });
+      if (playerForRank) {
+        const { rank: freshRank } = await computeRank(playerForRank.bestScore);
+        if (freshRank != null) {
+          playerForRank.lastSeenRank = freshRank;
+          await playerForRank.save();
+        }
+      }
+    } catch (rankErr) {
+      logger.error({ err: rankErr, wallet: walletLower }, 'Failed to update lastSeenRank after game');
     }
 
     const playerForInsights = {
