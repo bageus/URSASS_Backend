@@ -322,6 +322,10 @@ router.get('/me/profile', readLimiter, requireAuth, async (req, res) => {
       ? await Player.countDocuments({ referredBy: referralCode })
       : 0;
 
+    const referralCount = referralCode
+      ? await Player.countDocuments({ referredBy: referralCode })
+      : 0;
+
     // Compute rankDelta only for wallet-linked players
     const eligibleForRank = !!link.wallet;
     let rankDelta = null;
@@ -366,6 +370,7 @@ router.get('/me/profile', readLimiter, requireAuth, async (req, res) => {
       goldRewardToday: Number(process.env.SHARE_DAILY_REWARD_GOLD || 20),
       lastShareDay: player.lastShareDay || null,
       rankDelta,
+      referralCount,
       nickname: player.nickname || null,
       leaderboardDisplay: player.leaderboardDisplay || 'wallet'
     });
