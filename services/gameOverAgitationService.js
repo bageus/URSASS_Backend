@@ -30,7 +30,7 @@ function computeFirstTimeMilestone(prevRank, currentRank) {
   if (!currentRank || currentRank < 1) return null;
   const milestones = [1, 3, 10, 100, 1000, 10000];
   for (const m of milestones) {
-    if (currentRank <= m && (prevRank == null || prevRank > m)) {
+    if (currentRank <= m && (prevRank === null || prevRank === undefined || prevRank > m)) {
       return String(m);
     }
   }
@@ -47,7 +47,7 @@ const AGITATION_RULES = [
   // U2: unauth, score >= 1000 && wouldBeRank <= 1000
   {
     id: 'U2',
-    when: ctx => !ctx.isAuthenticated && (ctx.run?.score || 0) >= 1000 && ctx.wouldBeRank != null && ctx.wouldBeRank <= 1000,
+    when: ctx => !ctx.isAuthenticated && (ctx.run?.score || 0) >= 1000 && ctx.wouldBeRank !== null && ctx.wouldBeRank <= 1000,
     build: ctx => ({ title: 'GOOD RUN!', hook: `\u{1F525} You would be #${ctx.wouldBeRank}`, boost: 'Save your score & enter leaderboard' })
   },
   // U3: unauth, score >= 1000 (fallback)
@@ -66,7 +66,7 @@ const AGITATION_RULES = [
   {
     id: 'B',
     when: ctx => {
-      if (!ctx.isAuthenticated || ctx.prevRank == null || ctx.prevRank > 3) return false;
+      if (!ctx.isAuthenticated || ctx.prevRank === null || ctx.prevRank > 3) return false;
       const score = ctx.run?.score || 0;
       const isBadRun = score < 1000 || score < (ctx.previousBestScore || 0) * 0.5;
       return isBadRun && !ctx.run?.isPersonalBest;
@@ -77,7 +77,7 @@ const AGITATION_RULES = [
   {
     id: 'C',
     when: ctx => {
-      if (!ctx.isAuthenticated || ctx.prevRank == null || ctx.prevRank <= 3 || ctx.prevRank > 10) return false;
+      if (!ctx.isAuthenticated || ctx.prevRank === null || ctx.prevRank <= 3 || ctx.prevRank > 10) return false;
       const score = ctx.run?.score || 0;
       const isBadRun = score < 1000 || score < (ctx.previousBestScore || 0) * 0.5;
       return isBadRun && !ctx.run?.isPersonalBest;
@@ -88,7 +88,7 @@ const AGITATION_RULES = [
   {
     id: 'D',
     when: ctx => {
-      if (!ctx.isAuthenticated || ctx.prevRank == null || ctx.prevRank <= 10) return false;
+      if (!ctx.isAuthenticated || ctx.prevRank === null || ctx.prevRank <= 10) return false;
       const score = ctx.run?.score || 0;
       const isBadRun = score < 1000 || score < (ctx.previousBestScore || 0) * 0.5;
       return isBadRun && !ctx.run?.isPersonalBest;
@@ -98,19 +98,19 @@ const AGITATION_RULES = [
   // E: bad run, ordinary (score < 1000, not in leaderboard)
   {
     id: 'E',
-    when: ctx => ctx.isAuthenticated && (ctx.run?.score || 0) < 1000 && ctx.prevRank == null && !ctx.run?.isPersonalBest,
+    when: ctx => ctx.isAuthenticated && (ctx.run?.score || 0) < 1000 && ctx.prevRank === null && !ctx.run?.isPersonalBest,
     build: () => ({ title: 'TRY AGAIN!', hook: 'You can do better', boost: 'Go further this time' })
   },
   // F: first time #1
   {
     id: 'F',
-    when: ctx => ctx.isAuthenticated && ctx.run?.isPersonalBest && ctx.rank === 1 && (ctx.prevRank == null || ctx.prevRank > 1) && (ctx.run?.score || 0) >= 1000,
+    when: ctx => ctx.isAuthenticated && ctx.run?.isPersonalBest && ctx.rank === 1 && (ctx.prevRank === null || ctx.prevRank > 1) && (ctx.run?.score || 0) >= 1000,
     build: () => ({ title: 'NEW LEADER!', hook: 'No one is above you', boost: "Don't stop. Beat your record." })
   },
   // G: first time TOP 3 (not #1)
   {
     id: 'G',
-    when: ctx => ctx.isAuthenticated && ctx.run?.isPersonalBest && ctx.rank <= 3 && ctx.rank > 1 && (ctx.prevRank == null || ctx.prevRank > 3),
+    when: ctx => ctx.isAuthenticated && ctx.run?.isPersonalBest && ctx.rank <= 3 && ctx.rank > 1 && (ctx.prevRank === null || ctx.prevRank > 3),
     build: () => ({ title: 'TOP 3!', hook: 'Amazing', boost: 'Push to reach #1' })
   },
   // H: first time TOP 10
@@ -164,7 +164,7 @@ const AGITATION_RULES = [
   // Q: personal best, no new milestone (N didn't match since we're here)
   {
     id: 'Q',
-    when: ctx => ctx.isAuthenticated && ctx.run?.isPersonalBest && ctx.firstTimeMilestone == null,
+    when: ctx => ctx.isAuthenticated && ctx.run?.isPersonalBest && ctx.firstTimeMilestone === null,
     build: () => ({ title: 'PERSONAL BEST!', hook: "You're getting stronger", boost: 'Keep climbing' })
   },
   // P: just average run (fallback for auth with score >= 1000)
