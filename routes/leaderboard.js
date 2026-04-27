@@ -15,7 +15,7 @@ const logger = require('../utils/logger');
 const { markSuspicious } = require('../middleware/requestMetrics');
 const { logSecurityEvent, normalizeWallet, validateTimestampWindow } = require('../utils/security');
 const { hasAiModeAccess, validateAiSettings } = require('../utils/aiModeAccess');
-const { computePlayerInsights, DEFAULTS: leaderboardInsightsConfig } = require('../services/leaderboardInsightsService');
+const { computePlayerInsights, computeRank, DEFAULTS: leaderboardInsightsConfig } = require('../services/leaderboardInsightsService');
 const { buildGameOverPayload } = require('../services/gameOverAgitationService');
 const { maybeGrantReferralRewards } = require('../utils/referralRewards');
 
@@ -544,7 +544,9 @@ router.post('/save', saveResultLimiter, async (req, res) => {
 
       runContext = {
         run: runPayload,
-        previousBestScore
+        previousBestScore,
+        prevRank: player?.lastSeenRank ?? null,
+        isFirstRunAfterAuth: previousGamesPlayed === 0
       };
 
       responsePayload = {
@@ -603,6 +605,20 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       logger.error({ err: refErr, wallet: walletLower }, 'maybeGrantReferralRewards failed');
     }
 
+    // Update lastSeenRank baseline after completed game (non-blocking)
+    try {
+      const playerForRank = await Player.findOne({ wallet: walletLower });
+      if (playerForRank) {
+        const { rank: freshRank } = await computeRank(playerForRank.bestScore);
+        if (freshRank !== null) {
+          playerForRank.lastSeenRank = freshRank;
+          await playerForRank.save();
+        }
+      }
+    } catch (rankErr) {
+      logger.error({ err: rankErr, wallet: walletLower }, 'Failed to update lastSeenRank after game');
+    }
+
     const playerForInsights = {
       bestScore: responsePayload.bestScore
     };
@@ -615,7 +631,10 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       insights: gameOverInsights,
       run: runContext?.run || { score: scoreValue, isFirstRun: false, isPersonalBest: false },
       previousBestScore: runContext?.previousBestScore || 0,
-      isAuthenticated: true
+      isAuthenticated: true,
+      wallet: walletLower,
+      prevRank: runContext?.prevRank ?? null,
+      isFirstRunAfterAuth: runContext?.isFirstRunAfterAuth ?? false
     });
 
     res.json({

@@ -200,6 +200,54 @@ The script is idempotent — safe to run multiple times.
 - The backend returns a ready-to-apply `activeEffects` object built with the same `calculateEffects` logic used for real player upgrades, so the frontend does not need to hardcode a separate improvement set.
 - Current preset: `all_improvements_enabled` (max gameplay improvements enabled for preview/demo sessions).
 
+## Game Over Agitation
+
+After each game run, the backend returns a `gameOverPrompt` object with `{ title, hook, boost }` that the frontend displays on the Game Over screen. The text is chosen by a strict priority-rule system implemented in `services/gameOverAgitationService.js`.
+
+### Rule Table
+
+#### Unauthenticated player (`!isAuthenticated`)
+
+| Rule | Condition | Title | Hook | Boost |
+|---|---|---|---|---|
+| U1 | `score < 1000` | `TRY AGAIN!` | `You can do better` | `Save your progress & keep improving` |
+| U2 | `score >= 1000 && wouldBeRank <= 1000` | `GOOD RUN!` | `🔥 You would be #N` | `Save your score & enter leaderboard` |
+| U3 | `score >= 1000` (fallback) | `GOOD RUN!` | `You're getting better` | `Save your score & keep progress` |
+
+#### Authenticated player (priority order — first match wins)
+
+| Rule | Condition | Title | Hook | Boost |
+|---|---|---|---|---|
+| A | First run after auth | `FIRST RUN!` | `Nice start` | `Let's see how far you can go` |
+| B | Bad run, was TOP 3 | `GOOD RUN!` | `You're still TOP 3` | `Don't lose your position` |
+| C | Bad run, was TOP 10 (not TOP 3) | `GOOD RUN!` | `You're still #N` | `Push to stay in TOP 10` |
+| D | Bad run, was leaderboard outside TOP 10 | `GOOD RUN!` | `You're still #N` | `Your best score: N` |
+| E | Bad run, not in leaderboard | `TRY AGAIN!` | `You can do better` | `Go further this time` |
+| F | First time #1 | `NEW LEADER!` | `No one is above you` | `Don't stop. Beat your record.` |
+| G | First time TOP 3 (not #1) | `TOP 3!` | `Amazing` | `Push to reach #1` |
+| H | First time TOP 10 | `TOP 10!` | `Now everyone can see you` | `Almost TOP 3` |
+| I | First time TOP 100 | `TOP 100!` | `Keep climbing` | `Almost TOP 10` |
+| J | First time TOP 1000 | `TOP 1000!` | `You're improving` | `Next: TOP 100` |
+| K | First time TOP 10000 | `IN TOP 10000!` | `Keep climbing` | `Next: TOP 1000` |
+| L | Already #1, beats own record | `NEW RECORD!` | `There are only mountains above you` | `Don't stop. Beat your record.` |
+| M | Already TOP 3, position unchanged, PB | `NEW PERSONAL RECORD!` | `Amazing` | `Push to reach #1` |
+| N | Almost overtook next (delta < 10) | `JUST A BIT MORE!` | `So close` | `+N to reach #rank` |
+| O | Stuck ≥3 consecutive non-PB runs | `NOT BAD!` | `Need more power` | `Upgrade to go further` |
+| Q | Personal best, no new milestone | `PERSONAL BEST!` | `You're getting stronger` | `Keep climbing` |
+| P | Average run (fallback) | `GOOD RUN!` | `Keep pushing` | `+N to your best` or `Keep going` |
+
+### New inputs computed in `buildGameOverPayload`
+
+- `prevRank` — rank before the run, from `player.lastSeenRank` (captured pre-save).
+- `wouldBeRank` — for unauthenticated players: hypothetical rank if they saved the score now (`Player.countDocuments({ bestScore: { $gt: score } }) + 1`).
+- `isFirstRunAfterAuth` — true when `previousGamesPlayed === 0` (first ever authenticated run).
+- `firstTimeMilestone` — smallest milestone bracket first entered this run (`'1'|'3'|'10'|'100'|'1000'|'10000'|null`).
+- `consecutiveStuckRuns` — set to `3` when the last 3 verified runs all have `isPersonalBest === false`.
+
+### Client-side fallback for unauthenticated players
+
+> **Frontend (separate PR in `bageus/Ursasstube`):** For unauthenticated players the frontend should build U1/U3 locally based on `score` alone to skip the backend round-trip entirely (`wouldBeRank` can be omitted). This avoids an unnecessary API call for every guest game session. Implement as a client-side fallback in the Game Over component.
+
 ## Store Upgrade Semantics
 
 The store now contains **two parallel product systems**:
@@ -295,7 +343,7 @@ For better isolation under load, you can run the bot in a separate worker proces
 }
 ```
 
-`rankDelta` is the change in rank since the last profile load (positive = fell N places, negative = rose N places, `null` = no wallet linked or first visit).
+`rankDelta` is the change in rank since the player's last completed game (positive = fell N places, negative = rose N places, `null` for the first read or when no wallet is linked). Updated server-side **only** when the player finishes a new game; reads of `/me/profile` never change the baseline.
 
 **`POST /api/account/me/nickname` Body:** `{ "nickname": "CoolPlayer" }`
 
