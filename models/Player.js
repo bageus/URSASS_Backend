@@ -94,13 +94,7 @@ const playerSchema = new mongoose.Schema({
 
   // ── Player display settings ───────────────────────────────────────────────
   nickname: { type: String, default: null, maxlength: 16 },
-  nicknameLower: {
-    type: String,
-    default: null,
-    lowercase: true,
-    sparse: true,
-    index: { unique: true, sparse: true }
-  },
+  nicknameLower: { type: String, default: null, lowercase: true },
   leaderboardDisplay: {
     type: String,
     enum: ['nickname', 'wallet', 'telegram'],
@@ -135,5 +129,8 @@ playerSchema.pre('save', async function generateCode() {
   // Extremely unlikely but surface the error clearly
   throw new Error('Could not generate a unique referral code after 5 attempts');
 });
+
+// Sparse unique index on nicknameLower for nickname uniqueness
+playerSchema.index({ nicknameLower: 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model('Player', playerSchema);

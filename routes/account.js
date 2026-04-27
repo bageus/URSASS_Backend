@@ -435,7 +435,7 @@ router.post('/me/nickname', writeLimiter, requireAuth, async (req, res) => {
     return res.json({ ok: true, nickname });
   } catch (error) {
     logger.error({ err: error }, 'POST /me/nickname error');
-    res.status(500).json({ error: 'Server error' });
+    return res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -483,7 +483,7 @@ router.post('/me/display-mode', writeLimiter, requireAuth, async (req, res) => {
     return res.json({ ok: true, mode });
   } catch (error) {
     logger.error({ err: error }, 'POST /me/display-mode error');
-    res.status(500).json({ error: 'Server error' });
+    return res.status(500).json({ error: 'Server error' });
   }
 });
 
