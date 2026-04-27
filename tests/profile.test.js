@@ -308,3 +308,48 @@ test('rankDelta: negative delta when player rose in rank', async () => {
     server.close();
   }
 });
+
+test('GET /api/account/me/profile - referralCount reflects number of referred players', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const link = makeLink({ primaryId: 'tg_refcount', telegramId: '601', wallet: '0xrefcount' });
+    AccountLink.findOne = async (q) => (q.primaryId === 'tg_refcount' ? link : null);
+
+    Player.findOne = async () => makePlayer({ wallet: 'tg_refcount', referralCode: 'ABC123' });
+    Player.countDocuments = async (q) => {
+      if (q?.referredBy === 'ABC123') return 7;
+      if (q?.bestScore?.$gt > 0) return 41;
+      return 100;
+    };
+    PlayerRun.countDocuments = async () => 0;
+    PlayerRun.findOne = () => ({ sort: async () => null });
+
+    const r = await get(baseUrl, '/api/account/me/profile', { 'X-Primary-Id': 'tg_refcount' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.referralCount, 7, 'referralCount should be 7');
+  } finally {
+    server.close();
+  }
+});
+
+test('GET /api/account/me/profile - referralCount is 0 when no referralCode', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const link = makeLink({ primaryId: 'tg_nocode', telegramId: '602', wallet: '0xnocode' });
+    AccountLink.findOne = async (q) => (q.primaryId === 'tg_nocode' ? link : null);
+
+    Player.findOne = async () => makePlayer({ wallet: 'tg_nocode', referralCode: null });
+    Player.countDocuments = async (q) => {
+      if (q?.bestScore?.$gt > 0) return 0;
+      return 0;
+    };
+    PlayerRun.countDocuments = async () => 0;
+    PlayerRun.findOne = () => ({ sort: async () => null });
+
+    const r = await get(baseUrl, '/api/account/me/profile', { 'X-Primary-Id': 'tg_nocode' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.referralCount, 0, 'referralCount should be 0 when no referralCode');
+  } finally {
+    server.close();
+  }
+});
