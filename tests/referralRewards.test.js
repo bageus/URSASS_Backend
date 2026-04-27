@@ -17,13 +17,6 @@ function makePlayer(overrides = {}) {
   };
 }
 
-// Capture logger calls by overriding the logger module
-let logCalls = [];
-
-function resetLog() {
-  logCalls = [];
-}
-
 // Intercept pino logger used in referralRewards
 const logger = require('../utils/logger');
 const origWarn = logger.warn.bind(logger);
@@ -76,7 +69,7 @@ test('maybeGrantReferralRewards: logs info when no referredBy', async () => {
     const player = makePlayer({ referredBy: null });
     await maybeGrantReferralRewards(player, { requestId: 'req-2' });
     assert.ok(
-      infos.some(a => String(a[a.length - 1]).includes('was not referred')),
+      infos.some(a => String(a[a.length - 1]).includes('no referredBy')),
       'Expected info log for no referredBy'
     );
   } finally {

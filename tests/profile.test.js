@@ -309,6 +309,8 @@ test('rankDelta: negative delta when player rose in rank', async () => {
   }
 });
 
+// ── referralCount tests ──────────────────────────────────────────────────────
+
 test('GET /api/account/me/profile - referralCount reflects number of referred players', async () => {
   const { server, baseUrl } = await startServer();
   try {
