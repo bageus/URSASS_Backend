@@ -172,12 +172,21 @@ router.get('/top', readLimiter, async (req, res) => {
       .limit(10)
       .select('wallet bestScore bestDistance averageScore scoreToAverageRatio totalGoldCoins totalSilverCoins gamesPlayed nickname leaderboardDisplay');
 
-    // Fetch AccountLink data for all top players to build displayName
-    const wallets = topPlayers.map(p => p.wallet);
-    const links = await AccountLink.find({ primaryId: { $in: wallets } });
+    // Fetch AccountLink data for all top players to build displayName.
+    // A wallet-linked player may have Player.wallet = EVM address but
+    // AccountLink.primaryId = tg_<id> (when they first logged in via TG).
+    // So we search by both primaryId and wallet fields.
+    const wallets = topPlayers.map(p => p.wallet).filter(Boolean);
+    const links = await AccountLink.find({
+      $or: [
+        { primaryId: { $in: wallets } },
+        { wallet: { $in: wallets } }
+      ]
+    });
     const linkMap = {};
     for (const link of links) {
-      linkMap[link.primaryId] = link;
+      if (link.primaryId) linkMap[link.primaryId] = link;
+      if (link.wallet) linkMap[link.wallet] = link;
     }
 
     let playerPosition = null;
@@ -187,7 +196,7 @@ router.get('/top', readLimiter, async (req, res) => {
         .select('wallet bestScore bestDistance averageScore scoreToAverageRatio totalGoldCoins totalSilverCoins gamesPlayed nickname leaderboardDisplay');
       if (playerData) {
         playerRecord = playerData;
-        const playerLink = await AccountLink.findOne({ primaryId: wallet });
+        const playerLink = await AccountLink.findOne({ $or: [{ primaryId: wallet }, { wallet }] });
 
         if (playerData.bestScore > 0) {
           const position = await Player.countDocuments({
