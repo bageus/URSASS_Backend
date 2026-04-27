@@ -544,7 +544,9 @@ router.post('/save', saveResultLimiter, async (req, res) => {
 
       runContext = {
         run: runPayload,
-        previousBestScore
+        previousBestScore,
+        prevRank: player?.lastSeenRank ?? null,
+        isFirstRunAfterAuth: previousGamesPlayed === 0
       };
 
       responsePayload = {
@@ -615,7 +617,10 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       insights: gameOverInsights,
       run: runContext?.run || { score: scoreValue, isFirstRun: false, isPersonalBest: false },
       previousBestScore: runContext?.previousBestScore || 0,
-      isAuthenticated: true
+      isAuthenticated: true,
+      wallet: walletLower,
+      prevRank: runContext?.prevRank ?? null,
+      isFirstRunAfterAuth: runContext?.isFirstRunAfterAuth ?? false
     });
 
     res.json({
