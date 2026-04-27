@@ -484,7 +484,8 @@ router.post('/me/display-mode', writeLimiter, requireAuth, async (req, res) => {
     player.leaderboardDisplay = mode;
     await player.save();
 
-    return res.json({ ok: true, mode });
+    logger.info({ primaryId, mode, savedMode: player.leaderboardDisplay }, 'POST /me/display-mode saved');
+    return res.json({ ok: true, mode: player.leaderboardDisplay });
   } catch (error) {
     logger.error({ err: error }, 'POST /me/display-mode error');
     return res.status(500).json({ error: 'Server error' });
