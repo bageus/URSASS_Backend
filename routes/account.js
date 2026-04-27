@@ -318,6 +318,9 @@ router.get('/me/profile', readLimiter, requireAuth, async (req, res) => {
 
     const referralCode = player.referralCode || null;
     const referralUrl = referralCode ? buildReferralUrl(referralCode, req) : null;
+    const referralCount = referralCode
+      ? await Player.countDocuments({ referredBy: referralCode })
+      : 0;
 
     // Compute rankDelta only for wallet-linked players
     const eligibleForRank = !!link.wallet;
@@ -344,6 +347,7 @@ router.get('/me/profile', readLimiter, requireAuth, async (req, res) => {
       gold: player.gold || 0,
       referralCode,
       referralUrl,
+      referralCount,
       telegram: {
         connected: !!link.telegramId,
         username: link.telegramUsername || null,

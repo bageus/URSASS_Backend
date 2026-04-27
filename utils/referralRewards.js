@@ -17,9 +17,19 @@ const REFEREE_GOLD = Number(process.env.REFERRAL_REWARD_REFEREE_GOLD || 100);
  * @param {string} [opts.requestId] - For log correlation
  */
 async function maybeGrantReferralRewards(player, opts = {}) {
-  if (!player) return;
-  if (player.referralRewardGranted) return;
-  if (!player.referredBy) return;
+  const requestId = opts.requestId;
+  if (!player) {
+    logger.warn('maybeGrantReferralRewards: player missing');
+    return;
+  }
+  if (player.referralRewardGranted) {
+    logger.info({ wallet: player.wallet, requestId }, 'maybeGrantReferralRewards: skip — already granted');
+    return;
+  }
+  if (!player.referredBy) {
+    logger.info({ wallet: player.wallet, requestId }, 'maybeGrantReferralRewards: skip — player has no referredBy');
+    return;
+  }
 
   // Find the referrer by their referralCode
   const referrer = await Player.findOne({ referralCode: player.referredBy });
