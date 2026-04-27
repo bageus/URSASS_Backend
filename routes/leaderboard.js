@@ -73,6 +73,33 @@ function buildSharePostText(score, referralLink = '') {
 }
 
 /**
+ * Shorten an EVM wallet address for display.
+ * Returns null if the address is not a valid 0x-prefixed 40-hex-char address.
+ */
+function shortenWallet(w) {
+  if (!w || !/^0x[0-9a-fA-F]{40}$/.test(w)) return null;
+  return `${w.slice(0, 6)}…${w.slice(-4)}`;
+}
+
+/**
+ * Compute the display name for a leaderboard entry based on the player's
+ * chosen display mode, nickname, telegram username, and wallet address.
+ */
+function computeDisplayName({ leaderboardDisplay, nickname, telegramUsername, wallet }) {
+  switch (leaderboardDisplay || 'wallet') {
+    case 'nickname':
+      return nickname || shortenWallet(wallet) || (telegramUsername ? `@${telegramUsername}` : null) || 'Player';
+    case 'telegram':
+      return telegramUsername
+        ? `@${telegramUsername}`
+        : (nickname || shortenWallet(wallet) || 'Player');
+    case 'wallet':
+    default:
+      return shortenWallet(wallet) || (telegramUsername ? `@${telegramUsername}` : (nickname || 'Player'));
+  }
+}
+
+/**
  * Build display name for a player based on their AccountLink data.
  * Priority:
  *   1. If wallet is linked → show wallet address (shortened)
@@ -143,7 +170,7 @@ router.get('/top', readLimiter, async (req, res) => {
     const topPlayers = await Player.find({ bestScore: { $gt: 0 } })
       .sort({ bestScore: -1 })
       .limit(10)
-      .select('wallet bestScore bestDistance averageScore scoreToAverageRatio totalGoldCoins totalSilverCoins gamesPlayed');
+      .select('wallet bestScore bestDistance averageScore scoreToAverageRatio totalGoldCoins totalSilverCoins gamesPlayed nickname leaderboardDisplay');
 
     // Fetch AccountLink data for all top players to build displayName
     const wallets = topPlayers.map(p => p.wallet);
@@ -156,7 +183,8 @@ router.get('/top', readLimiter, async (req, res) => {
     let playerPosition = null;
     let playerRecord = null;
     if (wallet) {
-      const playerData = await Player.findOne({ wallet });
+      const playerData = await Player.findOne({ wallet })
+        .select('wallet bestScore bestDistance averageScore scoreToAverageRatio totalGoldCoins totalSilverCoins gamesPlayed nickname leaderboardDisplay');
       if (playerData) {
         playerRecord = playerData;
         const playerLink = await AccountLink.findOne({ primaryId: wallet });
@@ -168,13 +196,23 @@ router.get('/top', readLimiter, async (req, res) => {
 
           playerPosition = buildLeaderboardEntry(
             playerData,
-            buildDisplayName(playerLink, playerData.wallet),
+            computeDisplayName({
+              leaderboardDisplay: playerData.leaderboardDisplay,
+              nickname: playerData.nickname,
+              telegramUsername: playerLink ? playerLink.telegramUsername : null,
+              wallet: playerLink ? playerLink.wallet : null
+            }),
             position + 1
           );
         } else {
           playerPosition = buildLeaderboardEntry(
             playerData,
-            buildDisplayName(playerLink, playerData.wallet),
+            computeDisplayName({
+              leaderboardDisplay: playerData.leaderboardDisplay,
+              nickname: playerData.nickname,
+              telegramUsername: playerLink ? playerLink.telegramUsername : null,
+              wallet: playerLink ? playerLink.wallet : null
+            }),
             null
           );
         }
@@ -194,7 +232,12 @@ router.get('/top', readLimiter, async (req, res) => {
       leaderboard: topPlayers.map((player, index) => (
         buildLeaderboardEntry(
           player,
-          buildDisplayName(linkMap[player.wallet], player.wallet),
+          computeDisplayName({
+            leaderboardDisplay: player.leaderboardDisplay,
+            nickname: player.nickname,
+            telegramUsername: linkMap[player.wallet] ? linkMap[player.wallet].telegramUsername : null,
+            wallet: linkMap[player.wallet] ? linkMap[player.wallet].wallet : null
+          }),
           index + 1
         )
       )),
