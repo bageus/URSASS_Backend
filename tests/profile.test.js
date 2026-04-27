@@ -38,6 +38,10 @@ function makePlayer(overrides = {}) {
     lastShareAt: null,
     xUserId: null,
     xUsername: null,
+    lastSeenRank: null,
+    nickname: null,
+    leaderboardDisplay: 'wallet',
+    save: async function () {},
     ...overrides
   };
 }

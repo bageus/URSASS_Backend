@@ -89,6 +89,24 @@ const playerSchema = new mongoose.Schema({
   lastShareDay: { type: String, default: null },
   lastShareAt: { type: Date, default: null },
 
+  // ── Rank tracking (for rankDelta in profile) ──────────────────────────────
+  lastSeenRank: { type: Number, default: null },
+
+  // ── Player display settings ───────────────────────────────────────────────
+  nickname: { type: String, default: null, maxlength: 16 },
+  nicknameLower: {
+    type: String,
+    default: null,
+    lowercase: true,
+    sparse: true,
+    index: { unique: true, sparse: true }
+  },
+  leaderboardDisplay: {
+    type: String,
+    enum: ['nickname', 'wallet', 'telegram'],
+    default: 'wallet'
+  },
+
   createdAt: {
     type: Date,
     default: Date.now

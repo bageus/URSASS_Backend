@@ -286,6 +286,9 @@ router.post('/link/wallet', writeLimiter, async (req, res) => {
   }
 });
 
+const NICKNAME_REGEX = /^[a-zA-Z0-9_]{3,16}$/;
+const RESERVED_NICKNAMES = new Set(['admin', 'system', 'bot', 'null', 'undefined', 'anon', 'support', 'moderator']);
+
 /**
  * GET /api/account/me/profile
  * Returns the authenticated player's full profile.
@@ -316,6 +319,19 @@ router.get('/me/profile', readLimiter, requireAuth, async (req, res) => {
     const referralCode = player.referralCode || null;
     const referralUrl = referralCode ? buildReferralUrl(referralCode, req) : null;
 
+    // Compute rankDelta only for wallet-linked players
+    const eligibleForRank = !!link.wallet;
+    let rankDelta = null;
+    if (eligibleForRank) {
+      const currentRank = rank || null;
+      const prevRank = player.lastSeenRank ?? null;
+      rankDelta = (currentRank != null && prevRank != null) ? (currentRank - prevRank) : null;
+      if (currentRank != null && currentRank !== prevRank) {
+        player.lastSeenRank = currentRank;
+        await player.save();
+      }
+    }
+
     return res.json({
       primaryId,
       rank: rank || null,
@@ -340,7 +356,10 @@ router.get('/me/profile', readLimiter, requireAuth, async (req, res) => {
       shareStreak: displayStreak,
       canShareToday,
       goldRewardToday: Number(process.env.SHARE_DAILY_REWARD_GOLD || 20),
-      lastShareDay: player.lastShareDay || null
+      lastShareDay: player.lastShareDay || null,
+      rankDelta,
+      nickname: player.nickname || null,
+      leaderboardDisplay: player.leaderboardDisplay || 'wallet'
     });
   } catch (error) {
     logger.error({ err: error }, 'GET /me/profile error');
@@ -380,75 +399,91 @@ router.get('/info/:identifier', readLimiter, async (req, res) => {
 });
 
 /**
- * GET /api/account/me/profile
- * Returns full player profile including rank, referral info, share streak.
- * Auth: X-Primary-Id or X-Wallet header (both fields tried, with cross-field fallback).
+ * POST /api/account/me/nickname
+ * Save or update player nickname.
+ * Auth: requireAuth, writeLimiter.
  */
-router.get('/me/profile', readLimiter, async (req, res) => {
+router.post('/me/nickname', writeLimiter, requireAuth, async (req, res) => {
   try {
-    const rawPrimaryId = (req.get('x-primary-id') || '').trim().toLowerCase();
-    const rawWallet = (req.get('x-wallet') || '').trim().toLowerCase();
-    const initData = req.get('x-telegram-init-data') || req.get('X-Telegram-Init-Data') || '';
+    const primaryId = req.primaryId;
+    const { nickname } = req.body;
 
-    if (!rawPrimaryId && !rawWallet && !initData) {
-      return res.status(401).json({ error: 'Authentication required' });
+    if (!nickname || !NICKNAME_REGEX.test(nickname)) {
+      return res.status(400).json({ error: 'invalid_nickname', detail: '3-16 chars: a-z, 0-9, _' });
     }
 
-    const link = await findLink(rawPrimaryId, rawWallet, initData);
-    if (!link || link.__invalid) {
-      return res.status(401).json({ error: 'Account not found' });
+    if (RESERVED_NICKNAMES.has(nickname.toLowerCase())) {
+      return res.status(400).json({ error: 'invalid_nickname', detail: '3-16 chars: a-z, 0-9, _' });
     }
 
-    const primaryId = link.primaryId;
     const player = await Player.findOne({ wallet: primaryId });
     if (!player) {
-      return res.status(404).json({ error: 'Player not found. Play at least one game first.' });
+      return res.status(404).json({ error: 'Player not found' });
     }
 
-    const { rank, totalRankedPlayers } = await computeRank(player.bestScore || 0);
-    const referralUrl = buildReferralUrl(player.referralCode || '', req);
+    // Check uniqueness — find another player with same nicknameLower
+    const nickLower = nickname.toLowerCase();
+    const existing = await Player.findOne({ nicknameLower: nickLower, wallet: { $ne: primaryId } });
+    if (existing) {
+      return res.status(409).json({ error: 'nickname_taken' });
+    }
 
-    const today = getUtcDayKey();
-    const yesterday = getYesterdayUtcDayKey();
+    player.nickname = nickname;
+    player.nicknameLower = nickLower;
+    await player.save();
 
-    const canShareToday = player.lastShareDay !== today;
-
-    // For display: if streak is stale (missed yesterday), show 0 without mutating DB
-    const displayShareStreak =
-      player.lastShareDay && player.lastShareDay < yesterday
-        ? 0
-        : player.shareStreak || 0;
-
-    return res.json({
-      primaryId,
-      rank: rank || null,
-      totalRankedPlayers: totalRankedPlayers || 0,
-      bestScore: player.bestScore || 0,
-      gold: player.gold || 0,
-      referralCode: player.referralCode || null,
-      referralUrl,
-      telegram: {
-        connected: Boolean(link.telegramId),
-        username: link.telegramUsername || null,
-        id: link.telegramId || null
-      },
-      wallet: {
-        connected: Boolean(link.wallet),
-        address: link.wallet || null
-      },
-      x: {
-        connected: Boolean(player.xUserId),
-        username: player.xUsername || null
-      },
-      shareStreak: displayShareStreak,
-      canShareToday,
-      goldRewardToday: Number(process.env.SHARE_DAILY_REWARD_GOLD || 20),
-      lastShareDay: player.lastShareDay || null
-    });
-
+    return res.json({ ok: true, nickname });
   } catch (error) {
-    logger.error({ err: error }, 'GET /me/profile error');
-    return res.status(500).json({ error: 'Server error' });
+    logger.error({ err: error }, 'POST /me/nickname error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * POST /api/account/me/display-mode
+ * Save leaderboard display mode for the current player.
+ * Auth: requireAuth, writeLimiter.
+ */
+router.post('/me/display-mode', writeLimiter, requireAuth, async (req, res) => {
+  try {
+    const primaryId = req.primaryId;
+    const link = req.authLink;
+    const { mode } = req.body;
+
+    const VALID_MODES = ['nickname', 'wallet', 'telegram'];
+    if (!mode || !VALID_MODES.includes(mode)) {
+      return res.status(400).json({ error: 'invalid_mode', detail: "mode must be 'nickname', 'wallet', or 'telegram'" });
+    }
+
+    const player = await Player.findOne({ wallet: primaryId });
+    if (!player) {
+      return res.status(404).json({ error: 'Player not found' });
+    }
+
+    if (mode === 'nickname') {
+      if (!player.nickname) {
+        return res.status(400).json({ error: 'nickname_not_set' });
+      }
+    } else if (mode === 'wallet') {
+      if (!link.wallet) {
+        return res.status(400).json({ error: 'wallet_not_linked' });
+      }
+    } else if (mode === 'telegram') {
+      if (!link.telegramId) {
+        return res.status(400).json({ error: 'telegram_not_linked' });
+      }
+      if (!link.telegramUsername) {
+        return res.status(400).json({ error: 'telegram_username_missing' });
+      }
+    }
+
+    player.leaderboardDisplay = mode;
+    await player.save();
+
+    return res.json({ ok: true, mode });
+  } catch (error) {
+    logger.error({ err: error }, 'POST /me/display-mode error');
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
