@@ -326,12 +326,12 @@ router.get('/me/profile', readLimiter, requireAuth, async (req, res) => {
       const currentRank = rank || null;
       const prevRank = player.lastSeenRank ?? null;
 
-      if (currentRank != null && prevRank == null) {
+      if (currentRank !== null && prevRank === null) {
         // Init-once: first visit — establish baseline, no delta yet
         player.lastSeenRank = currentRank;
         await player.save();
         rankDelta = null;
-      } else if (currentRank != null && prevRank != null) {
+      } else if (currentRank !== null && prevRank !== null) {
         rankDelta = currentRank - prevRank;
       }
     }

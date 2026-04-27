@@ -608,7 +608,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       const playerForRank = await Player.findOne({ wallet: walletLower });
       if (playerForRank) {
         const { rank: freshRank } = await computeRank(playerForRank.bestScore);
-        if (freshRank != null) {
+        if (freshRank !== null) {
           playerForRank.lastSeenRank = freshRank;
           await playerForRank.save();
         }
