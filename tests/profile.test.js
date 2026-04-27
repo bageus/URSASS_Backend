@@ -180,3 +180,131 @@ test('GET /api/account/me/profile - referralUrl is consistent', async () => {
     server.close();
   }
 });
+
+// ── rankDelta tests ──────────────────────────────────────────────────────────
+
+test('rankDelta: init on first read — sets baseline, returns null', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const link = makeLink({ primaryId: 'tg_rank1', telegramId: '501', wallet: '0xrank1' });
+    AccountLink.findOne = async (q) => (q.primaryId === 'tg_rank1' ? link : null);
+
+    let savedLastSeenRank;
+    const player = makePlayer({
+      wallet: 'tg_rank1',
+      bestScore: 8350,
+      lastSeenRank: null,
+      save: async function () { savedLastSeenRank = this.lastSeenRank; }
+    });
+    Player.findOne = async () => player;
+    Player.countDocuments = async (q) => {
+      if (q?.bestScore?.$gt > 0) return 41;
+      return 100;
+    };
+    PlayerRun.countDocuments = async () => 0;
+    PlayerRun.findOne = () => ({ sort: async () => null });
+
+    const r = await get(baseUrl, '/api/account/me/profile', { 'X-Primary-Id': 'tg_rank1' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.rankDelta, null, 'rankDelta should be null on first read');
+    assert.equal(savedLastSeenRank, 42, 'lastSeenRank should be set to current rank on first read');
+  } finally {
+    server.close();
+  }
+});
+
+test('rankDelta: stable across multiple reads — baseline not overwritten', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const link = makeLink({ primaryId: 'tg_rank2', telegramId: '502', wallet: '0xrank2' });
+    AccountLink.findOne = async (q) => (q.primaryId === 'tg_rank2' ? link : null);
+
+    let saveCallCount = 0;
+    const player = makePlayer({
+      wallet: 'tg_rank2',
+      bestScore: 8350,
+      lastSeenRank: 42,
+      save: async function () { saveCallCount++; }
+    });
+    Player.findOne = async () => player;
+    // 49 players better → rank 50
+    Player.countDocuments = async (q) => {
+      if (q?.bestScore?.$gt > 0) return 49;
+      return 100;
+    };
+    PlayerRun.countDocuments = async () => 0;
+    PlayerRun.findOne = () => ({ sort: async () => null });
+
+    const r1 = await get(baseUrl, '/api/account/me/profile', { 'X-Primary-Id': 'tg_rank2' });
+    assert.equal(r1.status, 200);
+    assert.equal(r1.body.rankDelta, 8, 'first read: rankDelta = 50 - 42 = 8');
+
+    const r2 = await get(baseUrl, '/api/account/me/profile', { 'X-Primary-Id': 'tg_rank2' });
+    assert.equal(r2.status, 200);
+    assert.equal(r2.body.rankDelta, 8, 'second read: rankDelta still 8, baseline unchanged');
+    assert.equal(saveCallCount, 0, 'save() should not be called when baseline is already set');
+    assert.equal(player.lastSeenRank, 42, 'lastSeenRank must not be overwritten on reads');
+  } finally {
+    server.close();
+  }
+});
+
+test('rankDelta: no update for non-wallet user', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const link = makeLink({ primaryId: 'tg_rank3', telegramId: '503', wallet: null });
+    AccountLink.findOne = async (q) => (q.primaryId === 'tg_rank3' ? link : null);
+
+    let saveCallCount = 0;
+    const player = makePlayer({
+      wallet: 'tg_rank3',
+      bestScore: 8350,
+      lastSeenRank: null,
+      save: async function () { saveCallCount++; }
+    });
+    Player.findOne = async () => player;
+    Player.countDocuments = async (q) => {
+      if (q?.bestScore?.$gt > 0) return 41;
+      return 100;
+    };
+    PlayerRun.countDocuments = async () => 0;
+    PlayerRun.findOne = () => ({ sort: async () => null });
+
+    const r = await get(baseUrl, '/api/account/me/profile', { 'X-Primary-Id': 'tg_rank3' });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.rankDelta, null, 'rankDelta must be null for non-wallet user');
+    assert.equal(saveCallCount, 0, 'save() must not be called for non-wallet user');
+    assert.equal(player.lastSeenRank, null, 'lastSeenRank must not be touched for non-wallet user');
+  } finally {
+    server.close();
+  }
+});
+
+test('rankDelta: negative delta when player rose in rank', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const link = makeLink({ primaryId: 'tg_rank4', telegramId: '504', wallet: '0xrank4' });
+    AccountLink.findOne = async (q) => (q.primaryId === 'tg_rank4' ? link : null);
+
+    const player = makePlayer({
+      wallet: 'tg_rank4',
+      bestScore: 9000,
+      lastSeenRank: 50,
+      save: async function () {}
+    });
+    Player.findOne = async () => player;
+    // 41 players better → rank 42 (rose from 50 to 42)
+    Player.countDocuments = async (q) => {
+      if (q?.bestScore?.$gt > 0) return 41;
+      return 100;
+    };
+    PlayerRun.countDocuments = async () => 0;
+    PlayerRun.findOne = () => ({ sort: async () => null });
+
+    const r = await get(baseUrl, '/api/account/me/profile', { 'X-Primary-Id': 'tg_rank4' });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.rankDelta, -8, 'rankDelta = 42 - 50 = -8 (rose 8 places)');
+  } finally {
+    server.close();
+  }
+});
