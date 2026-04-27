@@ -177,7 +177,8 @@ All endpoints are also available under `/api/v1/*`.
   "shareStreak": 3,
   "canShareToday": true,
   "goldRewardToday": 20,
-  "lastShareDay": "2026-04-25"
+  "lastShareDay": "2026-04-25",
+  "referralCount": 3
 }
 ```
 
@@ -316,7 +317,7 @@ For better isolation under load, you can run the bot in a separate worker proces
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| `GET` | `/api/account/me/profile` | `X-Primary-Id` header | Returns rank, bestScore, gold, referralUrl, share streak, connection status, rankDelta, nickname, leaderboardDisplay |
+| `GET` | `/api/account/me/profile` | `X-Primary-Id` header | Returns rank, bestScore, gold, referralUrl, share streak, connection status, rankDelta, referralCount, nickname, leaderboardDisplay |
 | `POST` | `/api/account/me/nickname` | `X-Primary-Id` header | Save or update player nickname |
 | `POST` | `/api/account/me/display-mode` | `X-Primary-Id` header | Save leaderboard display mode |
 
@@ -338,12 +339,15 @@ For better isolation under load, you can run the bot in a separate worker proces
   "goldRewardToday": 20,
   "lastShareDay": "2026-04-25",
   "rankDelta": -3,
+  "referralCount": 3,
   "nickname": "CoolPlayer",
   "leaderboardDisplay": "wallet"
 }
 ```
 
 `rankDelta` is the change in rank since the player's last completed game (positive = fell N places, negative = rose N places, `null` for the first read or when no wallet is linked). Updated server-side **only** when the player finishes a new game; reads of `/me/profile` never change the baseline.
+
+`referralCount` — number of players this user has referred (counted by `referredBy === player.referralCode`).
 
 **`POST /api/account/me/nickname` Body:** `{ "nickname": "CoolPlayer" }`
 
