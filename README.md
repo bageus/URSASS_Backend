@@ -85,7 +85,7 @@ Versioned aliases are also available under `/api/v1/*` (backward-compatible with
 |---|---|---|
 | `GET` | `/health` | Health check |
 | `GET` | `/metrics` | Prometheus metrics endpoint |
-| `GET` | `/api/leaderboard/top?wallet=` | Get top 10 players (optional: include requesting player's position) |
+| `GET` | `/api/leaderboard/top?wallet=` | Get top 10 players with `displayName` per entry (optional: include requesting player's position) |
 | `POST` | `/api/leaderboard/save` | Save game result (requires EIP-191 signature) |
 | `GET` | `/api/leaderboard/player/:wallet` | Get player info and history |
 | `GET` | `/api/leaderboard/verified-results/:wallet` | Get verified game results for a wallet |
@@ -268,9 +268,11 @@ For better isolation under load, you can run the bot in a separate worker proces
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| `GET` | `/api/account/me/profile` | `X-Primary-Id` header | Returns rank, bestScore, gold, referralUrl, share streak, connection status |
+| `GET` | `/api/account/me/profile` | `X-Primary-Id` header | Returns rank, bestScore, gold, referralUrl, share streak, connection status, rankDelta, nickname, leaderboardDisplay |
+| `POST` | `/api/account/me/nickname` | `X-Primary-Id` header | Save or update player nickname |
+| `POST` | `/api/account/me/display-mode` | `X-Primary-Id` header | Save leaderboard display mode |
 
-**Response:**
+**`GET /api/account/me/profile` Response:**
 ```json
 {
   "primaryId": "tg_123",
@@ -286,9 +288,28 @@ For better isolation under load, you can run the bot in a separate worker proces
   "shareStreak": 3,
   "canShareToday": true,
   "goldRewardToday": 20,
-  "lastShareDay": "2026-04-25"
+  "lastShareDay": "2026-04-25",
+  "rankDelta": -3,
+  "nickname": "CoolPlayer",
+  "leaderboardDisplay": "wallet"
 }
 ```
+
+`rankDelta` is the change in rank since the last profile load (positive = fell N places, negative = rose N places, `null` = no wallet linked or first visit).
+
+**`POST /api/account/me/nickname` Body:** `{ "nickname": "CoolPlayer" }`
+
+- `nickname` must match `/^[a-zA-Z0-9_]{3,16}$/`
+- Reserved words are rejected: `admin`, `system`, `bot`, `null`, `undefined`, `anon`, `support`, `moderator`
+- Returns `409` if the nickname is already taken by another player
+- **Response:** `{ "ok": true, "nickname": "CoolPlayer" }`
+
+**`POST /api/account/me/display-mode` Body:** `{ "mode": "wallet" | "nickname" | "telegram" }`
+
+- `nickname` mode requires that `player.nickname` is already set
+- `wallet` mode requires that a wallet is linked
+- `telegram` mode requires that a Telegram account with a username is linked
+- **Response:** `{ "ok": true, "mode": "wallet" }`
 
 #### Referral Tracking
 
