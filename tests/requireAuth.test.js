@@ -100,7 +100,7 @@ test('findLink: wallet-auth user — X-Wallet 0xabc → found by wallet field', 
       if (q.wallet === '0xabc') return link;
       return null;
     };
-    const result = await findLink('', '0xabc', '');
+    const result = await findLink('', '0xabc', '', '');
     assert.ok(result, 'should find a link');
     assert.equal(result.wallet, '0xabc');
     assert.equal(result.primaryId, 'tg_abc');
@@ -118,7 +118,7 @@ test('findLink: telegram-auth user without wallet — X-Wallet: tg_123 → fallb
       if (q.primaryId === 'tg_123') return link; // found by primaryId (fallback)
       return null;
     };
-    const result = await findLink('', 'tg_123', '');
+    const result = await findLink('', 'tg_123', '', '');
     assert.ok(result, 'should find a link via primaryId fallback');
     assert.equal(result.primaryId, 'tg_123');
   } finally {
@@ -134,7 +134,7 @@ test('findLink: legacy wallet-only — X-Primary-Id: 0xabc → found by primaryI
       if (q.primaryId === '0xabc') return link;
       return null;
     };
-    const result = await findLink('0xabc', '', '');
+    const result = await findLink('0xabc', '', '', '');
     assert.ok(result, 'should find a link by primaryId');
     assert.equal(result.primaryId, '0xabc');
   } finally {
@@ -151,7 +151,7 @@ test('findLink: X-Primary-Id set but not in primaryId field → fallback to wall
       if (q.wallet === '0xfallback') return link;    // found by wallet fallback
       return null;
     };
-    const result = await findLink('0xfallback', '', '');
+    const result = await findLink('0xfallback', '', '', '');
     assert.ok(result, 'should find a link via wallet fallback');
     assert.equal(result.primaryId, 'tg_fallback');
   } finally {
@@ -163,7 +163,7 @@ test('findLink: no match → returns null', async () => {
   const origFindOne = AccountLink.findOne;
   try {
     AccountLink.findOne = async () => null;
-    const result = await findLink('nobody', 'nobody', '');
+    const result = await findLink('nobody', 'nobody', '', '');
     assert.equal(result, null);
   } finally {
     AccountLink.findOne = origFindOne;
@@ -174,7 +174,7 @@ test('findLink: no identifiers provided → returns null', async () => {
   const origFindOne = AccountLink.findOne;
   try {
     AccountLink.findOne = async () => null;
-    const result = await findLink('', '', '');
+    const result = await findLink('', '', '', '');
     assert.equal(result, null);
   } finally {
     AccountLink.findOne = origFindOne;
@@ -195,11 +195,27 @@ test('findLink: valid Telegram initData → found by telegramId', async () => {
       return null;
     };
     const initData = makeValidInitData(userId, botToken);
-    const result = await findLink('', '', initData);
+    const result = await findLink('', '', '', initData);
     assert.ok(result, 'should find a link by telegramId');
     assert.equal(result.telegramId, String(userId));
   } finally {
     process.env.TELEGRAM_BOT_TOKEN = origBotToken;
+    AccountLink.findOne = origFindOne;
+  }
+});
+
+test('findLink: Authorization bearer value mapped to primaryId works', async () => {
+  const link = makeLink({ primaryId: 'tg_bearer', wallet: null });
+  const origFindOne = AccountLink.findOne;
+  try {
+    AccountLink.findOne = async (q) => {
+      if (q.primaryId === 'tg_bearer') return link;
+      return null;
+    };
+    const result = await findLink('', '', 'tg_bearer', '');
+    assert.ok(result, 'should find a link using bearer id as primaryId');
+    assert.equal(result.primaryId, 'tg_bearer');
+  } finally {
     AccountLink.findOne = origFindOne;
   }
 });
@@ -209,7 +225,7 @@ test('findLink: invalid Telegram initData → returns { __invalid: "initdata" }'
   try {
     AccountLink.findOne = async () => null;
     // 'bad_init_data' has no hash field → will fail validation
-    const result = await findLink('', '', 'bad_init_data');
+    const result = await findLink('', '', '', 'bad_init_data');
     assert.ok(result, 'should return sentinel object');
     assert.equal(result.__invalid, 'initdata');
   } finally {
@@ -231,6 +247,24 @@ test('requireAuth: sets req.primaryId and req.authLink on success', async () => 
     await requireAuth(req, res, next);
     assert.ok(isNextCalled(), 'next() should be called');
     assert.equal(req.primaryId, 'tg_mw1');
+    assert.deepStrictEqual(req.authLink, link);
+  } finally {
+    AccountLink.findOne = origFindOne;
+  }
+});
+
+test('requireAuth: Authorization Bearer header authenticates user', async () => {
+  const link = makeLink({ primaryId: 'tg_token', wallet: '0xtoken' });
+  const origFindOne = AccountLink.findOne;
+  try {
+    AccountLink.findOne = async (q) => {
+      if (q.primaryId === 'tg_token') return link;
+      return null;
+    };
+    const { req, res, next, isNextCalled } = makeReqRes({ authorization: 'Bearer tg_token' });
+    await requireAuth(req, res, next);
+    assert.ok(isNextCalled(), 'next() should be called');
+    assert.equal(req.primaryId, 'tg_token');
     assert.deepStrictEqual(req.authLink, link);
   } finally {
     AccountLink.findOne = origFindOne;
