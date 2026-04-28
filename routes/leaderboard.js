@@ -18,6 +18,7 @@ const { hasAiModeAccess, validateAiSettings } = require('../utils/aiModeAccess')
 const { computePlayerInsights, computeRank, DEFAULTS: leaderboardInsightsConfig } = require('../services/leaderboardInsightsService');
 const { buildGameOverPayload } = require('../services/gameOverAgitationService');
 const { maybeGrantReferralRewards } = require('../utils/referralRewards');
+const { recordCoinReward } = require('../utils/coinHistory');
 
 const SHARE_COPY_TEMPLATE = 'I scored {score} in Ursass Tube 🐻\nCan you beat me?';
 const SHARE_HASHTAGS = '#UrsassTube #Ursas #Ursasplanet #GameChallenge #HighScore';
@@ -603,6 +604,10 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       totalGoldCoins: responsePayload.totalGoldCoins,
       totalSilverCoins: responsePayload.totalSilverCoins
     }, 'Result saved (VERIFIED)');
+
+    if (coins.gold > 0 || coins.silver > 0) {
+      await recordCoinReward(walletLower, 'ride', { gold: coins.gold, silver: coins.silver }, { requestId: req.requestId });
+    }
 
     // Grant referral rewards on first valid run (non-blocking, errors logged internally)
     try {
