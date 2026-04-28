@@ -1,10 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
-const path = require('path');
 const mongoose = require('mongoose');
-let sharp;
-try { sharp = require('sharp'); } catch (_) { sharp = null; }
+const { renderScoreSharePng } = require('../utils/shareCard');
 const Player = require('../models/Player');
 const GameResult = require('../models/GameResult');
 const AccountLink = require('../models/AccountLink');
@@ -808,8 +806,6 @@ router.get('/share/image/:wallet.svg', readLimiter, async (req, res) => {
   }
 });
 
-const SCORE_TEMPLATE_PATH = path.join(__dirname, '..', 'img', 'Score_result');
-
 router.get('/share/image/:wallet.png', readLimiter, async (req, res) => {
   try {
     const wallet = String(req.params.wallet || '').trim().toLowerCase();
@@ -822,39 +818,16 @@ router.get('/share/image/:wallet.png', readLimiter, async (req, res) => {
       return res.status(404).json({ error: 'Player not found' });
     }
 
-    if (!sharp) {
-      return res.status(503).json({ error: 'PNG rendering unavailable' });
-    }
-
     const score = shareContext.scoreForShare;
-
-    const templateMeta = await sharp(SCORE_TEMPLATE_PATH).metadata();
-    const w = templateMeta.width || 1254;
-    const h = templateMeta.height || 1254;
-
-    const scoreText = String(score);
-    const fontSize = Math.min(180, Math.floor(w * 0.14));
-    const cx = Math.round(w / 2);
-    const cy = Math.round(h * 0.72);
-
-    const svgOverlay = Buffer.from(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">` +
-      `<text x="${cx}" y="${cy}" text-anchor="middle"` +
-      ` font-size="${fontSize}" font-weight="900"` +
-      ` font-family="Arial Black, Arial, sans-serif"` +
-      ` fill="#ffffff" stroke="#000000" stroke-width="6">${escapeHtml(scoreText)}</text>` +
-      `</svg>`
-    );
-
-    const pngBuffer = await sharp(SCORE_TEMPLATE_PATH)
-      .composite([{ input: svgOverlay, blend: 'over' }])
-      .png({ compressionLevel: 8 })
-      .toBuffer();
+    const pngBuffer = await renderScoreSharePng(score);
 
     res.setHeader('Content-Type', 'image/png');
     res.setHeader('Cache-Control', 'public, max-age=3600');
     return res.send(pngBuffer);
   } catch (error) {
+    if (error?.code === 'share_png_unavailable') {
+      return res.status(503).json({ error: 'PNG rendering unavailable' });
+    }
     logger.error({ err: error.message, requestId: req.requestId }, 'GET /share/image/:wallet.png error');
     return res.status(500).json({ error: 'Server error', requestId: req.requestId });
   }

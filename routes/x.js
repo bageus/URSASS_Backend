@@ -16,6 +16,8 @@ const OAuthState = require('../models/OAuthState');
 const Player = require('../models/Player');
 const AccountLink = require('../models/AccountLink');
 const xOAuth = require('../utils/xOAuth');
+const { buildReferralUrl } = require('../utils/referral');
+const { renderScoreSharePng } = require('../utils/shareCard');
 const { logSecurityEvent } = require('../utils/security');
 const logger = require('../utils/logger');
 const { findLink } = require('../middleware/requireAuth');
@@ -69,6 +71,31 @@ const statusLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: getClientIp
 });
+
+const shareResultLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  message: 'Too many share requests. Please wait.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: getClientIp
+});
+
+const SHARE_COPY_TEMPLATE = 'I scored {score} in Ursass Tube 🐻\nCan you beat me?';
+const SHARE_HASHTAGS = '#UrsassTube #Ursas #Ursasplanet #GameChallenge #HighScore';
+
+function getPublicBaseUrl(req) {
+  const configured = (process.env.PUBLIC_BASE_URL || process.env.APP_BASE_URL || '').trim();
+  if (configured) return configured.replace(/\/+$/, '');
+  return `${req.protocol}://${req.get('host')}`;
+}
+
+function buildSharePostText(score, referralUrl) {
+  const normalizedScore = Math.max(0, Math.floor(Number(score || 0)));
+  const main = SHARE_COPY_TEMPLATE.replace('{score}', normalizedScore);
+  const parts = [main, referralUrl ? referralUrl.trim() : '', SHARE_HASHTAGS].filter(Boolean);
+  return parts.join('\n');
+}
 
 /**
  * Resolve authenticated primaryId from request headers.
@@ -318,6 +345,88 @@ router.get('/status', statusLimiter, requireXOAuth, async (req, res) => {
     });
   } catch (err) {
     logger.error({ err: err.message }, 'GET /x/status error');
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /share-result
+// Publish share result as a real post via connected X account.
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/share-result', shareResultLimiter, requireXOAuth, async (req, res) => {
+  try {
+    const link = await resolveAuth(req);
+    if (!link) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    const primaryId = link.primaryId;
+    const player = await Player.findOne({ wallet: primaryId }).select('+xAccessToken +xRefreshToken');
+    if (!player) {
+      return res.status(404).json({ error: 'Player not found' });
+    }
+
+    if (!player.xAccessToken) {
+      return res.status(400).json({ error: 'x_not_connected' });
+    }
+
+    const scoreForShare = player.bestScore || 0;
+    const referralUrl = buildReferralUrl(player.referralCode || '', req);
+    const postText = buildSharePostText(scoreForShare, referralUrl);
+    const walletAddress = link.wallet || null;
+    const sharePageUrl = walletAddress
+      ? `${getPublicBaseUrl(req)}/api/leaderboard/share/page/${walletAddress}`
+      : null;
+    const tweetText = sharePageUrl ? `${postText}\n${sharePageUrl}` : postText;
+    const shareImageBuffer = await renderScoreSharePng(scoreForShare);
+
+    let tokenToUse = player.xAccessToken;
+    let tweet;
+    try {
+      const mediaId = await xOAuth.uploadMedia(tokenToUse, shareImageBuffer);
+      tweet = await xOAuth.createTweet(tokenToUse, {
+        text: tweetText,
+        media: mediaId ? { media_ids: [mediaId] } : undefined
+      });
+    } catch (err) {
+      if (err?.response?.status !== 401 || !player.xRefreshToken) {
+        throw err;
+      }
+
+      const refreshed = await xOAuth.refreshAccessToken(player.xRefreshToken);
+      tokenToUse = refreshed.access_token || '';
+      player.xAccessToken = tokenToUse || null;
+      if (refreshed.refresh_token) {
+        player.xRefreshToken = refreshed.refresh_token;
+      }
+      await player.save();
+
+      const mediaId = await xOAuth.uploadMedia(tokenToUse, shareImageBuffer);
+      tweet = await xOAuth.createTweet(tokenToUse, {
+        text: tweetText,
+        media: mediaId ? { media_ids: [mediaId] } : undefined
+      });
+    }
+
+    if (!tweet?.id) {
+      return res.status(502).json({ error: 'x_tweet_failed' });
+    }
+
+    const tweetUrl = player.xUsername
+      ? `https://x.com/${player.xUsername}/status/${tweet.id}`
+      : `https://x.com/i/web/status/${tweet.id}`;
+
+    return res.json({
+      posted: true,
+      tweetId: tweet.id,
+      tweetUrl,
+      text: tweet.text || tweetText
+    });
+  } catch (err) {
+    if (err?.code === 'share_png_unavailable') {
+      return res.status(503).json({ error: 'share_png_unavailable' });
+    }
+    logger.error({ err: err.message }, 'POST /x/share-result error');
     return res.status(500).json({ error: 'Server error' });
   }
 });
