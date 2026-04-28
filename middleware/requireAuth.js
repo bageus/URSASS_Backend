@@ -5,7 +5,8 @@
  * Resolves primaryId from request using:
  *   1. X-Primary-Id header → findOne({ primaryId }) with fallback to findOne({ wallet })
  *   2. X-Wallet header → findOne({ wallet }) with fallback to findOne({ primaryId })
- *   3. X-Telegram-Init-Data header → validate and look up AccountLink by telegramId
+ *   3. Authorization: Bearer <primaryId|wallet> → same cross-field lookup as above
+ *   4. X-Telegram-Init-Data header → validate and look up AccountLink by telegramId
  *
  * Sets req.primaryId and req.authLink on success.
  * Returns 401 on failure.
@@ -21,10 +22,11 @@ const logger = require('../utils/logger');
  *
  * @param {string} rawPrimaryId - Value from X-Primary-Id header (trimmed, lowercased)
  * @param {string} rawWallet    - Value from X-Wallet header (trimmed, lowercased)
+ * @param {string} rawBearerId  - Parsed Bearer token (trimmed, lowercased)
  * @param {string} initData     - Raw X-Telegram-Init-Data header value
  * @returns {object|null} AccountLink document, { __invalid: 'initdata' } on bad initData, or null
  */
-async function findLink(rawPrimaryId, rawWallet, initData) {
+async function findLink(rawPrimaryId, rawWallet, rawBearerId, initData) {
   if (rawPrimaryId) {
     const byPrimary = await AccountLink.findOne({ primaryId: rawPrimaryId });
     if (byPrimary) return byPrimary;
@@ -37,6 +39,13 @@ async function findLink(rawPrimaryId, rawWallet, initData) {
     if (byWallet) return byWallet;
     const byPrimary = await AccountLink.findOne({ primaryId: rawWallet });
     if (byPrimary) return byPrimary;
+  }
+
+  if (rawBearerId) {
+    const byPrimary = await AccountLink.findOne({ primaryId: rawBearerId });
+    if (byPrimary) return byPrimary;
+    const byWallet = await AccountLink.findOne({ wallet: rawBearerId });
+    if (byWallet) return byWallet;
   }
 
   if (initData) {
@@ -61,12 +70,15 @@ async function requireAuth(req, res, next) {
   try {
     const rawPrimaryId = (req.get('x-primary-id') || '').trim().toLowerCase();
     const rawWallet = (req.get('x-wallet') || '').trim().toLowerCase();
+    const authorization = req.get('authorization') || '';
+    const bearerMatch = authorization.match(/^Bearer\s+(.+)$/i);
+    const rawBearerId = bearerMatch ? bearerMatch[1].trim().toLowerCase() : '';
     const initData = req.get('x-telegram-init-data') || req.get('X-Telegram-Init-Data') || '';
 
-    const link = await findLink(rawPrimaryId, rawWallet, initData);
+    const link = await findLink(rawPrimaryId, rawWallet, rawBearerId, initData);
 
     if (!link) {
-      logger.warn({ rawWallet, rawPrimaryId, hasInitData: !!initData }, 'requireAuth: no AccountLink found');
+      logger.warn({ rawWallet, rawPrimaryId, rawBearerId, hasInitData: !!initData }, 'requireAuth: no AccountLink found');
       return res.status(401).json({ error: 'Unauthorized: no valid auth credentials' });
     }
 

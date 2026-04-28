@@ -116,18 +116,20 @@ Versioned aliases are also available under `/api/v1/*` (backward-compatible with
 
 ## Auth Headers
 
-Authenticated endpoints resolve the caller identity from one of three request headers (checked in order):
+Authenticated endpoints resolve the caller identity from one of four auth inputs (checked in order):
 
 | Header | Description |
 |---|---|
 | `X-Primary-Id` | **Preferred.** The canonical `primaryId` of the AccountLink record (e.g. `tg_123` or `0xabc`). |
 | `X-Wallet` | **Fallback.** Wallet address *or* telegram primaryId (e.g. `tg_123`). The middleware tries `wallet` field first, then `primaryId` field. |
+| `Authorization: Bearer <id>` | Bearer token treated as `primaryId`/wallet identifier with cross-field fallback lookup. Useful when frontend auth is token-based. |
 | `X-Telegram-Init-Data` | Raw Telegram WebApp `initData` string. Validated via HMAC; account looked up by `telegramId`. |
 
 The auth middleware (`middleware/requireAuth.js`) performs cross-field lookups for robustness:
 
 - When `X-Primary-Id` is provided: tries `{ primaryId }` first, then `{ wallet }` as fallback.
 - When `X-Wallet` is provided: tries `{ wallet }` first, then `{ primaryId }` as fallback.
+- When `Authorization: Bearer <id>` is provided: tries `{ primaryId }` first, then `{ wallet }` as fallback.
 
 This ensures Telegram-only users (whose `primaryId` is `tg_<id>`) can authenticate even when the frontend sends their identifier in the `X-Wallet` header.
 
