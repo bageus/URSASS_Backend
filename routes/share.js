@@ -107,9 +107,14 @@ router.post('/start', shareStartLimiter, async (req, res) => {
     const imageUrl = walletAddress
       ? `${baseUrl}/api/leaderboard/share/image/${walletAddress}.png`
       : `${baseUrl}/api/leaderboard/share/image/default.svg`;
+    const shareUrl = walletAddress
+      ? `${baseUrl}/api/leaderboard/share/page/${walletAddress}`
+      : '';
 
     const postText = buildSharePostText(scoreAtShare, referralUrl);
-    const intentUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(postText)}`;
+    const intentUrl = walletAddress
+      ? `https://twitter.com/intent/tweet?text=${encodeURIComponent(postText)}&url=${encodeURIComponent(shareUrl)}`
+      : `https://twitter.com/intent/tweet?text=${encodeURIComponent(postText)}`;
 
     if (!canShareToday) {
       return res.json({
@@ -118,6 +123,7 @@ router.post('/start', shareStartLimiter, async (req, res) => {
         shareUrl: referralUrl,
         postText,
         imageUrl,
+        previewUrl: shareUrl || null,
         intentUrl,
         eligibleForReward: false,
         secondsUntilReward: 0,
@@ -144,6 +150,7 @@ router.post('/start', shareStartLimiter, async (req, res) => {
       postText,
       referralUrl,
       imageUrl,
+      previewUrl: shareUrl || null,
       intentUrl,
       eligibleForReward: true,
       secondsUntilReward: Math.ceil(SHARE_REWARD_DELAY_MS / 1000)
