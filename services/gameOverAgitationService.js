@@ -71,7 +71,11 @@ const AGITATION_RULES = [
       const isBadRun = score < 1000 || score < (ctx.previousBestScore || 0) * 0.5;
       return isBadRun && !ctx.run?.isPersonalBest;
     },
-    build: () => ({ title: 'GOOD RUN!', hook: "You're still TOP 3", boost: "Don't lose your position" })
+    build: ctx => ({
+      title: 'GOOD RUN!',
+      hook: ctx.rank === 1 ? "You're still #1" : "You're still TOP 3",
+      boost: "Don't lose your position"
+    })
   },
   // C: bad run, was in TOP 10 (not TOP 3)
   {
