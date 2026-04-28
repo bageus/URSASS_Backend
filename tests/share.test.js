@@ -84,6 +84,28 @@ test('POST /api/share/start - returns shareId when eligible', async () => {
   }
 });
 
+test('POST /api/share/start - wallet-linked share contains preview URL and tweet URL with page', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    process.env.FRONTEND_BASE_URL = 'https://ursasstube.fun';
+    const wallet = '0x1111111111111111111111111111111111111111';
+    const link = { primaryId: 'tg_player3', telegramId: '3', wallet };
+    AccountLink.findOne = async (q) => (q.primaryId === 'tg_player3' ? link : null);
+    Player.findOne = async () => makePlayer({ wallet: 'tg_player3' });
+    ShareEvent.create = async (doc) => ({ ...doc });
+
+    const r = await post(baseUrl, '/api/share/start', {}, { 'X-Primary-Id': 'tg_player3' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.imageUrl, `${baseUrl}/api/leaderboard/share/image/${wallet}.png`);
+    assert.equal(r.body.previewUrl, `${baseUrl}/api/leaderboard/share/page/${wallet}`);
+    assert.match(r.body.intentUrl, /twitter\.com\/intent\/tweet\?/);
+    assert.match(r.body.intentUrl, /&url=/);
+  } finally {
+    delete process.env.FRONTEND_BASE_URL;
+    server.close();
+  }
+});
+
 test('POST /api/share/start - already_shared_today returns no shareId', async () => {
   const { server, baseUrl } = await startServer();
   try {
