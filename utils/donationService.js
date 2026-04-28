@@ -10,6 +10,7 @@ const { verifyDonationTransaction } = require('./donationVerifier');
 const logger = require('./logger');
 const { getOrCreateTelegramAccount } = require('./accountManager');
 const { createTelegramStarsInvoiceLink, answerTelegramPreCheckoutQuery, getTelegramBotToken, createTelegramStarsError } = require('./telegramStarsService');
+const { recordCoinReward } = require('./coinHistory');
 
 let verifierImpl = verifyDonationTransaction;
 const erc20TransferInterface = new ethers.utils.Interface([
@@ -348,6 +349,7 @@ async function creditDonationPayment(payment, options = {}) {
   player.totalSilverCoins += silver;
   player.updatedAt = rewardGrantedAt;
   await player.save();
+  await recordCoinReward(payment.wallet, 'buy', { gold, silver }, { requestId: options.requestId, createdAt: rewardGrantedAt });
 
   return rewardUpdate;
 }

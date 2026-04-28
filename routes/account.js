@@ -13,6 +13,7 @@ const { requireAuth } = require('../middleware/requireAuth');
 const Player = require('../models/Player');
 const AccountLink = require('../models/AccountLink');
 const LinkCode = require('../models/LinkCode');
+const CoinTransaction = require('../models/CoinTransaction');
 const logger = require('../utils/logger');
 const { normalizeWallet, validateTimestampWindow } = require('../utils/security');
 const { validateTelegramInitData } = require('../utils/telegramAuth');
@@ -372,6 +373,36 @@ router.get('/me/profile', readLimiter, requireAuth, async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'GET /me/profile error');
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * GET /api/account/me/coin-history
+ * Returns latest coin reward history (accruals only) for authenticated player.
+ */
+router.get('/me/coin-history', readLimiter, requireAuth, async (req, res) => {
+  try {
+    const primaryId = req.primaryId;
+    const rawLimit = Number(req.query?.limit);
+    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.floor(rawLimit), 1), 200) : 50;
+
+    const rows = await CoinTransaction
+      .find({ primaryId })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .select('type gold silver createdAt');
+
+    return res.json({
+      items: rows.map((row) => ({
+        type: row.type,
+        gold: row.gold || 0,
+        silver: row.silver || 0,
+        createdAt: row.createdAt
+      }))
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'GET /me/coin-history error');
+    return res.status(500).json({ error: 'Server error' });
   }
 });
 
