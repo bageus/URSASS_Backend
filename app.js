@@ -65,7 +65,7 @@ function createApp() {
     },
     credentials: true,
     methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'X-Wallet', 'X-Primary-Id', 'X-Telegram-Init-Data', 'x-telegram-init-data', 'X-Request-Id'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Wallet', 'X-Primary-Id', 'X-Telegram-Init-Data', 'x-telegram-init-data', 'X-Request-Id'],
     optionsSuccessStatus: 204
   };
 
