@@ -154,6 +154,7 @@ Players receive referral codes (8 chars, unambiguous alphabet) and can share the
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `GET` | `/api/account/me/profile` | Required | Player profile: rank, gold, referral URL, streak, canShareToday |
+| `GET` | `/api/account/me/coin-history?limit=50` | Required | Latest accrual history rows: `type`, `gold`, `silver`, `createdAt` |
 | `POST` | `/api/referral/track` | Required | Record that current player was referred (body: `{ ref }`) |
 | `POST` | `/api/share/start` | Required | Start a share session; returns `shareId`, `postText`, `imageUrl`, `intentUrl` |
 | `POST` | `/api/share/confirm` | Required | Confirm share after ≥30s; awards +20 gold (body: `{ shareId }`) |
@@ -318,6 +319,7 @@ For better isolation under load, you can run the bot in a separate worker proces
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `GET` | `/api/account/me/profile` | `X-Primary-Id` header | Returns rank, bestScore, gold, referralUrl, share streak, connection status, rankDelta, referralCount, nickname, leaderboardDisplay |
+| `GET` | `/api/account/me/coin-history?limit=50` | `X-Primary-Id` header | Returns latest reward accrual history (types: `share`, `ride`, `buy`, `referral`, `refer`, `task`) |
 | `POST` | `/api/account/me/nickname` | `X-Primary-Id` header | Save or update player nickname |
 | `POST` | `/api/account/me/display-mode` | `X-Primary-Id` header | Save leaderboard display mode |
 

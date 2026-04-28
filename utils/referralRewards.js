@@ -1,5 +1,6 @@
 const Player = require('../models/Player');
 const { addGold } = require('./goldWallet');
+const { recordCoinReward } = require('./coinHistory');
 const logger = require('./logger');
 
 const REFERRER_GOLD = Number(process.env.REFERRAL_REWARD_REFERRER_GOLD || 50);
@@ -43,9 +44,11 @@ async function maybeGrantReferralRewards(player, opts = {}) {
 
   // Award gold to referrer
   await addGold(referrer.wallet, REFERRER_GOLD, 'referral_referrer', opts);
+  await recordCoinReward(referrer.wallet, 'refer', { gold: REFERRER_GOLD }, opts);
 
   // Award gold to referee (current player)
   await addGold(player.wallet, REFEREE_GOLD, 'referral_referee', opts);
+  await recordCoinReward(player.wallet, 'referral', { gold: REFEREE_GOLD }, opts);
 
   // Mark as granted
   player.referralRewardGranted = true;
