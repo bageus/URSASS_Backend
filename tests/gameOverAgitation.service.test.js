@@ -82,6 +82,19 @@ test('B: auth, prevRank=2, score=400 → GOOD RUN! still TOP 3', () => {
   assert.equal(prompt.boost, "Don't lose your position");
 });
 
+test('B: auth, prevRank=1, score=400 → GOOD RUN! still #1', () => {
+  const prompt = buildAgitationPrompt({
+    rank: 1,
+    run: run({ score: 400 }),
+    previousBestScore: 2000,
+    isAuthenticated: true,
+    prevRank: 1
+  });
+  assert.equal(prompt.title, 'GOOD RUN!');
+  assert.equal(prompt.hook, "You're still #1");
+  assert.equal(prompt.boost, "Don't lose your position");
+});
+
 test('C: auth, prevRank=8, score=400 → GOOD RUN! still currentRank, push TOP 10', () => {
   const prompt = buildAgitationPrompt({
     rank: 8,
