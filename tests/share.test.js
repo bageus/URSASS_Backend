@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const Player = require('../models/Player');
 const AccountLink = require('../models/AccountLink');
 const ShareEvent = require('../models/ShareEvent');
+const CoinTransaction = require('../models/CoinTransaction');
 const { createApp } = require('../app');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -164,12 +165,20 @@ test('POST /api/share/confirm - awards 20 gold after 30s', async () => {
       }
       return null;
     };
+    let historyDoc = null;
+    CoinTransaction.create = async (doc) => {
+      historyDoc = doc;
+      return doc;
+    };
 
     const r = await post(baseUrl, '/api/share/confirm', { shareId }, { 'X-Primary-Id': 'tg_gold' });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.awarded, true);
     assert.equal(r.body.goldAwarded, 20);
     assert.ok(r.body.shareStreak >= 1);
+    assert.equal(historyDoc.type, 'share');
+    assert.equal(historyDoc.gold, 20);
+    assert.equal(historyDoc.silver, 0);
   } finally {
     server.close();
   }
