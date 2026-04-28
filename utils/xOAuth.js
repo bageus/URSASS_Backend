@@ -6,7 +6,7 @@
  *   X_OAUTH_CLIENT_SECRET   – Client Secret (omit or set X_OAUTH_PUBLIC_CLIENT=true for public clients)
  *   X_OAUTH_PUBLIC_CLIENT   – "true" → skip Basic auth on token exchange
  *   X_OAUTH_REDIRECT_URI    – e.g. https://api.ursasstube.fun/api/x/oauth/callback
- *   X_OAUTH_SCOPES          – default "tweet.read users.read offline.access"
+ *   X_OAUTH_SCOPES          – default "tweet.read tweet.write users.read offline.access"
  */
 
 const crypto = require('crypto');
@@ -17,6 +17,8 @@ const X_AUTHORIZE_URL = 'https://x.com/i/oauth2/authorize';
 const X_TOKEN_URL = 'https://api.twitter.com/2/oauth2/token';
 const X_USERS_ME_URL = 'https://api.twitter.com/2/users/me';
 const X_REVOKE_URL = 'https://api.twitter.com/2/oauth2/revoke';
+const X_CREATE_TWEET_URL = 'https://api.twitter.com/2/tweets';
+const X_MEDIA_UPLOAD_URL = 'https://upload.twitter.com/1.1/media/upload.json';
 
 const HTTP_TIMEOUT_MS = 10_000;
 
@@ -37,7 +39,7 @@ function getRedirectUri() {
 }
 
 function getScopes() {
-  return process.env.X_OAUTH_SCOPES || 'tweet.read users.read offline.access';
+  return process.env.X_OAUTH_SCOPES || 'tweet.read tweet.write users.read offline.access';
 }
 
 /**
@@ -172,6 +174,44 @@ async function revokeToken(token) {
 }
 
 /**
+ * Upload media and return media_id_string.
+ * @param {string} accessToken
+ * @param {Buffer} mediaBuffer
+ * @returns {Promise<string>}
+ */
+async function uploadMedia(accessToken, mediaBuffer) {
+  const base64 = Buffer.from(mediaBuffer).toString('base64');
+  const body = new URLSearchParams({ media_data: base64 });
+
+  const response = await axios.post(X_MEDIA_UPLOAD_URL, body.toString(), {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    timeout: 30_000
+  });
+
+  return response.data?.media_id_string || '';
+}
+
+/**
+ * Create a Tweet as the authenticated user.
+ * @param {string} accessToken
+ * @param {{ text: string, media?: { media_ids: string[] } }} payload
+ * @returns {Promise<{ id: string, text: string }>}
+ */
+async function createTweet(accessToken, payload) {
+  const response = await axios.post(X_CREATE_TWEET_URL, payload, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    timeout: HTTP_TIMEOUT_MS
+  });
+  return response.data?.data || {};
+}
+
+/**
  * Returns true if X OAuth is configured (client ID and redirect URI are set).
  */
 function isXOAuthConfigured() {
@@ -184,6 +224,8 @@ module.exports = {
   exchangeCodeForToken,
   refreshAccessToken,
   fetchXUser,
+  uploadMedia,
+  createTweet,
   revokeToken,
   isXOAuthConfigured
 };

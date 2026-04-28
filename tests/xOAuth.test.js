@@ -468,3 +468,113 @@ test('GET /api/x/status - returns connected with username after linking', async 
     server.close();
   }
 });
+
+test('POST /api/x/share-result - publishes post via connected X account', async () => {
+  setXOAuthEnv();
+  const { server, baseUrl } = await startServer();
+  const origCreateTweet = xOAuthModule.createTweet;
+  const origUploadMedia = xOAuthModule.uploadMedia;
+  try {
+    const link = {
+      primaryId: 'tg_x10',
+      telegramId: '10',
+      wallet: '0x1111111111111111111111111111111111111111'
+    };
+    AccountLink.findOne = async () => link;
+
+    const player = makePlayer({
+      wallet: 'tg_x10',
+      bestScore: 777,
+      xUserId: 'x_user_10',
+      xUsername: 'x_user_name',
+      xAccessToken: 'token_1',
+      xRefreshToken: 'refresh_1',
+      referralCode: 'ABCD1234'
+    });
+    Player.findOne = () => chainableQuery({ ...player, save: async function() { return this; } });
+
+    let sentText = '';
+    let uploadedBufferSize = 0;
+    xOAuthModule.uploadMedia = async (_token, mediaBuffer) => {
+      uploadedBufferSize = Buffer.isBuffer(mediaBuffer) ? mediaBuffer.length : 0;
+      return 'media_777';
+    };
+    xOAuthModule.createTweet = async (_token, payload) => {
+      sentText = payload.text;
+      assert.deepEqual(payload.media, { media_ids: ['media_777'] });
+      return { id: '191919', text: payload.text };
+    };
+
+    const r = await post(baseUrl, '/api/x/share-result', {}, { 'X-Primary-Id': 'tg_x10' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.posted, true);
+    assert.equal(r.body.tweetId, '191919');
+    assert.equal(r.body.tweetUrl, 'https://x.com/x_user_name/status/191919');
+    assert.ok(uploadedBufferSize > 0, 'should upload prepared PNG buffer');
+    assert.match(sentText, /I scored 777 in Ursass Tube/);
+    assert.match(sentText, /#UrsassTube/);
+    assert.match(sentText, /\/api\/leaderboard\/share\/page\/0x1111111111111111111111111111111111111111/);
+  } finally {
+    xOAuthModule.createTweet = origCreateTweet;
+    xOAuthModule.uploadMedia = origUploadMedia;
+    clearXOAuthEnv();
+    server.close();
+  }
+});
+
+test('POST /api/x/share-result - refreshes access token on 401 and retries', async () => {
+  setXOAuthEnv();
+  const { server, baseUrl } = await startServer();
+  const origCreateTweet = xOAuthModule.createTweet;
+  const origUploadMedia = xOAuthModule.uploadMedia;
+  const origRefresh = xOAuthModule.refreshAccessToken;
+  try {
+    const link = { primaryId: 'tg_x11', telegramId: '11', wallet: null };
+    AccountLink.findOne = async () => link;
+
+    const player = makePlayer({
+      wallet: 'tg_x11',
+      bestScore: 321,
+      xUserId: 'x_user_11',
+      xUsername: 'retry_user',
+      xAccessToken: 'expired_token',
+      xRefreshToken: 'refresh_token_11'
+    });
+
+    let saved = false;
+    Player.findOne = () => chainableQuery({
+      ...player,
+      save: async function() { saved = true; return this; }
+    });
+
+    let attempts = 0;
+    xOAuthModule.uploadMedia = async () => 'media_retry';
+    xOAuthModule.createTweet = async (_token, payload) => {
+      attempts += 1;
+      if (attempts === 1) {
+        const err = new Error('Unauthorized');
+        err.response = { status: 401 };
+        throw err;
+      }
+      assert.deepEqual(payload.media, { media_ids: ['media_retry'] });
+      return { id: '202020', text: payload.text };
+    };
+    xOAuthModule.refreshAccessToken = async () => ({
+      access_token: 'fresh_access',
+      refresh_token: 'fresh_refresh'
+    });
+
+    const r = await post(baseUrl, '/api/x/share-result', {}, { 'X-Primary-Id': 'tg_x11' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.posted, true);
+    assert.equal(r.body.tweetId, '202020');
+    assert.equal(attempts, 2, 'should retry createTweet once after refresh');
+    assert.equal(saved, true, 'should persist refreshed token');
+  } finally {
+    xOAuthModule.createTweet = origCreateTweet;
+    xOAuthModule.uploadMedia = origUploadMedia;
+    xOAuthModule.refreshAccessToken = origRefresh;
+    clearXOAuthEnv();
+    server.close();
+  }
+});
