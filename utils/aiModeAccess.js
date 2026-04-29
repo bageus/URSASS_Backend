@@ -32,11 +32,41 @@ const AI_MODE_WALLET_WHITELIST = [
 ];
 // AI_WHITELIST_END
 
+const AI_MODE_TELEGRAM_USERNAME_WHITELIST = [
+  'patrikson_23',
+  'johnfeals',
+  'yahiamop',
+  'lindalidar',
+  'alifamanula',
+  'drulidcry',
+  'rosen_talie',
+  'n0pnamechar',
+  'chumkabesa',
+  'jebamacaleb',
+  'carla1smith7',
+  'jadeantelr',
+  'jasonwoorhies',
+  'usettag',
+  'amandalopessz',
+  'southwdudu',
+  'mrblakjoker',
+  'essabill',
+  'homersimpson98',
+  'rurikivanov',
+  'borisppasternak',
+  'ellibasket'
+];
+
 const AI_MODE_PRIORITIES = new Set(['gold', 'silver', 'bonus', 'score', 'different']);
 
 function hasAiModeAccess(wallet) {
   const normalized = normalizeWallet(wallet);
   return Boolean(normalized) && AI_MODE_WALLET_WHITELIST.includes(normalized);
+}
+
+function hasAiModeAccessByTelegramUsername(username) {
+  const normalized = String(username || '').trim().toLowerCase().replace(/^@/, '');
+  return Boolean(normalized) && AI_MODE_TELEGRAM_USERNAME_WHITELIST.includes(normalized);
 }
 
 function validateAiSettings(aiSettings) {
@@ -82,5 +112,6 @@ function validateAiSettings(aiSettings) {
 
 module.exports = {
   hasAiModeAccess,
+  hasAiModeAccessByTelegramUsername,
   validateAiSettings
 };

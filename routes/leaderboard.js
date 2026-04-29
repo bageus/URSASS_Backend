@@ -12,7 +12,7 @@ const { saveResultLimiter, readLimiter } = require('../middleware/rateLimiter');
 const logger = require('../utils/logger');
 const { markSuspicious } = require('../middleware/requestMetrics');
 const { logSecurityEvent, normalizeWallet, validateTimestampWindow } = require('../utils/security');
-const { hasAiModeAccess, validateAiSettings } = require('../utils/aiModeAccess');
+const { hasAiModeAccess, hasAiModeAccessByTelegramUsername, validateAiSettings } = require('../utils/aiModeAccess');
 const { computePlayerInsights, computeRank, DEFAULTS: leaderboardInsightsConfig } = require('../services/leaderboardInsightsService');
 const { buildGameOverPayload } = require('../services/gameOverAgitationService');
 const { maybeGrantReferralRewards } = require('../utils/referralRewards');
@@ -287,8 +287,14 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     }
 
     const aiConfig = aiValidation.sanitized;
-    if (aiConfig?.enabled && !hasAiModeAccess(walletLower)) {
-      return res.status(403).json({ error: 'AI mode is not allowed for this wallet' });
+    let hasAiAccess = hasAiModeAccess(walletLower);
+    if (!hasAiAccess && isTelegramAuth && telegramId) {
+      const tgLink = await AccountLink.findOne({ telegramId: String(telegramId) });
+      hasAiAccess = hasAiModeAccessByTelegramUsername(tgLink?.telegramUsername);
+    }
+
+    if (aiConfig?.enabled && !hasAiAccess) {
+      return res.status(403).json({ error: 'AI mode is not allowed for this wallet or telegram username' });
     }
 
     if (aiConfig?.enabled) {
