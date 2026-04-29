@@ -1637,8 +1637,8 @@ test('POST /api/analytics/events accepts valid analytics batch', async () => {
     body: JSON.stringify({
       sentAt,
       events: [
-        { name: 'game_start', timestamp: sentAt - 1000, payload: { sessionId: 's1' } },
-        { name: 'currency_spent', timestamp: sentAt - 500, payload: { amount: 50, currency: 'coins' } }
+        { name: 'app_opened', timestamp: sentAt - 1000, payload: { sessionId: 's1', username: 'private_user' } },
+        { name: 'donation_success', timestamp: sentAt - 500, payload: { amount_usd: '12.5', currency: 'usd' } }
       ]
     })
   });
@@ -1648,8 +1648,11 @@ test('POST /api/analytics/events accepts valid analytics batch', async () => {
   assert.equal(body.ok, true);
   assert.equal(body.accepted, 2);
   assert.equal(inserted.length, 2);
-  assert.equal(inserted[0].eventType, 'game_start');
+  assert.equal(inserted[0].eventType, 'app_opened');
   assert.equal(inserted[0].sentAt, sentAt);
+  assert.equal(inserted[0].payload.username, undefined);
+  assert.equal(inserted[1].payload.amount_usd, 12.5);
+  assert.equal(inserted[1].payload.currency, 'USD');
 
   const metricsRes = await fetch(`${baseUrl}/metrics`);
   const metricsText = await metricsRes.text();
@@ -1688,9 +1691,11 @@ test('POST /api/telemetry/events aliases analytics ingestion route', async () =>
   await server.close();
 });
 
-test('POST /api/analytics/events rejects unsupported event type', async () => {
-  AnalyticsEvent.insertMany = async () => {
-    throw new Error('insertMany should not be called for invalid payload');
+test('POST /api/analytics/events partially accepts valid events and rejects invalid', async () => {
+  const inserted = [];
+  AnalyticsEvent.insertMany = async (docs) => {
+    inserted.push(...docs);
+    return docs;
   };
 
   const { server, baseUrl } = await startServer();
@@ -1700,13 +1705,21 @@ test('POST /api/analytics/events rejects unsupported event type', async () => {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       sentAt,
-      events: [{ name: 'unknown_event', timestamp: sentAt }]
+      events: [
+        { name: 'unknown_event', timestamp: sentAt },
+        { name: 'run_started', payload: { sessionId: 's2' } }
+      ]
     })
   });
 
-  assert.equal(res.status, 400);
+  assert.equal(res.status, 202);
   const body = await res.json();
-  assert.equal(body.code, 'ANALYTICS_INVALID_EVENT');
+  assert.equal(body.ok, true);
+  assert.equal(body.accepted, 1);
+  assert.equal(body.rejected, 1);
+  assert.equal(inserted.length, 1);
+  assert.equal(inserted[0].eventType, 'run_started');
+  assert.equal(typeof inserted[0].timestamp, 'number');
 
   const metricsRes = await fetch(`${baseUrl}/metrics`);
   const metricsText = await metricsRes.text();
@@ -1744,6 +1757,61 @@ test('POST /api/analytics/event accepts a single analytics event payload', async
   assert.equal(inserted[0].payload.sessionId, 'single-route');
 
   await server.close();
+});
+
+test('GET /api/analytics/summary returns base product metrics', async () => {
+  const originalFind = AnalyticsEvent.find;
+  const from = Date.now() - 3600000;
+  const to = Date.now();
+
+  const docs = [
+    { eventType: 'app_opened', payload: { userId: 'u1', source: 'tg', env: 'prod' } },
+    { eventType: 'app_opened', payload: { anonymousId: 'anon-2', source: 'tg', env: 'prod' } },
+    { eventType: 'run_started', payload: { userId: 'u1', source: 'tg', env: 'prod' } },
+    { eventType: 'run_started', payload: { anonymousId: 'anon-2', source: 'tg', env: 'prod' } },
+    { eventType: 'run_started', payload: { anonymousId: 'anon-2', source: 'tg', env: 'prod' } },
+    { eventType: 'run_started', payload: { ip: '203.0.113.15', source: 'tg', env: 'prod' } },
+    { eventType: 'run_finished', payload: { userId: 'u1', score: 120, duration_sec: 30, source: 'tg', env: 'prod' } },
+    { eventType: 'run_finished', payload: { anonymousId: 'anon-2', score: 80, durationSec: 50, source: 'tg', env: 'prod' } },
+    { eventType: 'second_run_started', payload: { anonymousId: 'anon-2', source: 'tg', env: 'prod' } },
+    { eventType: 'wallet_connect_success', payload: { userId: 'u1', source: 'tg', env: 'prod' } },
+    { eventType: 'donation_success', payload: { userId: 'u1', amount_usd: 3.5, source: 'tg', env: 'prod' } },
+    { eventType: 'donation_success', payload: { userId: 'u1', amountUsd: 4.5, source: 'tg', env: 'prod' } }
+  ];
+
+  AnalyticsEvent.find = () => ({
+    select: () => ({
+      lean: async () => docs
+    })
+  });
+
+  const { server, baseUrl } = await startServer();
+  try {
+    const res = await fetch(`${baseUrl}/api/analytics/summary?from=${from}&to=${to}&source=tg&env=prod`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.metrics.app_opened_users, 2);
+    assert.equal(body.metrics.run_started_users, 3);
+    assert.equal(body.metrics.run_finished_users, 2);
+    assert.equal(body.metrics.total_runs_started, 4);
+    assert.equal(body.metrics.total_runs_finished, 2);
+    assert.equal(body.metrics.second_run_started_users, 1);
+    assert.equal(body.metrics.wallet_connect_success_users, 1);
+    assert.equal(body.metrics.donation_success_users, 1);
+    assert.equal(body.metrics.donation_success_count, 2);
+    assert.equal(body.metrics.donation_revenue_usd, 8);
+    assert.equal(body.metrics.average_score, 100);
+    assert.equal(body.metrics.average_duration_sec, 40);
+    assert.equal(body.metrics.activation_rate, 1.5);
+    assert.equal(body.metrics.completion_rate, 0.5);
+    assert.equal(body.metrics.second_run_rate, 0.5);
+    assert.equal(body.metrics.wallet_conversion_rate, 0.5);
+    assert.equal(body.metrics.donation_conversion_rate, 1);
+  } finally {
+    AnalyticsEvent.find = originalFind;
+    await server.close();
+  }
 });
 
 test('GET /api/leaderboard/share/payload/:wallet uses latest score when latest run is personal best', async () => {
