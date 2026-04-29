@@ -198,6 +198,18 @@ async function createDonationPayment(wallet, productKey) {
     throw err;
   }
 
+  const existingOpenPayment = await DonationPayment.findOne({
+    wallet: normalizedWallet,
+    productKey: config.key,
+    paymentMethod: 'crypto',
+    status: { $in: [INTERNAL_STATUS_AWAITING_TX, 'submitted', 'confirmed'] },
+    rewardGrantedAt: null
+  }).sort({ createdAt: -1 });
+
+  if (existingOpenPayment) {
+    return existingOpenPayment;
+  }
+
   const payment = new DonationPayment({
     paymentId: crypto.randomUUID(),
     wallet: normalizedWallet,
@@ -637,7 +649,24 @@ function serializeDonationPayment(payment, options = {}) {
     paidAt: payment.paidAt || null,
     creditedAt: payment.creditedAt || null,
     rewardGrantedAt: payment.rewardGrantedAt || null,
-    txRequest: !isStars && includeTxRequest ? buildDonationTxRequest(payment) : null
+    txRequest: (() => {
+      if (isStars || !includeTxRequest) {
+        return null;
+      }
+
+      try {
+        return buildDonationTxRequest(payment);
+      } catch (error) {
+        logger.error({
+          err: error,
+          paymentId: payment.paymentId,
+          productKey: payment.productKey,
+          expectedAmount: payment.expectedAmount,
+          expectedDecimals: payment.expectedDecimals
+        }, 'Failed to build donation txRequest');
+        return null;
+      }
+    })()
   };
 }
 

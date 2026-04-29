@@ -410,8 +410,13 @@ router.get('/donations/:wallet', readLimiter, async (req, res) => {
  * POST /api/store/donations/create-payment
  */
 router.post('/donations/create-payment', writeLimiter, async (req, res) => {
+  let wallet;
+  let productKey;
+  let donationKey;
+  let key;
+  let productId;
   try {
-    const { wallet, productKey, donationKey, key, productId } = req.body;
+    ({ wallet, productKey, donationKey, key, productId } = req.body || {});
     const resolvedProductKey = productKey || donationKey || key || productId;
     const payment = await createDonationPayment(wallet, resolvedProductKey);
 
@@ -429,8 +434,8 @@ router.post('/donations/create-payment', writeLimiter, async (req, res) => {
 
     res.status(201).json(serializeDonationPayment(payment));
   } catch (error) {
-    logger.error({ err: error }, 'POST /donations/create-payment error');
-    res.status(error.statusCode || 500).json({ error: error.message || 'Server error' });
+    logger.error({ err: error, wallet, productKey, donationKey, key, productId, requestId: req.requestId }, 'POST /donations/create-payment error');
+    res.status(error.statusCode || 500).json({ error: error.message || 'Server error', requestId: req.requestId });
   }
 });
 
