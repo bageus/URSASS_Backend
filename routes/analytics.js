@@ -9,6 +9,8 @@ const { markAnalyticsIngest } = require('../middleware/requestMetrics');
 const router = express.Router();
 
 const MAX_BATCH_SIZE = 100;
+const MAX_EVENT_PAYLOAD_BYTES = 16 * 1024;
+const PII_KEYS = new Set(['username', 'first_name', 'last_name', 'displayName', 'phone', 'avatar']);
 const SUPPORTED_SUMMARY_EVENTS = new Set([
   'app_opened',
   'run_started',
@@ -86,7 +88,30 @@ function normalizePayload(payload) {
     if (value === undefined || typeof value === 'function') {
       continue;
     }
+    if (PII_KEYS.has(key)) {
+      continue;
+    }
     normalized[key] = value;
+  }
+
+  for (const numericKey of ['score', 'distance', 'duration_sec', 'amount_usd']) {
+    if (normalized[numericKey] !== undefined) {
+      const parsed = Number(normalized[numericKey]);
+      if (Number.isFinite(parsed)) {
+        normalized[numericKey] = parsed;
+      }
+    }
+  }
+  if (normalized.durationSec !== undefined && normalized.duration_sec === undefined) {
+    const parsed = Number(normalized.durationSec);
+    if (Number.isFinite(parsed)) normalized.duration_sec = parsed;
+  }
+  if (normalized.amountUsd !== undefined && normalized.amount_usd === undefined) {
+    const parsed = Number(normalized.amountUsd);
+    if (Number.isFinite(parsed)) normalized.amount_usd = parsed;
+  }
+  if (normalized.currency !== undefined && normalized.currency !== null) {
+    normalized.currency = String(normalized.currency).toUpperCase();
   }
 
   return normalized;
@@ -110,12 +135,15 @@ function validateAndNormalizeEvent(inputEvent) {
     return { error: `Unsupported analytics event type: ${eventType || 'empty'}` };
   }
 
-  const timestamp = parseNonNegativeNumber(inputEvent.timestamp);
+  let timestamp = parseNonNegativeNumber(inputEvent.timestamp);
   if (timestamp === null) {
-    return { error: `Invalid event timestamp for ${eventType}` };
+    timestamp = Date.now();
   }
 
   const payload = normalizePayload(inputEvent.payload);
+  if (Buffer.byteLength(JSON.stringify(payload), 'utf8') > MAX_EVENT_PAYLOAD_BYTES) {
+    return { error: `Payload too large for ${eventType}` };
+  }
 
   return {
     eventType,
@@ -163,15 +191,14 @@ async function ingestEvents(req, res, next, isSingleEventRoute = false) {
     }
 
     const normalizedEvents = [];
+    let rejected = 0;
     for (let index = 0; index < events.length; index += 1) {
       const normalized = validateAndNormalizeEvent(events[index]);
       if (normalized.error) {
         markAnalyticsIngest({ invalid: 1 });
-        const err = new Error(`Invalid event at index ${index}: ${normalized.error}`);
-        err.statusCode = 400;
-        err.code = 'ANALYTICS_INVALID_EVENT';
-        err.expose = true;
-        throw err;
+        rejected += 1;
+        logger.warn({ route: '/api/analytics/events', index, err: normalized.error }, 'Analytics event rejected');
+        continue;
       }
 
       normalizedEvents.push({
@@ -182,14 +209,12 @@ async function ingestEvents(req, res, next, isSingleEventRoute = false) {
 
     markAnalyticsIngest({ accepted: normalizedEvents.length });
 
-    await AnalyticsEvent.insertMany(normalizedEvents, { ordered: false });
-    markAnalyticsIngest({ stored: normalizedEvents.length });
+    if (normalizedEvents.length > 0) {
+      await AnalyticsEvent.insertMany(normalizedEvents, { ordered: false });
+      markAnalyticsIngest({ stored: normalizedEvents.length });
+    }
 
-    res.status(202).json({
-      ok: true,
-      accepted: normalizedEvents.length,
-      dropped: 0
-    });
+    res.status(202).json({ ok: true, accepted: normalizedEvents.length, rejected });
   } catch (error) {
     if (error.code !== 'ANALYTICS_INVALID_EVENT' && error.code !== 'ANALYTICS_INVALID_SENT_AT' && error.code !== 'ANALYTICS_INVALID_EVENTS_BATCH' && error.code !== 'ANALYTICS_BATCH_TOO_LARGE') {
       markAnalyticsIngest({ failed: 1 });

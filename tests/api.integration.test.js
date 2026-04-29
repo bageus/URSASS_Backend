@@ -1637,8 +1637,8 @@ test('POST /api/analytics/events accepts valid analytics batch', async () => {
     body: JSON.stringify({
       sentAt,
       events: [
-        { name: 'game_start', timestamp: sentAt - 1000, payload: { sessionId: 's1' } },
-        { name: 'currency_spent', timestamp: sentAt - 500, payload: { amount: 50, currency: 'coins' } }
+        { name: 'app_opened', timestamp: sentAt - 1000, payload: { sessionId: 's1', username: 'private_user' } },
+        { name: 'donation_success', timestamp: sentAt - 500, payload: { amount_usd: '12.5', currency: 'usd' } }
       ]
     })
   });
@@ -1648,8 +1648,11 @@ test('POST /api/analytics/events accepts valid analytics batch', async () => {
   assert.equal(body.ok, true);
   assert.equal(body.accepted, 2);
   assert.equal(inserted.length, 2);
-  assert.equal(inserted[0].eventType, 'game_start');
+  assert.equal(inserted[0].eventType, 'app_opened');
   assert.equal(inserted[0].sentAt, sentAt);
+  assert.equal(inserted[0].payload.username, undefined);
+  assert.equal(inserted[1].payload.amount_usd, 12.5);
+  assert.equal(inserted[1].payload.currency, 'USD');
 
   const metricsRes = await fetch(`${baseUrl}/metrics`);
   const metricsText = await metricsRes.text();
@@ -1688,9 +1691,11 @@ test('POST /api/telemetry/events aliases analytics ingestion route', async () =>
   await server.close();
 });
 
-test('POST /api/analytics/events rejects unsupported event type', async () => {
-  AnalyticsEvent.insertMany = async () => {
-    throw new Error('insertMany should not be called for invalid payload');
+test('POST /api/analytics/events partially accepts valid events and rejects invalid', async () => {
+  const inserted = [];
+  AnalyticsEvent.insertMany = async (docs) => {
+    inserted.push(...docs);
+    return docs;
   };
 
   const { server, baseUrl } = await startServer();
@@ -1700,13 +1705,21 @@ test('POST /api/analytics/events rejects unsupported event type', async () => {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       sentAt,
-      events: [{ name: 'unknown_event', timestamp: sentAt }]
+      events: [
+        { name: 'unknown_event', timestamp: sentAt },
+        { name: 'run_started', payload: { sessionId: 's2' } }
+      ]
     })
   });
 
-  assert.equal(res.status, 400);
+  assert.equal(res.status, 202);
   const body = await res.json();
-  assert.equal(body.code, 'ANALYTICS_INVALID_EVENT');
+  assert.equal(body.ok, true);
+  assert.equal(body.accepted, 1);
+  assert.equal(body.rejected, 1);
+  assert.equal(inserted.length, 1);
+  assert.equal(inserted[0].eventType, 'run_started');
+  assert.equal(typeof inserted[0].timestamp, 'number');
 
   const metricsRes = await fetch(`${baseUrl}/metrics`);
   const metricsText = await metricsRes.text();
