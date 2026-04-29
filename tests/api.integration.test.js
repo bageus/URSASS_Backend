@@ -1746,6 +1746,60 @@ test('POST /api/analytics/event accepts a single analytics event payload', async
   await server.close();
 });
 
+test('GET /api/analytics/summary returns base product metrics', async () => {
+  const originalFind = AnalyticsEvent.find;
+  const from = Date.now() - 3600000;
+  const to = Date.now();
+
+  const docs = [
+    { eventType: 'app_opened', payload: { userId: 'u1', source: 'tg', env: 'prod' } },
+    { eventType: 'app_opened', payload: { anonymousId: 'anon-2', source: 'tg', env: 'prod' } },
+    { eventType: 'run_started', payload: { userId: 'u1', source: 'tg', env: 'prod' } },
+    { eventType: 'run_started', payload: { anonymousId: 'anon-2', source: 'tg', env: 'prod' } },
+    { eventType: 'run_started', payload: { anonymousId: 'anon-2', source: 'tg', env: 'prod' } },
+    { eventType: 'run_finished', payload: { userId: 'u1', score: 120, duration_sec: 30, source: 'tg', env: 'prod' } },
+    { eventType: 'run_finished', payload: { anonymousId: 'anon-2', score: 80, durationSec: 50, source: 'tg', env: 'prod' } },
+    { eventType: 'second_run_started', payload: { anonymousId: 'anon-2', source: 'tg', env: 'prod' } },
+    { eventType: 'wallet_connect_success', payload: { userId: 'u1', source: 'tg', env: 'prod' } },
+    { eventType: 'donation_success', payload: { userId: 'u1', amount_usd: 3.5, source: 'tg', env: 'prod' } },
+    { eventType: 'donation_success', payload: { userId: 'u1', amountUsd: 4.5, source: 'tg', env: 'prod' } }
+  ];
+
+  AnalyticsEvent.find = () => ({
+    select: () => ({
+      lean: async () => docs
+    })
+  });
+
+  const { server, baseUrl } = await startServer();
+  try {
+    const res = await fetch(`${baseUrl}/api/analytics/summary?from=${from}&to=${to}&source=tg&env=prod`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.metrics.app_opened_users, 2);
+    assert.equal(body.metrics.run_started_users, 2);
+    assert.equal(body.metrics.run_finished_users, 2);
+    assert.equal(body.metrics.total_runs_started, 3);
+    assert.equal(body.metrics.total_runs_finished, 2);
+    assert.equal(body.metrics.second_run_started_users, 1);
+    assert.equal(body.metrics.wallet_connect_success_users, 1);
+    assert.equal(body.metrics.donation_success_users, 1);
+    assert.equal(body.metrics.donation_success_count, 2);
+    assert.equal(body.metrics.donation_revenue_usd, 8);
+    assert.equal(body.metrics.average_score, 100);
+    assert.equal(body.metrics.average_duration_sec, 40);
+    assert.equal(body.metrics.activation_rate, 1);
+    assert.ok(Math.abs(body.metrics.completion_rate - (2 / 3)) < 0.000001);
+    assert.equal(body.metrics.second_run_rate, 0.5);
+    assert.equal(body.metrics.wallet_conversion_rate, 0.5);
+    assert.equal(body.metrics.donation_conversion_rate, 1);
+  } finally {
+    AnalyticsEvent.find = originalFind;
+    await server.close();
+  }
+});
+
 test('GET /api/leaderboard/share/payload/:wallet uses latest score when latest run is personal best', async () => {
   const wallet = '0x1111111111111111111111111111111111111111';
 

@@ -1,6 +1,12 @@
 const mongoose = require('mongoose');
 
 const ANALYTICS_EVENT_TYPES = Object.freeze([
+  'app_opened',
+  'run_started',
+  'run_finished',
+  'second_run_started',
+  'wallet_connect_success',
+  'donation_success',
   'game_start',
   'game_end',
   'session_length',
