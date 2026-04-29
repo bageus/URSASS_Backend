@@ -637,7 +637,24 @@ function serializeDonationPayment(payment, options = {}) {
     paidAt: payment.paidAt || null,
     creditedAt: payment.creditedAt || null,
     rewardGrantedAt: payment.rewardGrantedAt || null,
-    txRequest: !isStars && includeTxRequest ? buildDonationTxRequest(payment) : null
+    txRequest: (() => {
+      if (isStars || !includeTxRequest) {
+        return null;
+      }
+
+      try {
+        return buildDonationTxRequest(payment);
+      } catch (error) {
+        logger.error({
+          err: error,
+          paymentId: payment.paymentId,
+          productKey: payment.productKey,
+          expectedAmount: payment.expectedAmount,
+          expectedDecimals: payment.expectedDecimals
+        }, 'Failed to build donation txRequest');
+        return null;
+      }
+    })()
   };
 }
 
