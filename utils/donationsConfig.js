@@ -8,7 +8,7 @@ function resolvePositiveInt(rawValue, fallbackValue, { min = 0, max = Number.MAX
   return normalized;
 }
 
-const DEFAULT_TOKEN_DECIMALS = resolvePositiveInt(process.env.DONATIONS_TOKEN_DECIMALS ?? 18, 18, { min: 0, max: 36 });
+const DEFAULT_TOKEN_DECIMALS = resolvePositiveInt(process.env.DONATIONS_TOKEN_DECIMALS ?? 6, 6, { min: 0, max: 36 });
 const DEFAULT_TOKEN_CONTRACT = (process.env.DONATIONS_TOKEN_CONTRACT || '0xfde4c96c8593536e31f229ea8f37b2ada2699bb2').toLowerCase();
 const DEFAULT_MERCHANT_WALLET = (process.env.DONATIONS_MERCHANT_WALLET || '0xbae8504df4e9816934e13390b4e83d408b7db5d8').toLowerCase();
 const PRICE_MODE = String(process.env.DONATIONS_PRICE_MODE || 'test').toLowerCase() === 'prod' ? 'prod' : 'test';
