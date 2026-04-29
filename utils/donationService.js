@@ -198,6 +198,18 @@ async function createDonationPayment(wallet, productKey) {
     throw err;
   }
 
+  const existingOpenPayment = await DonationPayment.findOne({
+    wallet: normalizedWallet,
+    productKey: config.key,
+    paymentMethod: 'crypto',
+    status: { $in: [INTERNAL_STATUS_AWAITING_TX, 'submitted', 'confirmed'] },
+    rewardGrantedAt: null
+  }).sort({ createdAt: -1 });
+
+  if (existingOpenPayment) {
+    return existingOpenPayment;
+  }
+
   const payment = new DonationPayment({
     paymentId: crypto.randomUUID(),
     wallet: normalizedWallet,
