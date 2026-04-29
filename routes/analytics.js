@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 
 const { AnalyticsEvent, ANALYTICS_EVENT_TYPES } = require('../models/AnalyticsEvent');
 const { readLimiter } = require('../middleware/rateLimiter');
@@ -67,6 +68,11 @@ function resolveIdentity(event) {
   if (sessionId) return `session:${sessionId}`;
   const ipHash = pick('ipHash', 'ip_hash');
   if (ipHash) return `ip:${ipHash}`;
+  const rawIp = pick('ip', 'clientIp', 'client_ip');
+  if (rawIp) {
+    const hashedIp = crypto.createHash('sha256').update(rawIp).digest('hex');
+    return `ip:${hashedIp}`;
+  }
   return null;
 }
 

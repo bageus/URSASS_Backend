@@ -1757,6 +1757,7 @@ test('GET /api/analytics/summary returns base product metrics', async () => {
     { eventType: 'run_started', payload: { userId: 'u1', source: 'tg', env: 'prod' } },
     { eventType: 'run_started', payload: { anonymousId: 'anon-2', source: 'tg', env: 'prod' } },
     { eventType: 'run_started', payload: { anonymousId: 'anon-2', source: 'tg', env: 'prod' } },
+    { eventType: 'run_started', payload: { ip: '203.0.113.15', source: 'tg', env: 'prod' } },
     { eventType: 'run_finished', payload: { userId: 'u1', score: 120, duration_sec: 30, source: 'tg', env: 'prod' } },
     { eventType: 'run_finished', payload: { anonymousId: 'anon-2', score: 80, durationSec: 50, source: 'tg', env: 'prod' } },
     { eventType: 'second_run_started', payload: { anonymousId: 'anon-2', source: 'tg', env: 'prod' } },
@@ -1778,9 +1779,9 @@ test('GET /api/analytics/summary returns base product metrics', async () => {
     const body = await res.json();
     assert.equal(body.ok, true);
     assert.equal(body.metrics.app_opened_users, 2);
-    assert.equal(body.metrics.run_started_users, 2);
+    assert.equal(body.metrics.run_started_users, 3);
     assert.equal(body.metrics.run_finished_users, 2);
-    assert.equal(body.metrics.total_runs_started, 3);
+    assert.equal(body.metrics.total_runs_started, 4);
     assert.equal(body.metrics.total_runs_finished, 2);
     assert.equal(body.metrics.second_run_started_users, 1);
     assert.equal(body.metrics.wallet_connect_success_users, 1);
@@ -1789,8 +1790,8 @@ test('GET /api/analytics/summary returns base product metrics', async () => {
     assert.equal(body.metrics.donation_revenue_usd, 8);
     assert.equal(body.metrics.average_score, 100);
     assert.equal(body.metrics.average_duration_sec, 40);
-    assert.equal(body.metrics.activation_rate, 1);
-    assert.ok(Math.abs(body.metrics.completion_rate - (2 / 3)) < 0.000001);
+    assert.equal(body.metrics.activation_rate, 1.5);
+    assert.equal(body.metrics.completion_rate, 0.5);
     assert.equal(body.metrics.second_run_rate, 0.5);
     assert.equal(body.metrics.wallet_conversion_rate, 0.5);
     assert.equal(body.metrics.donation_conversion_rate, 1);
