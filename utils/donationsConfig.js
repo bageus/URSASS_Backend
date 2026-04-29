@@ -149,11 +149,17 @@ function getDonationConfig(productKey) {
 
   const aliasMap = {
     starter: 'starter_pack',
+    starterpack: 'starter_pack',
     basic: 'basic_pack',
+    basicpack: 'basic_pack',
     advanced: 'advanced_pack',
+    advancedpack: 'advanced_pack',
     super: 'super_pack',
+    superpack: 'super_pack',
     gold: 'gold_pack',
-    silver: 'silver_pack'
+    goldpack: 'gold_pack',
+    silver: 'silver_pack',
+    silverpack: 'silver_pack'
   };
 
   const mappedKey = aliasMap[normalizedKey];
