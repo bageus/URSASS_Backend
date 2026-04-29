@@ -429,8 +429,8 @@ router.post('/donations/create-payment', writeLimiter, async (req, res) => {
 
     res.status(201).json(serializeDonationPayment(payment));
   } catch (error) {
-    logger.error({ err: error }, 'POST /donations/create-payment error');
-    res.status(error.statusCode || 500).json({ error: error.message || 'Server error' });
+    logger.error({ err: error, wallet, productKey, donationKey, key, productId, requestId: req.requestId }, 'POST /donations/create-payment error');
+    res.status(error.statusCode || 500).json({ error: error.message || 'Server error', requestId: req.requestId });
   }
 });
 
