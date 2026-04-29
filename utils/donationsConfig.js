@@ -35,6 +35,15 @@ function price(testPrice, prodPrice) {
   return PRICE_MODE === 'prod' ? prodPrice : testPrice;
 }
 
+
+function normalizeProductKey(productKey) {
+  return String(productKey || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/-+/g, '_');
+}
+
 const DONATIONS_CONFIG = {
   starter_pack: {
     key: 'starter_pack',
@@ -129,7 +138,26 @@ const DONATIONS_CONFIG = {
 };
 
 function getDonationConfig(productKey) {
-  return DONATIONS_CONFIG[String(productKey || '').trim()];
+  const normalizedKey = normalizeProductKey(productKey);
+  if (!normalizedKey) {
+    return null;
+  }
+
+  if (DONATIONS_CONFIG[normalizedKey]) {
+    return DONATIONS_CONFIG[normalizedKey];
+  }
+
+  const aliasMap = {
+    starter: 'starter_pack',
+    basic: 'basic_pack',
+    advanced: 'advanced_pack',
+    super: 'super_pack',
+    gold: 'gold_pack',
+    silver: 'silver_pack'
+  };
+
+  const mappedKey = aliasMap[normalizedKey];
+  return mappedKey ? DONATIONS_CONFIG[mappedKey] : null;
 }
 
 module.exports = {
