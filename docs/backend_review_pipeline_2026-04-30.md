@@ -3,6 +3,27 @@
 Date: 2026-04-30  
 Scope: `/workspace/URSASS_Backend`
 
+
+## Актуализация плана (проверка на 2026-04-30)
+
+Статус: **план в целом актуален**; ключевые риски из отчёта по-прежнему присутствуют в текущем коде.
+
+### Что подтверждено как актуальное
+- Дублирование монтирования роутов для `/api/*` и `/api/v1/*` в `app.js` сохраняется.
+- Alias-маршруты `/api/analytics` и `/api/telemetry` (и соответствующие `/api/v1/*`) по-прежнему присутствуют.
+- In-memory кэш leaderboard (`topLeaderboardCache`) остаётся локальным для процесса и не имеет event-driven invalidation.
+- В `leaderboard` всё ещё используются два middleware для share-контекста (JSON/HTML) с похожей логикой.
+- Метрики и health есть, но формализованных rollback-gates в коде/конфигурации нет.
+
+### Что уточнено по формулировкам
+- Пункт про `computeDisplayName` vs `buildDisplayName` остается валидным как архитектурный smell, но это не блокер — скорее вопрос консистентности policy отображения имени.
+- Пункт про неиспользуемые endpoint'ы требует прод-данных usage (access logs + `/metrics`), поэтому сейчас корректный статус: **гипотеза, требующая подтверждения**.
+
+### Вывод
+План P0/P1/P2 можно исполнять без пересборки гипотез. Для снижения риска рекомендовано начать с P0 и параллельно собрать route-level usage, чтобы закрыть пункт по потенциально неиспользуемым alias-маршрутам на фактах.
+
+---
+
 ## 1) Архитектурные дубли сервисов
 
 ### 1.1 Дублирование роутов API v0/v1
@@ -123,16 +144,16 @@ Scope: `/workspace/URSASS_Backend`
 ## Приоритетный план действий
 
 ### P0 (1–2 дня)
-1. ✅ Ввести единый routing registry для `/api` и `/api/v1`. **Выполнено**
-2. ✅ Зафиксировать единый DTO ответов account auth. **Выполнено**
-3. ✅ Утвердить rollback-gates в CI/CD и алерты. **Выполнено** (см. `docs/rollback_gates.md`)
+1. Ввести единый routing registry для `/api` и `/api/v1`.
+2. Зафиксировать единый DTO ответов account auth.
+3. Утвердить rollback-gates в CI/CD и алерты.
 
 ### P1 (2–4 дня)
-1. ✅ Проверить `explain()` и добавить индексы для percentile-запросов в `PlayerRun`. **Выполнено**
-2. ✅ Перевести top leaderboard cache в Redis и добавить инвалидацию по событию обновления bestScore. **Выполнено** (Upstash Redis + fallback)
-3. ✅ Собрать usage по alias endpoint'ам (`/telemetry`) и удалить неиспользуемые. **Выполнено** (`/telemetry` alias удален)
+1. Проверить `explain()` и добавить индексы для percentile-запросов в `PlayerRun`.
+2. Перевести top leaderboard cache в Redis и добавить инвалидацию по событию обновления bestScore.
+3. Собрать usage по alias endpoint'ам (`/telemetry`) и удалить неиспользуемые.
 
 ### P2 (ongoing)
-1. ✅ Унифицировать displayName policy в отдельном сервисе. **Выполнено**
-2. ✅ Вынести cache policy matrix в документацию и тесты. **Выполнено**
-3. ✅ Ввести canary rollout + auto rollback по SLO gates. **Выполнено**
+1. Унифицировать displayName policy в отдельном сервисе.
+2. Вынести cache policy matrix в документацию и тесты.
+3. Ввести canary rollout + auto rollback по SLO gates.
