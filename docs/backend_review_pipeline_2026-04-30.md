@@ -149,7 +149,7 @@ Scope: `/workspace/URSASS_Backend`
 - [x] Утвердить rollback-gates в CI/CD и алерты. *(выполнено: 2026-04-30, `docs/release_rollback_gates.md`)*
 
 ### P1 (2–4 дня)
-- [ ] Проверить `explain()` и добавить индексы для percentile-запросов в `PlayerRun`.
+- [x] Проверить `explain()` и добавить индексы для percentile-запросов в `PlayerRun`. *(выполнено: 2026-04-30, `models/PlayerRun.js`)*
 - [ ] Перевести top leaderboard cache в Redis и добавить инвалидацию по событию обновления bestScore.
 - [ ] Собрать usage по alias endpoint'ам (`/telemetry`) и удалить неиспользуемые.
 
