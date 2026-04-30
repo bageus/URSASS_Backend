@@ -1,0 +1,45 @@
+name: canary-rollout-gates
+
+on:
+  workflow_dispatch:
+    inputs:
+      metrics_url:
+        description: 'Prometheus-compatible metrics endpoint URL'
+        required: true
+      release_version:
+        description: 'Release version label'
+        required: true
+
+jobs:
+  evaluate-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Evaluate rollback gates
+        env:
+          METRICS_URL: ${{ inputs.metrics_url }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: |
+          set -euo pipefail
+          echo "Evaluating canary gates for version=$RELEASE_VERSION"
+
+          METRICS=$(curl -fsSL "$METRICS_URL")
+          echo "$METRICS" > metrics.txt
+
+          ERROR_RATE=$(awk '/app_canary_error_rate_5m/ {print $2}' metrics.txt | head -n1)
+          P95=$(awk '/app_canary_latency_p95_ms/ {print $2}' metrics.txt | head -n1)
+          DB_DEGRADED=$(awk '/app_canary_db_degraded_5m/ {print $2}' metrics.txt | head -n1)
+
+          ERROR_RATE=${ERROR_RATE:-0}
+          P95=${P95:-0}
+          DB_DEGRADED=${DB_DEGRADED:-0}
+
+          echo "error_rate_5m=$ERROR_RATE"
+          echo "latency_p95_ms=$P95"
+          echo "db_degraded_5m=$DB_DEGRADED"
+
+          awk -v x="$ERROR_RATE" 'BEGIN{ exit !(x > 0.02) }' && { echo "5xx gate violated"; exit 1; } || true
+          awk -v x="$P95" 'BEGIN{ exit !(x > 800) }' && { echo "latency gate violated"; exit 1; } || true
+          awk -v x="$DB_DEGRADED" 'BEGIN{ exit !(x > 0) }' && { echo "db gate violated"; exit 1; } || true
+
+          echo "All canary gates passed"
