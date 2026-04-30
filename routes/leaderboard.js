@@ -11,7 +11,13 @@ const { verifySignature, createMessageToVerify } = require('../utils/verifySigna
 const { saveResultLimiter, readLimiter } = require('../middleware/rateLimiter');
 const logger = require('../utils/logger');
 const { markSuspicious } = require('../middleware/requestMetrics');
-const { logSecurityEvent, normalizeWallet, validateTimestampWindow } = require('../utils/security');
+const {
+  logSecurityEvent,
+  normalizeWallet,
+  validateTimestampWindow,
+  isValidWalletAddress,
+  parseWalletOrNull
+} = require('../utils/security');
 const { hasAiModeAccess, hasAiModeAccessByTelegramUsername, validateAiSettings } = require('../utils/aiModeAccess');
 const { computePlayerInsights, computeRank, DEFAULTS: leaderboardInsightsConfig } = require('../services/leaderboardInsightsService');
 const { buildGameOverPayload } = require('../services/gameOverAgitationService');
@@ -148,17 +154,13 @@ function buildLeaderboardEntry(player, displayName, position) {
   };
 }
 
-function isValidWalletAddress(wallet) {
-  return /^0x[a-fA-F0-9]{40}$/.test(wallet);
-}
-
 // ✅ GET: Top 10 players
 router.get('/top', readLimiter, async (req, res) => {
   try {
     const walletQuery = typeof req.query.wallet === 'string' ? req.query.wallet.trim() : '';
-    const wallet = walletQuery ? walletQuery.toLowerCase() : null;
+    const wallet = walletQuery ? parseWalletOrNull(walletQuery) : null;
 
-    if (wallet && !isValidWalletAddress(wallet)) {
+    if (walletQuery && !wallet) {
       logger.warn({ wallet: walletQuery, requestId: req.requestId }, 'GET /top rejected: invalid wallet format');
       return res.status(400).json({
         error: 'Invalid wallet format. Expected EVM wallet like 0x... (40 hex chars).',
@@ -730,8 +732,8 @@ router.post('/game-over-preview', readLimiter, async (req, res) => {
 
 router.get('/share/payload/:wallet', readLimiter, async (req, res) => {
   try {
-    const wallet = String(req.params.wallet || '').trim().toLowerCase();
-    if (!isValidWalletAddress(wallet)) {
+    const wallet = parseWalletOrNull(req.params.wallet);
+    if (!wallet) {
       return res.status(400).json({
         error: 'Invalid wallet format. Expected EVM wallet like 0x... (40 hex chars).'
       });
@@ -765,8 +767,8 @@ router.get('/share/payload/:wallet', readLimiter, async (req, res) => {
 
 router.get('/share/image/:wallet.svg', readLimiter, async (req, res) => {
   try {
-    const wallet = String(req.params.wallet || '').trim().toLowerCase();
-    if (!isValidWalletAddress(wallet)) {
+    const wallet = parseWalletOrNull(req.params.wallet);
+    if (!wallet) {
       return res.status(400).json({ error: 'Invalid wallet format.' });
     }
 
@@ -814,8 +816,8 @@ router.get('/share/image/:wallet.svg', readLimiter, async (req, res) => {
 
 router.get('/share/image/:wallet.png', readLimiter, async (req, res) => {
   try {
-    const wallet = String(req.params.wallet || '').trim().toLowerCase();
-    if (!isValidWalletAddress(wallet)) {
+    const wallet = parseWalletOrNull(req.params.wallet);
+    if (!wallet) {
       return res.status(400).json({ error: 'Invalid wallet format.' });
     }
 
@@ -841,8 +843,8 @@ router.get('/share/image/:wallet.png', readLimiter, async (req, res) => {
 
 router.get('/share/page/:wallet', readLimiter, async (req, res) => {
   try {
-    const wallet = String(req.params.wallet || '').trim().toLowerCase();
-    if (!isValidWalletAddress(wallet)) {
+    const wallet = parseWalletOrNull(req.params.wallet);
+    if (!wallet) {
       return res.status(400).send('Invalid wallet');
     }
 
@@ -912,10 +914,8 @@ router.get('/insights', readLimiter, async (req, res) => {
       return res.status(404).json({ error: 'Insights are disabled by feature flag.' });
     }
 
-    const walletQuery = typeof req.query.wallet === 'string' ? req.query.wallet.trim() : '';
-    const wallet = walletQuery ? walletQuery.toLowerCase() : null;
-
-    if (!wallet || !isValidWalletAddress(wallet)) {
+    const wallet = parseWalletOrNull(req.query.wallet);
+    if (!wallet) {
       return res.status(400).json({
         error: 'Invalid wallet format. Expected EVM wallet like 0x... (40 hex chars).'
       });
