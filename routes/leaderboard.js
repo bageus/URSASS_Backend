@@ -732,8 +732,8 @@ router.post('/game-over-preview', readLimiter, async (req, res) => {
 
 router.get('/share/payload/:wallet', readLimiter, async (req, res) => {
   try {
-    const wallet = String(req.params.wallet || '').trim().toLowerCase();
-    if (!isValidWalletAddress(wallet)) {
+    const wallet = parseWalletOrNull(req.params.wallet);
+    if (!wallet) {
       return res.status(400).json({
         error: 'Invalid wallet format. Expected EVM wallet like 0x... (40 hex chars).'
       });
@@ -767,8 +767,8 @@ router.get('/share/payload/:wallet', readLimiter, async (req, res) => {
 
 router.get('/share/image/:wallet.svg', readLimiter, async (req, res) => {
   try {
-    const wallet = String(req.params.wallet || '').trim().toLowerCase();
-    if (!isValidWalletAddress(wallet)) {
+    const wallet = parseWalletOrNull(req.params.wallet);
+    if (!wallet) {
       return res.status(400).json({ error: 'Invalid wallet format.' });
     }
 
@@ -816,8 +816,8 @@ router.get('/share/image/:wallet.svg', readLimiter, async (req, res) => {
 
 router.get('/share/image/:wallet.png', readLimiter, async (req, res) => {
   try {
-    const wallet = String(req.params.wallet || '').trim().toLowerCase();
-    if (!isValidWalletAddress(wallet)) {
+    const wallet = parseWalletOrNull(req.params.wallet);
+    if (!wallet) {
       return res.status(400).json({ error: 'Invalid wallet format.' });
     }
 
@@ -843,8 +843,8 @@ router.get('/share/image/:wallet.png', readLimiter, async (req, res) => {
 
 router.get('/share/page/:wallet', readLimiter, async (req, res) => {
   try {
-    const wallet = String(req.params.wallet || '').trim().toLowerCase();
-    if (!isValidWalletAddress(wallet)) {
+    const wallet = parseWalletOrNull(req.params.wallet);
+    if (!wallet) {
       return res.status(400).send('Invalid wallet');
     }
 
@@ -914,10 +914,8 @@ router.get('/insights', readLimiter, async (req, res) => {
       return res.status(404).json({ error: 'Insights are disabled by feature flag.' });
     }
 
-    const walletQuery = typeof req.query.wallet === 'string' ? req.query.wallet.trim() : '';
-    const wallet = walletQuery ? walletQuery.toLowerCase() : null;
-
-    if (!wallet || !isValidWalletAddress(wallet)) {
+    const wallet = parseWalletOrNull(req.query.wallet);
+    if (!wallet) {
       return res.status(400).json({
         error: 'Invalid wallet format. Expected EVM wallet like 0x... (40 hex chars).'
       });
