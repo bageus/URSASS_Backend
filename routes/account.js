@@ -24,15 +24,21 @@ const { findLink } = require('../middleware/requireAuth');
 
 const WALLET_TIMESTAMP_WINDOW_MS = Number(process.env.WALLET_AUTH_TIMESTAMP_WINDOW_MS || 10 * 60 * 1000);
 
-function buildAccountAuthResponse(account, overrides = {}) {
+
+function buildAccountAuthResponse({
+  account,
+  telegramId = null,
+  telegramUsername = null,
+  displayName = null
+}) {
   return {
     success: true,
-    primaryId: account.primaryId,
-    telegramId: account.telegramId || null,
-    telegramUsername: overrides.telegramUsername ?? null,
+    primaryId: account.primaryId || null,
+    telegramId: account.telegramId || telegramId || null,
+    telegramUsername: telegramUsername || null,
     wallet: account.wallet || null,
     isLinked: Boolean(account.isLinked),
-    displayName: overrides.displayName ?? null
+    displayName: displayName || null
   };
 }
 
@@ -75,7 +81,10 @@ router.post('/auth/telegram', readLimiter, async (req, res) => {
 
     logger.info({ telegramId, displayName: firstName || username || 'anon', primaryId: account.primaryId }, 'Telegram auth');
 
-    res.json(buildAccountAuthResponse(account, {
+    res.json(buildAccountAuthResponse({
+      account,
+      telegramId,
+      telegramUsername: username,
       displayName: firstName || username || `TG#${telegramId}`
     }));
 
@@ -121,8 +130,10 @@ router.post('/auth/wallet', readLimiter, async (req, res) => {
 
     logger.info({ wallet: walletLower, primaryId: account.primaryId }, 'Wallet auth');
 
-    res.json(buildAccountAuthResponse(account, {
-      telegramUsername: link ? link.telegramUsername : null
+    res.json(buildAccountAuthResponse({
+      account,
+      telegramUsername: link ? link.telegramUsername : null,
+      displayName: (link && link.telegramUsername) ? `@${link.telegramUsername}` : account.wallet
     }));
 
   } catch (error) {
