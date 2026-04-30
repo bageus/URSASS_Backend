@@ -10,7 +10,7 @@ const { writeLimiter, readLimiter } = require('../middleware/rateLimiter');
 const SecurityEvent = require('../models/SecurityEvent');
 const logger = require('../utils/logger');
 const { markSuspicious } = require('../middleware/requestMetrics');
-const { logSecurityEvent, normalizeWallet, validateTimestampWindow } = require('../utils/security');
+const { logSecurityEvent, normalizeWallet, parseWalletOrNull, buildInvalidWalletError, validateTimestampWindow } = require('../utils/security');
 const { hasAiModeAccess, hasAiModeAccessByTelegramUsername } = require('../utils/aiModeAccess');
 
 const UPGRADE_KEY_ALIASES = {
@@ -306,10 +306,9 @@ function createPurchaseAudit({ wallet, req, res, purchaseDetails }) {
  */
 router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
   try {
-    const wallet = normalizeWallet(req.params.wallet);
-
-    if (!wallet || wallet.length < 3) {
-      return res.status(400).json({ error: 'Invalid wallet address' });
+    const wallet = parseWalletOrNull(req.params.wallet);
+    if (!wallet) {
+      return res.status(400).json(buildInvalidWalletError('Invalid wallet address'));
     }
 
     const upgrades = await getOrCreatePlayerUpgrades(wallet);
@@ -397,10 +396,9 @@ router.get('/donations/history/:wallet', readLimiter, async (req, res) => {
  */
 router.get('/donations/:wallet', readLimiter, async (req, res) => {
   try {
-    const wallet = normalizeWallet(req.params.wallet);
-
-    if (!wallet || wallet.length < 3) {
-      return res.status(400).json({ error: 'Invalid wallet address' });
+    const wallet = parseWalletOrNull(req.params.wallet);
+    if (!wallet) {
+      return res.status(400).json(buildInvalidWalletError('Invalid wallet address'));
     }
 
     const payload = await listDonationProducts(wallet);
@@ -516,7 +514,10 @@ router.post('/buy', writeLimiter, async (req, res) => {
       }
     }
 
-    const walletLower = normalizeWallet(wallet);
+    const walletLower = parseWalletOrNull(wallet);
+    if (!walletLower) {
+      return res.status(400).json(buildInvalidWalletError('Invalid wallet address'));
+    }
     const purchaseDetails = {
       requestedUpgradeKey,
       resolvedUpgradeKey,

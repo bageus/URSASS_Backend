@@ -5,6 +5,7 @@
   "main": "server.js",
   "scripts": {
     "check:syntax": "node check-syntax.js",
+    "audit:unused-files": "node scripts/audit/unused-files.js",
     "prestart": "npm run check:syntax",
     "start": "node server.js",
     "dev": "nodemon server.js",
