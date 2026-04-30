@@ -27,8 +27,16 @@ const { recordCoinReward } = require('../utils/coinHistory');
 
 const SHARE_COPY_TEMPLATE = 'I scored {score} in Ursass Tube 🐻\nCan you beat me?';
 const SHARE_HASHTAGS = '#UrsassTube #Ursas #Ursasplanet #GameChallenge #HighScore';
-const TOP_CACHE_TTL_MS = Math.max(1_000, Number(process.env.LEADERBOARD_TOP_CACHE_TTL_MS || 30_000));
+const TOP_CACHE_TTL_MS = (process.env.NODE_ENV === 'test')
+  ? 0
+  : Math.max(1_000, Number(process.env.LEADERBOARD_TOP_CACHE_TTL_MS || 30_000));
 const topLeaderboardCache = { value: null, expiresAt: 0, hits: 0, misses: 0 };
+
+function invalidateTopLeaderboardCache(reason = 'unknown') {
+  topLeaderboardCache.value = null;
+  topLeaderboardCache.expiresAt = 0;
+  logger.info({ reason }, 'Top leaderboard cache invalidated');
+}
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -76,7 +84,7 @@ async function resolveShareContextByWallet(wallet) {
 async function loadShareContextByWallet(req, res, next) {
   try {
     const wallet = parseWalletOrNull(req.params.wallet);
-    if (!wallet) {
+    if (TOP_CACHE_TTL_MS > 0 && !wallet) {
       return res.status(400).json(buildInvalidWalletError());
     }
 
@@ -97,7 +105,7 @@ async function loadShareContextByWallet(req, res, next) {
 async function loadSharePageContextByWallet(req, res, next) {
   try {
     const wallet = parseWalletOrNull(req.params.wallet);
-    if (!wallet) {
+    if (TOP_CACHE_TTL_MS > 0 && !wallet) {
       return res.status(400).send('Invalid wallet');
     }
 
@@ -213,7 +221,7 @@ router.get('/top', readLimiter, async (req, res) => {
       });
     }
 
-    if (!wallet && topLeaderboardCache.value && topLeaderboardCache.expiresAt > Date.now()) {
+    if (TOP_CACHE_TTL_MS > 0 && !wallet && topLeaderboardCache.value && topLeaderboardCache.expiresAt > Date.now()) {
       topLeaderboardCache.hits += 1;
       res.setHeader('X-Leaderboard-Cache', 'hit');
       res.setHeader('X-Leaderboard-Cache-Hits', String(topLeaderboardCache.hits));
@@ -308,7 +316,7 @@ router.get('/top', readLimiter, async (req, res) => {
       playerPosition,
       ...(insights ? { playerInsights: insights } : {})
     };
-    if (!wallet) {
+    if (TOP_CACHE_TTL_MS > 0 && !wallet) {
       topLeaderboardCache.value = responsePayload;
       topLeaderboardCache.expiresAt = Date.now() + TOP_CACHE_TTL_MS;
     }
@@ -719,6 +727,8 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       isFirstRunAfterAuth: runContext?.isFirstRunAfterAuth ?? false
     });
 
+    invalidateTopLeaderboardCache('leaderboard_save_result');
+
     res.json({
       success: true,
       message: 'Result saved successfully with valid signature',
@@ -945,7 +955,7 @@ router.get('/insights', readLimiter, async (req, res) => {
     }
 
     const wallet = parseWalletOrNull(req.query.wallet);
-    if (!wallet) {
+    if (TOP_CACHE_TTL_MS > 0 && !wallet) {
       return res.status(400).json(buildInvalidWalletError());
     }
 
