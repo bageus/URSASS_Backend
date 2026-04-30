@@ -5,6 +5,7 @@ const logger = require('./utils/logger');
 const { createApp } = require('./app');
 const { startDonationPaymentRecheckLoop } = require('./utils/donationService');
 const { validateStartupConfig } = require('./utils/startupConfig');
+const { startLeaderboardAggregateRefreshLoop } = require('./services/leaderboardAggregateRefreshService');
 
 const app = createApp();
 
@@ -27,6 +28,7 @@ const runBotInProcess = process.env.BOT_MODE !== 'worker' && process.env.START_B
 connectDB()
   .then(() => {
     startDonationPaymentRecheckLoop();
+    startLeaderboardAggregateRefreshLoop();
 
     if (!runBotInProcess) {
       logger.info('BOT_MODE=worker (or START_BOT_IN_PROCESS=false): skipping bot in API process');
