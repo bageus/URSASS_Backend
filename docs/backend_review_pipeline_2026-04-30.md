@@ -154,6 +154,6 @@ Scope: `/workspace/URSASS_Backend`
 - [ ] Собрать usage по alias endpoint'ам (`/telemetry`) и удалить неиспользуемые. *(progress: 2026-04-30 добавлен счётчик `app_alias_route_usage_total` для `analytics`/`telemetry` в `/metrics`)*
 
 ### P2 (ongoing)
-- [ ] Унифицировать displayName policy в отдельном сервисе.
+- [x] Унифицировать displayName policy в отдельном сервисе. *(выполнено: 2026-04-30, `services/displayNamePolicyService.js` + `routes/leaderboard.js`)*
 - [x] Вынести cache policy matrix в документацию и тесты. *(выполнено: 2026-04-30, `docs/cache_policy.md`)*
 - [ ] Ввести canary rollout + auto rollback по SLO gates.

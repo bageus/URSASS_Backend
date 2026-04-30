@@ -25,12 +25,9 @@ const { buildGameOverPayload } = require('../services/gameOverAgitationService')
 const { maybeGrantReferralRewards } = require('../utils/referralRewards');
 const { recordCoinReward } = require('../utils/coinHistory');
 const {
-  getLeaderboardCache,
-  setLeaderboardCache,
-  invalidateLeaderboardCache,
-  getStats: getLeaderboardCacheStats
-} = require('../services/leaderboardCacheService');
-const { resolveLeaderboardDisplayName } = require('../services/displayNamePolicyService');
+  resolveDisplayNameFromPreferences,
+  resolveDisplayNameFromLink
+} = require('../services/displayNamePolicyService');
 
 const SHARE_COPY_TEMPLATE = 'I scored {score} in Ursass Tube 🐻\nCan you beat me?';
 const SHARE_HASHTAGS = '#UrsassTube #Ursas #Ursasplanet #GameChallenge #HighScore';
@@ -137,7 +134,6 @@ function buildSharePostText(score, referralLink = '') {
   return parts.join('\n');
 }
 
-
 function buildLeaderboardEntry(player, displayName, position) {
   return {
     position,
@@ -213,7 +209,7 @@ router.get('/top', readLimiter, async (req, res) => {
 
           playerPosition = buildLeaderboardEntry(
             playerData,
-            resolveLeaderboardDisplayName({
+            resolveDisplayNameFromPreferences({
               leaderboardDisplay: playerData.leaderboardDisplay,
               nickname: playerData.nickname,
               telegramUsername: playerLink ? playerLink.telegramUsername : null,
@@ -224,7 +220,7 @@ router.get('/top', readLimiter, async (req, res) => {
         } else {
           playerPosition = buildLeaderboardEntry(
             playerData,
-            resolveLeaderboardDisplayName({
+            resolveDisplayNameFromPreferences({
               leaderboardDisplay: playerData.leaderboardDisplay,
               nickname: playerData.nickname,
               telegramUsername: playerLink ? playerLink.telegramUsername : null,
@@ -249,7 +245,7 @@ router.get('/top', readLimiter, async (req, res) => {
       leaderboard: topPlayers.map((player, index) => (
         buildLeaderboardEntry(
           player,
-          resolveLeaderboardDisplayName({
+          resolveDisplayNameFromPreferences({
             leaderboardDisplay: player.leaderboardDisplay,
             nickname: player.nickname,
             telegramUsername: linkMap[player.wallet] ? linkMap[player.wallet].telegramUsername : null,
