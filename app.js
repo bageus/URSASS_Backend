@@ -14,21 +14,23 @@ const xRoutes = require('./routes/x');
 const logger = require('./utils/logger');
 const { metricsMiddleware, markAliasRouteUsage, renderMetricsText } = require('./middleware/requestMetrics');
 
-const ROUTE_REGISTRY = [
-  { path: '/leaderboard', router: leaderboardRoutes },
-  { path: '/store', router: storeRoutes },
-  { path: '/account', router: accountRoutes },
-  { path: '/game', router: gameRoutes },
-  { path: '', router: donationsRoutes },
-  { path: '/analytics', router: analyticsRoutes },
-  { path: '/telemetry', router: analyticsRoutes },
-  { path: '/referral', router: referralRoutes },
-  { path: '/share', router: shareRoutes },
-  { path: '/x', router: xRoutes }
-];
+function getRouteRegistry() {
+  return [
+    { path: '/leaderboard', router: leaderboardRoutes },
+    { path: '/store', router: storeRoutes },
+    { path: '/account', router: accountRoutes },
+    { path: '/game', router: gameRoutes },
+    { path: '', router: donationsRoutes },
+    { path: '/analytics', router: analyticsRoutes },
+    { path: '/telemetry', router: analyticsRoutes },
+    { path: '/referral', router: referralRoutes },
+    { path: '/share', router: shareRoutes },
+    { path: '/x', router: xRoutes }
+  ];
+}
 
 function mountApiRoutes(app, basePrefix) {
-  for (const { path, router } of ROUTE_REGISTRY) {
+  for (const { path, router } of getRouteRegistry()) {
     app.use(`${basePrefix}${path}`, router);
   }
 }
