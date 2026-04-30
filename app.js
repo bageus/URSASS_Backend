@@ -33,6 +33,25 @@ function mountApiRoutes(app, basePrefix) {
   }
 }
 
+const ROUTE_REGISTRY = [
+  { path: '/leaderboard', router: leaderboardRoutes },
+  { path: '/store', router: storeRoutes },
+  { path: '/account', router: accountRoutes },
+  { path: '/game', router: gameRoutes },
+  { path: '', router: donationsRoutes },
+  { path: '/analytics', router: analyticsRoutes },
+  { path: '/telemetry', router: analyticsRoutes },
+  { path: '/referral', router: referralRoutes },
+  { path: '/share', router: shareRoutes },
+  { path: '/x', router: xRoutes }
+];
+
+function mountApiRoutes(app, basePrefix) {
+  for (const { path, router } of ROUTE_REGISTRY) {
+    app.use(`${basePrefix}${path}`, router);
+  }
+}
+
 function createApp() {
   const app = express();
 
