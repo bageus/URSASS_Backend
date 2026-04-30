@@ -97,7 +97,7 @@ Current test run shows multiple failures around `POST /api/store/donations/creat
 3. Add API response schema validation tests (contract snapshots).
 
 ### P2 progress tracking (updated 2026-04-30)
-- [ ] Precompute leaderboard ranking aggregates.
+- [x] Enabled periodic leaderboard core aggregate refresh loop (`services/leaderboardAggregateRefreshService.js`) and wired startup initialization in `server.js`.
 - [x] Added baseline unused-file audit tooling (`scripts/audit/unused-files.js`) and CI step (`npm run audit:unused-files`) in backend-audit workflow.
 - [x] Added baseline API contract tests for `/health`, `/api/leaderboard/top`, `/api/game/config` (`tests/api.contract.test.js`).
 
