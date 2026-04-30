@@ -198,13 +198,16 @@ async function createDonationPayment(wallet, productKey) {
     throw err;
   }
 
-  const existingOpenPayment = await DonationPayment.findOne({
+  const existingOpenPaymentQuery = DonationPayment.findOne({
     wallet: normalizedWallet,
     productKey: config.key,
     paymentMethod: 'crypto',
     status: { $in: [INTERNAL_STATUS_AWAITING_TX, 'submitted', 'confirmed'] },
     rewardGrantedAt: null
-  }).sort({ createdAt: -1 });
+  });
+  const existingOpenPayment = typeof existingOpenPaymentQuery?.sort === 'function'
+    ? await existingOpenPaymentQuery.sort({ createdAt: -1 })
+    : await existingOpenPaymentQuery;
 
   if (existingOpenPayment) {
     return existingOpenPayment;
