@@ -123,16 +123,16 @@ Scope: `/workspace/URSASS_Backend`
 ## Приоритетный план действий
 
 ### P0 (1–2 дня)
-1. Ввести единый routing registry для `/api` и `/api/v1`.
-2. Зафиксировать единый DTO ответов account auth.
-3. Утвердить rollback-gates в CI/CD и алерты.
+1. ✅ Ввести единый routing registry для `/api` и `/api/v1`. **Выполнено**
+2. ✅ Зафиксировать единый DTO ответов account auth. **Выполнено**
+3. ✅ Утвердить rollback-gates в CI/CD и алерты. **Выполнено** (см. `docs/rollback_gates.md`)
 
 ### P1 (2–4 дня)
-1. Проверить `explain()` и добавить индексы для percentile-запросов в `PlayerRun`.
-2. Перевести top leaderboard cache в Redis и добавить инвалидацию по событию обновления bestScore.
-3. Собрать usage по alias endpoint'ам (`/telemetry`) и удалить неиспользуемые.
+1. ✅ Проверить `explain()` и добавить индексы для percentile-запросов в `PlayerRun`. **Выполнено**
+2. ✅ Перевести top leaderboard cache в Redis и добавить инвалидацию по событию обновления bestScore. **Выполнено** (Upstash Redis + fallback)
+3. ✅ Собрать usage по alias endpoint'ам (`/telemetry`) и удалить неиспользуемые. **Выполнено** (`/telemetry` alias удален)
 
 ### P2 (ongoing)
-1. Унифицировать displayName policy в отдельном сервисе.
-2. Вынести cache policy matrix в документацию и тесты.
-3. Ввести canary rollout + auto rollback по SLO gates.
+1. ✅ Унифицировать displayName policy в отдельном сервисе. **Выполнено**
+2. ✅ Вынести cache policy matrix в документацию и тесты. **Выполнено**
+3. ✅ Ввести canary rollout + auto rollback по SLO gates. **Выполнено**
