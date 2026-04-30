@@ -123,9 +123,9 @@ Scope: `/workspace/URSASS_Backend`
 ## Приоритетный план действий
 
 ### P0 (1–2 дня)
-1. Ввести единый routing registry для `/api` и `/api/v1`.
-2. Зафиксировать единый DTO ответов account auth.
-3. Утвердить rollback-gates в CI/CD и алерты.
+1. ✅ Ввести единый routing registry для `/api` и `/api/v1`. **Выполнено**
+2. ✅ Зафиксировать единый DTO ответов account auth. **Выполнено**
+3. ✅ Утвердить rollback-gates в CI/CD и алерты. **Выполнено** (см. `docs/rollback_gates.md`)
 
 ### P1 (2–4 дня)
 1. Проверить `explain()` и добавить индексы для percentile-запросов в `PlayerRun`.
