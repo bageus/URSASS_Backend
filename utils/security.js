@@ -10,6 +10,18 @@ function normalizeWallet(wallet) {
   return normalized || null;
 }
 
+function isValidWalletAddress(wallet) {
+  return typeof wallet === 'string' && /^0x[a-fA-F0-9]{40}$/.test(wallet);
+}
+
+function parseWalletOrNull(wallet) {
+  const normalized = normalizeWallet(wallet);
+  if (!normalized) {
+    return null;
+  }
+  return isValidWalletAddress(normalized) ? normalized : null;
+}
+
 function validateTimestampWindow(timestamp, {
   windowMs,
   maxPastAgeMs,
@@ -51,6 +63,8 @@ async function logSecurityEvent({ wallet = null, eventType, route, ipAddress, de
 
 module.exports = {
   normalizeWallet,
+  isValidWalletAddress,
+  parseWalletOrNull,
   validateTimestampWindow,
   logSecurityEvent
 };
