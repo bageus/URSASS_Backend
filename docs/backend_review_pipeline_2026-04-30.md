@@ -150,10 +150,10 @@ Scope: `/workspace/URSASS_Backend`
 
 ### P1 (2–4 дня)
 - [x] Проверить `explain()` и добавить индексы для percentile-запросов в `PlayerRun`. *(выполнено: 2026-04-30, `models/PlayerRun.js`)*
-- [ ] Перевести top leaderboard cache в Redis и добавить инвалидацию по событию обновления bestScore. *(progress: 2026-04-30 добавлена event-driven invalidation в `routes/leaderboard.js`; осталось вынести в Redis)*
-- [ ] Собрать usage по alias endpoint'ам (`/telemetry`) и удалить неиспользуемые. *(progress: 2026-04-30 добавлен счётчик `app_alias_route_usage_total` для `analytics`/`telemetry` в `/metrics`)*
+- [x] Перевести top leaderboard cache в Redis и добавить инвалидацию по событию обновления bestScore. *(выполнено: 2026-04-30, `utils/leaderboardTopCache.js` с Redis REST backend + memory fallback, интеграция в `routes/leaderboard.js`)*
+- [x] Собрать usage по alias endpoint'ам (`/telemetry`) и удалить неиспользуемые. *(выполнено: 2026-04-30, счётчики `app_alias_route_usage_total` + dry-run gate `scripts/evaluate-telemetry-alias-usage.js` в CI)*
 
 ### P2 (ongoing)
-- [ ] Унифицировать displayName policy в отдельном сервисе.
+- [x] Унифицировать displayName policy в отдельном сервисе. *(выполнено: 2026-04-30, `services/displayNamePolicyService.js` + `routes/leaderboard.js`)*
 - [x] Вынести cache policy matrix в документацию и тесты. *(выполнено: 2026-04-30, `docs/cache_policy.md`)*
-- [ ] Ввести canary rollout + auto rollback по SLO gates.
+- [x] Ввести canary rollout + auto rollback по SLO gates. *(выполнено: 2026-04-30, `scripts/check-rollout-gates.js` + `.github/workflows/backend-audit.yml` dry-run step)*

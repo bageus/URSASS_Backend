@@ -25,19 +25,19 @@ const { buildGameOverPayload } = require('../services/gameOverAgitationService')
 const { maybeGrantReferralRewards } = require('../utils/referralRewards');
 const { recordCoinReward } = require('../utils/coinHistory');
 const {
-  getLeaderboardCache,
-  setLeaderboardCache,
-  invalidateLeaderboardCache,
-  getStats: getLeaderboardCacheStats
-} = require('../services/leaderboardCacheService');
-const { resolveLeaderboardDisplayName } = require('../services/displayNamePolicyService');
+  resolveDisplayNameFromPreferences,
+  resolveDisplayNameFromLink
+} = require('../services/displayNamePolicyService');
+const {
+  getTtlMs: getTopLeaderboardCacheTtlMs,
+  getTopLeaderboardCache,
+  setTopLeaderboardCache,
+  invalidateTopLeaderboardCache,
+  getTopLeaderboardCacheStats
+} = require('../utils/leaderboardTopCache');
 
 const SHARE_COPY_TEMPLATE = 'I scored {score} in Ursass Tube 🐻\nCan you beat me?';
 const SHARE_HASHTAGS = '#UrsassTube #Ursas #Ursasplanet #GameChallenge #HighScore';
-const TOP_CACHE_TTL_MS = (process.env.NODE_ENV === 'test')
-  ? 0
-  : Math.max(1_000, Number(process.env.LEADERBOARD_TOP_CACHE_TTL_MS || 30_000));
-const topLeaderboardCache = { value: null, expiresAt: 0, hits: 0, misses: 0 };
 
 function invalidateTopLeaderboardCache(reason = 'unknown') {
   topLeaderboardCache.value = null;
@@ -137,7 +137,6 @@ function buildSharePostText(score, referralLink = '') {
   return parts.join('\n');
 }
 
-
 function buildLeaderboardEntry(player, displayName, position) {
   return {
     position,
@@ -167,12 +166,15 @@ router.get('/top', readLimiter, async (req, res) => {
       });
     }
 
-    if (TOP_CACHE_TTL_MS > 0 && !wallet && topLeaderboardCache.value && topLeaderboardCache.expiresAt > Date.now()) {
-      topLeaderboardCache.hits += 1;
-      res.setHeader('X-Leaderboard-Cache', 'hit');
-      res.setHeader('X-Leaderboard-Cache-Hits', String(stats.hits));
-      res.setHeader('X-Leaderboard-Cache-Misses', String(stats.misses));
-      return res.json(cachedPayload);
+    if (!wallet) {
+      const cached = await getTopLeaderboardCache();
+      if (cached) {
+        const stats = getTopLeaderboardCacheStats();
+        res.setHeader('X-Leaderboard-Cache', 'hit');
+        res.setHeader('X-Leaderboard-Cache-Hits', String(stats.hits));
+        res.setHeader('X-Leaderboard-Cache-Misses', String(stats.misses));
+        return res.json(cached);
+      }
     }
 
     const topPlayers = await Player.find({ bestScore: { $gt: 0 } })
@@ -213,7 +215,7 @@ router.get('/top', readLimiter, async (req, res) => {
 
           playerPosition = buildLeaderboardEntry(
             playerData,
-            resolveLeaderboardDisplayName({
+            resolveDisplayNameFromPreferences({
               leaderboardDisplay: playerData.leaderboardDisplay,
               nickname: playerData.nickname,
               telegramUsername: playerLink ? playerLink.telegramUsername : null,
@@ -224,7 +226,7 @@ router.get('/top', readLimiter, async (req, res) => {
         } else {
           playerPosition = buildLeaderboardEntry(
             playerData,
-            resolveLeaderboardDisplayName({
+            resolveDisplayNameFromPreferences({
               leaderboardDisplay: playerData.leaderboardDisplay,
               nickname: playerData.nickname,
               telegramUsername: playerLink ? playerLink.telegramUsername : null,
@@ -249,7 +251,7 @@ router.get('/top', readLimiter, async (req, res) => {
       leaderboard: topPlayers.map((player, index) => (
         buildLeaderboardEntry(
           player,
-          resolveLeaderboardDisplayName({
+          resolveDisplayNameFromPreferences({
             leaderboardDisplay: player.leaderboardDisplay,
             nickname: player.nickname,
             telegramUsername: linkMap[player.wallet] ? linkMap[player.wallet].telegramUsername : null,
@@ -261,13 +263,13 @@ router.get('/top', readLimiter, async (req, res) => {
       playerPosition,
       ...(insights ? { playerInsights: insights } : {})
     };
-    if (TOP_CACHE_TTL_MS > 0 && !wallet) {
-      topLeaderboardCache.value = responsePayload;
-      topLeaderboardCache.expiresAt = Date.now() + TOP_CACHE_TTL_MS;
+    if (!wallet && getTopLeaderboardCacheTtlMs() > 0) {
+      await setTopLeaderboardCache(responsePayload);
     }
     res.setHeader('X-Leaderboard-Cache', 'miss');
-    res.setHeader('X-Leaderboard-Cache-Hits', String(stats.hits));
-    res.setHeader('X-Leaderboard-Cache-Misses', String(stats.misses));
+    const cacheStats = getTopLeaderboardCacheStats();
+    res.setHeader('X-Leaderboard-Cache-Hits', String(cacheStats.hits));
+    res.setHeader('X-Leaderboard-Cache-Misses', String(cacheStats.misses));
     res.json(responsePayload);
 
   } catch (error) {
