@@ -144,16 +144,16 @@ Scope: `/workspace/URSASS_Backend`
 ## Приоритетный план действий
 
 ### P0 (1–2 дня)
-1. Ввести единый routing registry для `/api` и `/api/v1`.
-2. Зафиксировать единый DTO ответов account auth.
-3. Утвердить rollback-gates в CI/CD и алерты.
+- [x] Ввести единый routing registry для `/api` и `/api/v1`. *(выполнено: 2026-04-30, `app.js`)*
+- [x] Зафиксировать единый DTO ответов account auth. *(выполнено: 2026-04-30, `routes/account.js`)*
+- [x] Утвердить rollback-gates в CI/CD и алерты. *(выполнено: 2026-04-30, `docs/release_rollback_gates.md`)*
 
 ### P1 (2–4 дня)
-1. Проверить `explain()` и добавить индексы для percentile-запросов в `PlayerRun`.
-2. Перевести top leaderboard cache в Redis и добавить инвалидацию по событию обновления bestScore.
-3. Собрать usage по alias endpoint'ам (`/telemetry`) и удалить неиспользуемые.
+- [x] Проверить `explain()` и добавить индексы для percentile-запросов в `PlayerRun`. *(выполнено: 2026-04-30, `models/PlayerRun.js`)*
+- [ ] Перевести top leaderboard cache в Redis и добавить инвалидацию по событию обновления bestScore. *(progress: 2026-04-30 добавлена event-driven invalidation в `routes/leaderboard.js`; осталось вынести в Redis)*
+- [ ] Собрать usage по alias endpoint'ам (`/telemetry`) и удалить неиспользуемые. *(progress: 2026-04-30 добавлен счётчик `app_alias_route_usage_total` для `analytics`/`telemetry` в `/metrics`)*
 
 ### P2 (ongoing)
-1. Унифицировать displayName policy в отдельном сервисе.
-2. Вынести cache policy matrix в документацию и тесты.
-3. Ввести canary rollout + auto rollback по SLO gates.
+- [ ] Унифицировать displayName policy в отдельном сервисе.
+- [x] Вынести cache policy matrix в документацию и тесты. *(выполнено: 2026-04-30, `docs/cache_policy.md`)*
+- [ ] Ввести canary rollout + auto rollback по SLO gates.

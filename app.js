@@ -12,25 +12,24 @@ const referralRoutes = require('./routes/referral');
 const shareRoutes = require('./routes/share');
 const xRoutes = require('./routes/x');
 const logger = require('./utils/logger');
-const { metricsMiddleware, renderMetricsText } = require('./middleware/requestMetrics');
+const { metricsMiddleware, markAliasRouteUsage, renderMetricsText } = require('./middleware/requestMetrics');
 
-const API_ROUTE_REGISTRY = [
+const ROUTE_REGISTRY = [
   { path: '/leaderboard', router: leaderboardRoutes },
   { path: '/store', router: storeRoutes },
   { path: '/account', router: accountRoutes },
   { path: '/game', router: gameRoutes },
   { path: '', router: donationsRoutes },
   { path: '/analytics', router: analyticsRoutes },
+  { path: '/telemetry', router: analyticsRoutes },
   { path: '/referral', router: referralRoutes },
   { path: '/share', router: shareRoutes },
   { path: '/x', router: xRoutes }
 ];
 
-function mountVersionedApiRoutes(app, versions, routeRegistry) {
-  for (const versionPrefix of versions) {
-    for (const route of routeRegistry) {
-      app.use(`${versionPrefix}${route.path}`, route.router);
-    }
+function mountApiRoutes(app, basePrefix) {
+  for (const { path, router } of ROUTE_REGISTRY) {
+    app.use(`${basePrefix}${path}`, router);
   }
 }
 
@@ -115,10 +114,23 @@ function createApp() {
     next();
   });
 
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api/telemetry') || req.path.startsWith('/api/v1/telemetry')) {
+      markAliasRouteUsage('telemetry');
+    }
+
+    if (req.path.startsWith('/api/analytics') || req.path.startsWith('/api/v1/analytics')) {
+      markAliasRouteUsage('analytics');
+    }
+
+    next();
+  });
+
   app.use(express.json({ limit: '1mb' }));
   app.use(metricsMiddleware);
 
-  mountVersionedApiRoutes(app, ['/api', '/api/v1'], API_ROUTE_REGISTRY);
+  mountApiRoutes(app, '/api');
+  mountApiRoutes(app, '/api/v1');
 
   // JSON 404 for any unmatched /api/* route (prevents Express default HTML response)
   app.use('/api', (req, res) => {
