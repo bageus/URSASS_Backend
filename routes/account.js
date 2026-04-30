@@ -15,7 +15,7 @@ const AccountLink = require('../models/AccountLink');
 const LinkCode = require('../models/LinkCode');
 const CoinTransaction = require('../models/CoinTransaction');
 const logger = require('../utils/logger');
-const { normalizeWallet, validateTimestampWindow } = require('../utils/security');
+const { normalizeWallet, parseWalletOrNull, validateTimestampWindow } = require('../utils/security');
 const { validateTelegramInitData } = require('../utils/telegramAuth');
 const { computeRank } = require('../services/leaderboardInsightsService');
 const { buildReferralUrl } = require('../utils/referral');
@@ -96,7 +96,10 @@ router.post('/auth/wallet', readLimiter, async (req, res) => {
 
     const { normalizedTs } = timestampValidation;
 
-    const walletLower = normalizeWallet(wallet);
+    const walletLower = parseWalletOrNull(wallet);
+    if (!walletLower) {
+      return res.status(400).json({ error: 'Invalid wallet address' });
+    }
 
     const message = `Auth wallet\nWallet: ${walletLower}\nTimestamp: ${normalizedTs}`;
     const isValid = verifySignature(message, signature, walletLower);
