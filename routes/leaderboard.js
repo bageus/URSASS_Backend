@@ -30,6 +30,7 @@ const {
   invalidateLeaderboardCache,
   getStats: getLeaderboardCacheStats
 } = require('../services/leaderboardCacheService');
+const { resolveLeaderboardDisplayName } = require('../services/displayNamePolicyService');
 
 const SHARE_COPY_TEMPLATE = 'I scored {score} in Ursass Tube 🐻\nCan you beat me?';
 const SHARE_HASHTAGS = '#UrsassTube #Ursas #Ursasplanet #GameChallenge #HighScore';
@@ -131,67 +132,6 @@ function buildSharePostText(score, referralLink = '') {
   return parts.join('\n');
 }
 
-/**
- * Shorten an EVM wallet address for display.
- * Returns null if the address is not a valid 0x-prefixed 40-hex-char address.
- */
-function shortenWallet(w) {
-  if (!w || !/^0x[0-9a-fA-F]{40}$/.test(w)) return null;
-  return `${w.slice(0, 6)}…${w.slice(-4)}`;
-}
-
-/**
- * Compute the display name for a leaderboard entry based on the player's
- * chosen display mode, nickname, telegram username, and wallet address.
- */
-function computeDisplayName({ leaderboardDisplay, nickname, telegramUsername, wallet }) {
-  switch (leaderboardDisplay || 'wallet') {
-    case 'nickname':
-      return nickname || shortenWallet(wallet) || (telegramUsername ? `@${telegramUsername}` : null) || 'Player';
-    case 'telegram':
-      return telegramUsername
-        ? `@${telegramUsername}`
-        : (nickname || shortenWallet(wallet) || 'Player');
-    case 'wallet':
-    default:
-      return shortenWallet(wallet) || (telegramUsername ? `@${telegramUsername}` : (nickname || 'Player'));
-  }
-}
-
-/**
- * Build display name for a player based on their AccountLink data.
- * Priority:
- *   1. If wallet is linked → show wallet address (shortened)
- *   2. If only telegram → show "TG#id"
- *   3. Fallback → show primaryId (shortened if wallet-like)
- */
-function buildDisplayName(link, primaryId) {
-  if (!link) {
-    if (primaryId && primaryId.startsWith('0x')) {
-      return `${primaryId.slice(0, 6)}...${primaryId.slice(-4)}`;
-    }
-    return primaryId || 'Unknown';
-  }
-
-  // If wallet is linked — show wallet
-  if (link.wallet) {
-    return `${link.wallet.slice(0, 6)}...${link.wallet.slice(-4)}`;
-  }
-
-  // Only telegram — show @username first, then TG#id
-  if (link.telegramUsername) {
-    return `@${link.telegramUsername}`;
-  }
-
-  if (link.telegramId) {
-    return `TG#${link.telegramId}`;
-  }
-
-  if (primaryId && primaryId.startsWith('0x')) {
-    return `${primaryId.slice(0, 6)}...${primaryId.slice(-4)}`;
-  }
-  return primaryId || 'Unknown';
-}
 
 function buildLeaderboardEntry(player, displayName, position) {
   return {
@@ -270,7 +210,7 @@ router.get('/top', readLimiter, async (req, res) => {
 
           playerPosition = buildLeaderboardEntry(
             playerData,
-            computeDisplayName({
+            resolveLeaderboardDisplayName({
               leaderboardDisplay: playerData.leaderboardDisplay,
               nickname: playerData.nickname,
               telegramUsername: playerLink ? playerLink.telegramUsername : null,
@@ -281,7 +221,7 @@ router.get('/top', readLimiter, async (req, res) => {
         } else {
           playerPosition = buildLeaderboardEntry(
             playerData,
-            computeDisplayName({
+            resolveLeaderboardDisplayName({
               leaderboardDisplay: playerData.leaderboardDisplay,
               nickname: playerData.nickname,
               telegramUsername: playerLink ? playerLink.telegramUsername : null,
@@ -306,7 +246,7 @@ router.get('/top', readLimiter, async (req, res) => {
       leaderboard: topPlayers.map((player, index) => (
         buildLeaderboardEntry(
           player,
-          computeDisplayName({
+          resolveLeaderboardDisplayName({
             leaderboardDisplay: player.leaderboardDisplay,
             nickname: player.nickname,
             telegramUsername: linkMap[player.wallet] ? linkMap[player.wallet].telegramUsername : null,

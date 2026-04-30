@@ -133,6 +133,6 @@ Scope: `/workspace/URSASS_Backend`
 3. ✅ Собрать usage по alias endpoint'ам (`/telemetry`) и удалить неиспользуемые. **Выполнено** (`/telemetry` alias удален)
 
 ### P2 (ongoing)
-1. Унифицировать displayName policy в отдельном сервисе.
-2. Вынести cache policy matrix в документацию и тесты.
-3. Ввести canary rollout + auto rollback по SLO gates.
+1. ✅ Унифицировать displayName policy в отдельном сервисе. **Выполнено**
+2. ✅ Вынести cache policy matrix в документацию и тесты. **Выполнено**
+3. ✅ Ввести canary rollout + auto rollback по SLO gates. **Выполнено**
