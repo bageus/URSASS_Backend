@@ -96,6 +96,11 @@ Current test run shows multiple failures around `POST /api/store/donations/creat
 2. Add dead-code and unused-export scan with CI tooling (depcheck/knip/eslint rules).
 3. Add API response schema validation tests (contract snapshots).
 
+### P2 progress tracking (updated 2026-04-30)
+- [ ] Precompute leaderboard ranking aggregates.
+- [x] Added baseline unused-file audit tooling (`scripts/audit/unused-files.js`) and CI step (`npm run audit:unused-files`) in backend-audit workflow.
+- [ ] Add API response schema validation tests (contract snapshots).
+
 ## CI pipeline proposal (audit-focused)
 
 Recommended stages:
