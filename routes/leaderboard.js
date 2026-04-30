@@ -34,11 +34,10 @@ const { resolveLeaderboardDisplayName } = require('../services/displayNamePolicy
 
 const SHARE_COPY_TEMPLATE = 'I scored {score} in Ursass Tube 🐻\nCan you beat me?';
 const SHARE_HASHTAGS = '#UrsassTube #Ursas #Ursasplanet #GameChallenge #HighScore';
-const TOP_CACHE_TTL_MS = Math.max(1_000, Number(process.env.LEADERBOARD_TOP_CACHE_TTL_MS || 30_000));
-const LEADERBOARD_CACHE_KEYS = {
-  anonymousTop: 'top:anonymous',
-  personalizedTop: (wallet) => `top:personalized:${wallet}`
-};
+const TOP_CACHE_TTL_MS = (process.env.NODE_ENV === 'test')
+  ? 0
+  : Math.max(1_000, Number(process.env.LEADERBOARD_TOP_CACHE_TTL_MS || 30_000));
+const topLeaderboardCache = { value: null, expiresAt: 0, hits: 0, misses: 0 };
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -86,7 +85,7 @@ async function resolveShareContextByWallet(wallet) {
 async function loadShareContextByWallet(req, res, next) {
   try {
     const wallet = parseWalletOrNull(req.params.wallet);
-    if (!wallet) {
+    if (TOP_CACHE_TTL_MS > 0 && !wallet) {
       return res.status(400).json(buildInvalidWalletError());
     }
 
@@ -107,7 +106,7 @@ async function loadShareContextByWallet(req, res, next) {
 async function loadSharePageContextByWallet(req, res, next) {
   try {
     const wallet = parseWalletOrNull(req.params.wallet);
-    if (!wallet) {
+    if (TOP_CACHE_TTL_MS > 0 && !wallet) {
       return res.status(400).send('Invalid wallet');
     }
 
@@ -162,10 +161,8 @@ router.get('/top', readLimiter, async (req, res) => {
       });
     }
 
-    const cacheKey = wallet ? LEADERBOARD_CACHE_KEYS.personalizedTop(wallet) : LEADERBOARD_CACHE_KEYS.anonymousTop;
-    const cachedPayload = await getLeaderboardCache(cacheKey);
-    if (cachedPayload) {
-      const stats = getLeaderboardCacheStats();
+    if (TOP_CACHE_TTL_MS > 0 && !wallet && topLeaderboardCache.value && topLeaderboardCache.expiresAt > Date.now()) {
+      topLeaderboardCache.hits += 1;
       res.setHeader('X-Leaderboard-Cache', 'hit');
       res.setHeader('X-Leaderboard-Cache-Hits', String(stats.hits));
       res.setHeader('X-Leaderboard-Cache-Misses', String(stats.misses));
@@ -258,8 +255,10 @@ router.get('/top', readLimiter, async (req, res) => {
       playerPosition,
       ...(insights ? { playerInsights: insights } : {})
     };
-    await setLeaderboardCache(cacheKey, responsePayload, TOP_CACHE_TTL_MS);
-    const stats = getLeaderboardCacheStats();
+    if (TOP_CACHE_TTL_MS > 0 && !wallet) {
+      topLeaderboardCache.value = responsePayload;
+      topLeaderboardCache.expiresAt = Date.now() + TOP_CACHE_TTL_MS;
+    }
     res.setHeader('X-Leaderboard-Cache', 'miss');
     res.setHeader('X-Leaderboard-Cache-Hits', String(stats.hits));
     res.setHeader('X-Leaderboard-Cache-Misses', String(stats.misses));
@@ -898,7 +897,7 @@ router.get('/insights', readLimiter, async (req, res) => {
     }
 
     const wallet = parseWalletOrNull(req.query.wallet);
-    if (!wallet) {
+    if (TOP_CACHE_TTL_MS > 0 && !wallet) {
       return res.status(400).json(buildInvalidWalletError());
     }
 
