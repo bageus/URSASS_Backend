@@ -77,8 +77,8 @@ Current test run shows multiple failures around `POST /api/store/donations/creat
 - [x] Shared helper added in `utils/security.js` (`isValidWalletAddress`, `parseWalletOrNull`) and used across `/api/leaderboard/top`, `/api/leaderboard/share/*`, `/api/leaderboard/insights`.
 - [x] Donations create-payment regression fixed for test harness compatibility (`findOne` chain/no-chain support) and failing donation integration cluster restored to green in targeted run.
 - [x] Wallet format pre-validation added to `/api/account/auth/wallet` to fail fast before signature verification.
-- [ ] Extend shared wallet parser usage to remaining wallet-sensitive routes in `routes/store.js`.
-- [ ] Introduce a single shared 400 wallet-error response factory to remove message drift.
+- [x] Extend shared wallet parser usage to wallet-sensitive routes in `routes/store.js` (`/upgrades/:wallet`, `/donations/:wallet`, `/buy` wallet mode path).
+- [x] Introduce shared wallet-error response factory (`buildInvalidWalletError`) and apply it in `leaderboard`, `store`, `account`.
 
 ### P1 (2-4 days)
 1. Extract `loadShareContextByWallet` middleware.

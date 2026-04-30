@@ -16,7 +16,8 @@ const {
   normalizeWallet,
   validateTimestampWindow,
   isValidWalletAddress,
-  parseWalletOrNull
+  parseWalletOrNull,
+  buildInvalidWalletError
 } = require('../utils/security');
 const { hasAiModeAccess, hasAiModeAccessByTelegramUsername, validateAiSettings } = require('../utils/aiModeAccess');
 const { computePlayerInsights, computeRank, DEFAULTS: leaderboardInsightsConfig } = require('../services/leaderboardInsightsService');
@@ -163,7 +164,7 @@ router.get('/top', readLimiter, async (req, res) => {
     if (walletQuery && !wallet) {
       logger.warn({ wallet: walletQuery, requestId: req.requestId }, 'GET /top rejected: invalid wallet format');
       return res.status(400).json({
-        error: 'Invalid wallet format. Expected EVM wallet like 0x... (40 hex chars).',
+        ...buildInvalidWalletError(),
         requestId: req.requestId
       });
     }
@@ -734,9 +735,7 @@ router.get('/share/payload/:wallet', readLimiter, async (req, res) => {
   try {
     const wallet = parseWalletOrNull(req.params.wallet);
     if (!wallet) {
-      return res.status(400).json({
-        error: 'Invalid wallet format. Expected EVM wallet like 0x... (40 hex chars).'
-      });
+      return res.status(400).json(buildInvalidWalletError());
     }
 
     const shareContext = await resolveShareContextByWallet(wallet);
@@ -916,9 +915,7 @@ router.get('/insights', readLimiter, async (req, res) => {
 
     const wallet = parseWalletOrNull(req.query.wallet);
     if (!wallet) {
-      return res.status(400).json({
-        error: 'Invalid wallet format. Expected EVM wallet like 0x... (40 hex chars).'
-      });
+      return res.status(400).json(buildInvalidWalletError());
     }
 
     const player = await Player.findOne({ wallet });

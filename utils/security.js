@@ -22,6 +22,10 @@ function parseWalletOrNull(wallet) {
   return isValidWalletAddress(normalized) ? normalized : null;
 }
 
+function buildInvalidWalletError(message = 'Invalid wallet format. Expected EVM wallet like 0x... (40 hex chars).') {
+  return { error: message };
+}
+
 function validateTimestampWindow(timestamp, {
   windowMs,
   maxPastAgeMs,
@@ -65,6 +69,7 @@ module.exports = {
   normalizeWallet,
   isValidWalletAddress,
   parseWalletOrNull,
+  buildInvalidWalletError,
   validateTimestampWindow,
   logSecurityEvent
 };
