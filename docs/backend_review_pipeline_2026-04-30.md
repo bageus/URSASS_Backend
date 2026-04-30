@@ -150,7 +150,7 @@ Scope: `/workspace/URSASS_Backend`
 
 ### P1 (2–4 дня)
 - [x] Проверить `explain()` и добавить индексы для percentile-запросов в `PlayerRun`. *(выполнено: 2026-04-30, `models/PlayerRun.js`)*
-- [ ] Перевести top leaderboard cache в Redis и добавить инвалидацию по событию обновления bestScore.
+- [ ] Перевести top leaderboard cache в Redis и добавить инвалидацию по событию обновления bestScore. *(progress: 2026-04-30 добавлена event-driven invalidation в `routes/leaderboard.js`; осталось вынести в Redis)*
 - [ ] Собрать usage по alias endpoint'ам (`/telemetry`) и удалить неиспользуемые.
 
 ### P2 (ongoing)

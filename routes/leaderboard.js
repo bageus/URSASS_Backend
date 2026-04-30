@@ -39,6 +39,12 @@ const TOP_CACHE_TTL_MS = (process.env.NODE_ENV === 'test')
   : Math.max(1_000, Number(process.env.LEADERBOARD_TOP_CACHE_TTL_MS || 30_000));
 const topLeaderboardCache = { value: null, expiresAt: 0, hits: 0, misses: 0 };
 
+function invalidateTopLeaderboardCache(reason = 'unknown') {
+  topLeaderboardCache.value = null;
+  topLeaderboardCache.expiresAt = 0;
+  logger.info({ reason }, 'Top leaderboard cache invalidated');
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -670,6 +676,8 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       prevRank: runContext?.prevRank ?? null,
       isFirstRunAfterAuth: runContext?.isFirstRunAfterAuth ?? false
     });
+
+    invalidateTopLeaderboardCache('leaderboard_save_result');
 
     res.json({
       success: true,
