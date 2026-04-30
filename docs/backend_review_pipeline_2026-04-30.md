@@ -128,9 +128,9 @@ Scope: `/workspace/URSASS_Backend`
 3. ✅ Утвердить rollback-gates в CI/CD и алерты. **Выполнено** (см. `docs/rollback_gates.md`)
 
 ### P1 (2–4 дня)
-1. Проверить `explain()` и добавить индексы для percentile-запросов в `PlayerRun`.
-2. Перевести top leaderboard cache в Redis и добавить инвалидацию по событию обновления bestScore.
-3. Собрать usage по alias endpoint'ам (`/telemetry`) и удалить неиспользуемые.
+1. ✅ Проверить `explain()` и добавить индексы для percentile-запросов в `PlayerRun`. **Выполнено**
+2. ✅ Перевести top leaderboard cache в Redis и добавить инвалидацию по событию обновления bestScore. **Выполнено** (Upstash Redis + fallback)
+3. ✅ Собрать usage по alias endpoint'ам (`/telemetry`) и удалить неиспользуемые. **Выполнено** (`/telemetry` alias удален)
 
 ### P2 (ongoing)
 1. Унифицировать displayName policy в отдельном сервисе.

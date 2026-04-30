@@ -21,7 +21,6 @@ const API_ROUTE_REGISTRY = [
   { path: '/game', router: gameRoutes },
   { path: '', router: donationsRoutes },
   { path: '/analytics', router: analyticsRoutes },
-  { path: '/telemetry', router: analyticsRoutes },
   { path: '/referral', router: referralRoutes },
   { path: '/share', router: shareRoutes },
   { path: '/x', router: xRoutes }
