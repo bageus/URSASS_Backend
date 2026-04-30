@@ -155,5 +155,5 @@ Scope: `/workspace/URSASS_Backend`
 
 ### P2 (ongoing)
 - [ ] Унифицировать displayName policy в отдельном сервисе.
-- [ ] Вынести cache policy matrix в документацию и тесты.
+- [x] Вынести cache policy matrix в документацию и тесты. *(выполнено: 2026-04-30, `docs/cache_policy.md`)*
 - [ ] Ввести canary rollout + auto rollback по SLO gates.
