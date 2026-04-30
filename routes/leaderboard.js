@@ -39,12 +39,6 @@ const {
 const SHARE_COPY_TEMPLATE = 'I scored {score} in Ursass Tube 🐻\nCan you beat me?';
 const SHARE_HASHTAGS = '#UrsassTube #Ursas #Ursasplanet #GameChallenge #HighScore';
 
-function invalidateTopLeaderboardCache(reason = 'unknown') {
-  topLeaderboardCache.value = null;
-  topLeaderboardCache.expiresAt = 0;
-  logger.info({ reason }, 'Top leaderboard cache invalidated');
-}
-
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
