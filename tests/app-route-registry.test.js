@@ -3,10 +3,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-test('app.js declares ROUTE_REGISTRY only once', () => {
+test('app.js exposes route registry via getRouteRegistry()', () => {
   const appJsPath = path.join(__dirname, '..', 'app.js');
   const source = fs.readFileSync(appJsPath, 'utf8');
 
-  const matches = source.match(/const\s+ROUTE_REGISTRY\s*=\s*\[/g) || [];
-  assert.equal(matches.length, 1, `Expected exactly one ROUTE_REGISTRY declaration, got ${matches.length}`);
+  const functionMatches = source.match(/function\s+getRouteRegistry\s*\(/g) || [];
+  assert.equal(functionMatches.length, 1, `Expected exactly one getRouteRegistry function, got ${functionMatches.length}`);
+
+  assert.match(source, /mountApiRoutes\(app, '\/api'\)/);
+  assert.match(source, /mountApiRoutes\(app, '\/api\/v1'\)/);
 });
