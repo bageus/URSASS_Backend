@@ -9,6 +9,7 @@ const cacheStats = {
   misses: 0,
   backend: UPSTASH_URL && UPSTASH_TOKEN ? 'upstash' : 'memory'
 };
+const IS_TEST_ENV = (process.env.NODE_ENV || '').toLowerCase() === 'test';
 
 function toKey(key) {
   return `leaderboard:${String(key || '').trim()}`;
@@ -62,6 +63,10 @@ async function delFromUpstash(cacheKey) {
 }
 
 async function getLeaderboardCache(key) {
+  if (IS_TEST_ENV) {
+    cacheStats.misses += 1;
+    return null;
+  }
   const cacheKey = toKey(key);
 
   try {
@@ -89,6 +94,9 @@ async function getLeaderboardCache(key) {
 }
 
 async function setLeaderboardCache(key, value, ttlMs) {
+  if (IS_TEST_ENV) {
+    return;
+  }
   const cacheKey = toKey(key);
   try {
     if (cacheStats.backend === 'upstash') {
@@ -104,6 +112,10 @@ async function setLeaderboardCache(key, value, ttlMs) {
 }
 
 async function invalidateLeaderboardCache(keys = []) {
+  if (IS_TEST_ENV) {
+    MEMORY.clear();
+    return;
+  }
   const normalized = Array.from(new Set(keys.map(toKey)));
 
   for (const cacheKey of normalized) {
