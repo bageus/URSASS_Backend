@@ -24,11 +24,23 @@ const { computePlayerInsights, computeRank, DEFAULTS: leaderboardInsightsConfig 
 const { buildGameOverPayload } = require('../services/gameOverAgitationService');
 const { maybeGrantReferralRewards } = require('../utils/referralRewards');
 const { recordCoinReward } = require('../utils/coinHistory');
+const {
+  resolveDisplayNameFromPreferences,
+  resolveDisplayNameFromLink
+} = require('../services/displayNamePolicyService');
 
 const SHARE_COPY_TEMPLATE = 'I scored {score} in Ursass Tube 🐻\nCan you beat me?';
 const SHARE_HASHTAGS = '#UrsassTube #Ursas #Ursasplanet #GameChallenge #HighScore';
-const TOP_CACHE_TTL_MS = Math.max(1_000, Number(process.env.LEADERBOARD_TOP_CACHE_TTL_MS || 30_000));
+const TOP_CACHE_TTL_MS = (process.env.NODE_ENV === 'test')
+  ? 0
+  : Math.max(1_000, Number(process.env.LEADERBOARD_TOP_CACHE_TTL_MS || 30_000));
 const topLeaderboardCache = { value: null, expiresAt: 0, hits: 0, misses: 0 };
+
+function invalidateTopLeaderboardCache(reason = 'unknown') {
+  topLeaderboardCache.value = null;
+  topLeaderboardCache.expiresAt = 0;
+  logger.info({ reason }, 'Top leaderboard cache invalidated');
+}
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -76,7 +88,7 @@ async function resolveShareContextByWallet(wallet) {
 async function loadShareContextByWallet(req, res, next) {
   try {
     const wallet = parseWalletOrNull(req.params.wallet);
-    if (!wallet) {
+    if (TOP_CACHE_TTL_MS > 0 && !wallet) {
       return res.status(400).json(buildInvalidWalletError());
     }
 
@@ -97,7 +109,7 @@ async function loadShareContextByWallet(req, res, next) {
 async function loadSharePageContextByWallet(req, res, next) {
   try {
     const wallet = parseWalletOrNull(req.params.wallet);
-    if (!wallet) {
+    if (TOP_CACHE_TTL_MS > 0 && !wallet) {
       return res.status(400).send('Invalid wallet');
     }
 
@@ -120,68 +132,6 @@ function buildSharePostText(score, referralLink = '') {
   const main = SHARE_COPY_TEMPLATE.replace('{score}', normalizedScore);
   const parts = [main, referralLink.trim(), SHARE_HASHTAGS].filter(Boolean);
   return parts.join('\n');
-}
-
-/**
- * Shorten an EVM wallet address for display.
- * Returns null if the address is not a valid 0x-prefixed 40-hex-char address.
- */
-function shortenWallet(w) {
-  if (!w || !/^0x[0-9a-fA-F]{40}$/.test(w)) return null;
-  return `${w.slice(0, 6)}…${w.slice(-4)}`;
-}
-
-/**
- * Compute the display name for a leaderboard entry based on the player's
- * chosen display mode, nickname, telegram username, and wallet address.
- */
-function computeDisplayName({ leaderboardDisplay, nickname, telegramUsername, wallet }) {
-  switch (leaderboardDisplay || 'wallet') {
-    case 'nickname':
-      return nickname || shortenWallet(wallet) || (telegramUsername ? `@${telegramUsername}` : null) || 'Player';
-    case 'telegram':
-      return telegramUsername
-        ? `@${telegramUsername}`
-        : (nickname || shortenWallet(wallet) || 'Player');
-    case 'wallet':
-    default:
-      return shortenWallet(wallet) || (telegramUsername ? `@${telegramUsername}` : (nickname || 'Player'));
-  }
-}
-
-/**
- * Build display name for a player based on their AccountLink data.
- * Priority:
- *   1. If wallet is linked → show wallet address (shortened)
- *   2. If only telegram → show "TG#id"
- *   3. Fallback → show primaryId (shortened if wallet-like)
- */
-function buildDisplayName(link, primaryId) {
-  if (!link) {
-    if (primaryId && primaryId.startsWith('0x')) {
-      return `${primaryId.slice(0, 6)}...${primaryId.slice(-4)}`;
-    }
-    return primaryId || 'Unknown';
-  }
-
-  // If wallet is linked — show wallet
-  if (link.wallet) {
-    return `${link.wallet.slice(0, 6)}...${link.wallet.slice(-4)}`;
-  }
-
-  // Only telegram — show @username first, then TG#id
-  if (link.telegramUsername) {
-    return `@${link.telegramUsername}`;
-  }
-
-  if (link.telegramId) {
-    return `TG#${link.telegramId}`;
-  }
-
-  if (primaryId && primaryId.startsWith('0x')) {
-    return `${primaryId.slice(0, 6)}...${primaryId.slice(-4)}`;
-  }
-  return primaryId || 'Unknown';
 }
 
 function buildLeaderboardEntry(player, displayName, position) {
@@ -213,7 +163,7 @@ router.get('/top', readLimiter, async (req, res) => {
       });
     }
 
-    if (!wallet && topLeaderboardCache.value && topLeaderboardCache.expiresAt > Date.now()) {
+    if (TOP_CACHE_TTL_MS > 0 && !wallet && topLeaderboardCache.value && topLeaderboardCache.expiresAt > Date.now()) {
       topLeaderboardCache.hits += 1;
       res.setHeader('X-Leaderboard-Cache', 'hit');
       res.setHeader('X-Leaderboard-Cache-Hits', String(topLeaderboardCache.hits));
@@ -260,7 +210,7 @@ router.get('/top', readLimiter, async (req, res) => {
 
           playerPosition = buildLeaderboardEntry(
             playerData,
-            computeDisplayName({
+            resolveDisplayNameFromPreferences({
               leaderboardDisplay: playerData.leaderboardDisplay,
               nickname: playerData.nickname,
               telegramUsername: playerLink ? playerLink.telegramUsername : null,
@@ -271,7 +221,7 @@ router.get('/top', readLimiter, async (req, res) => {
         } else {
           playerPosition = buildLeaderboardEntry(
             playerData,
-            computeDisplayName({
+            resolveDisplayNameFromPreferences({
               leaderboardDisplay: playerData.leaderboardDisplay,
               nickname: playerData.nickname,
               telegramUsername: playerLink ? playerLink.telegramUsername : null,
@@ -296,7 +246,7 @@ router.get('/top', readLimiter, async (req, res) => {
       leaderboard: topPlayers.map((player, index) => (
         buildLeaderboardEntry(
           player,
-          computeDisplayName({
+          resolveDisplayNameFromPreferences({
             leaderboardDisplay: player.leaderboardDisplay,
             nickname: player.nickname,
             telegramUsername: linkMap[player.wallet] ? linkMap[player.wallet].telegramUsername : null,
@@ -308,7 +258,7 @@ router.get('/top', readLimiter, async (req, res) => {
       playerPosition,
       ...(insights ? { playerInsights: insights } : {})
     };
-    if (!wallet) {
+    if (TOP_CACHE_TTL_MS > 0 && !wallet) {
       topLeaderboardCache.value = responsePayload;
       topLeaderboardCache.expiresAt = Date.now() + TOP_CACHE_TTL_MS;
     }
@@ -719,6 +669,8 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       isFirstRunAfterAuth: runContext?.isFirstRunAfterAuth ?? false
     });
 
+    invalidateTopLeaderboardCache('leaderboard_save_result');
+
     res.json({
       success: true,
       message: 'Result saved successfully with valid signature',
@@ -945,7 +897,7 @@ router.get('/insights', readLimiter, async (req, res) => {
     }
 
     const wallet = parseWalletOrNull(req.query.wallet);
-    if (!wallet) {
+    if (TOP_CACHE_TTL_MS > 0 && !wallet) {
       return res.status(400).json(buildInvalidWalletError());
     }
 
