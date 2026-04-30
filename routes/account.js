@@ -24,6 +24,18 @@ const { findLink } = require('../middleware/requireAuth');
 
 const WALLET_TIMESTAMP_WINDOW_MS = Number(process.env.WALLET_AUTH_TIMESTAMP_WINDOW_MS || 10 * 60 * 1000);
 
+function buildAccountAuthResponse(account, overrides = {}) {
+  return {
+    success: true,
+    primaryId: account.primaryId,
+    telegramId: account.telegramId || null,
+    telegramUsername: overrides.telegramUsername ?? null,
+    wallet: account.wallet || null,
+    isLinked: Boolean(account.isLinked),
+    displayName: overrides.displayName ?? null
+  };
+}
+
 function resolveTelegramInitData(req) {
   return req.body?.telegramInitData
     || req.body?.initData
@@ -63,14 +75,9 @@ router.post('/auth/telegram', readLimiter, async (req, res) => {
 
     logger.info({ telegramId, displayName: firstName || username || 'anon', primaryId: account.primaryId }, 'Telegram auth');
 
-    res.json({
-      success: true,
-      primaryId: account.primaryId,
-      telegramId: account.telegramId,
-      wallet: account.wallet,
-      isLinked: account.isLinked,
+    res.json(buildAccountAuthResponse(account, {
       displayName: firstName || username || `TG#${telegramId}`
-    });
+    }));
 
   } catch (error) {
     logger.error({ err: error }, 'POST /auth/telegram error');
@@ -114,14 +121,9 @@ router.post('/auth/wallet', readLimiter, async (req, res) => {
 
     logger.info({ wallet: walletLower, primaryId: account.primaryId }, 'Wallet auth');
 
-    res.json({
-      success: true,
-      primaryId: account.primaryId,
-      telegramId: account.telegramId,
-      telegramUsername: link ? link.telegramUsername : null,
-      wallet: account.wallet,
-      isLinked: account.isLinked
-    });
+    res.json(buildAccountAuthResponse(account, {
+      telegramUsername: link ? link.telegramUsername : null
+    }));
 
   } catch (error) {
     logger.error({ err: error }, 'POST /auth/wallet error');

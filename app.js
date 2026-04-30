@@ -14,6 +14,26 @@ const xRoutes = require('./routes/x');
 const logger = require('./utils/logger');
 const { metricsMiddleware, renderMetricsText } = require('./middleware/requestMetrics');
 
+const API_ROUTE_REGISTRY = [
+  { path: '/leaderboard', router: leaderboardRoutes },
+  { path: '/store', router: storeRoutes },
+  { path: '/account', router: accountRoutes },
+  { path: '/game', router: gameRoutes },
+  { path: '', router: donationsRoutes },
+  { path: '/analytics', router: analyticsRoutes },
+  { path: '/referral', router: referralRoutes },
+  { path: '/share', router: shareRoutes },
+  { path: '/x', router: xRoutes }
+];
+
+function mountVersionedApiRoutes(app, versions, routeRegistry) {
+  for (const versionPrefix of versions) {
+    for (const route of routeRegistry) {
+      app.use(`${versionPrefix}${route.path}`, route.router);
+    }
+  }
+}
+
 function createApp() {
   const app = express();
 
@@ -98,27 +118,7 @@ function createApp() {
   app.use(express.json({ limit: '1mb' }));
   app.use(metricsMiddleware);
 
-  app.use('/api/leaderboard', leaderboardRoutes);
-  app.use('/api/store', storeRoutes);
-  app.use('/api/account', accountRoutes);
-  app.use('/api/game', gameRoutes);
-  app.use('/api', donationsRoutes);
-  app.use('/api/analytics', analyticsRoutes);
-  app.use('/api/telemetry', analyticsRoutes);
-  app.use('/api/referral', referralRoutes);
-  app.use('/api/share', shareRoutes);
-  app.use('/api/x', xRoutes);
-
-  app.use('/api/v1/leaderboard', leaderboardRoutes);
-  app.use('/api/v1/store', storeRoutes);
-  app.use('/api/v1/account', accountRoutes);
-  app.use('/api/v1/game', gameRoutes);
-  app.use('/api/v1', donationsRoutes);
-  app.use('/api/v1/analytics', analyticsRoutes);
-  app.use('/api/v1/telemetry', analyticsRoutes);
-  app.use('/api/v1/referral', referralRoutes);
-  app.use('/api/v1/share', shareRoutes);
-  app.use('/api/v1/x', xRoutes);
+  mountVersionedApiRoutes(app, ['/api', '/api/v1'], API_ROUTE_REGISTRY);
 
   // JSON 404 for any unmatched /api/* route (prevents Express default HTML response)
   app.use('/api', (req, res) => {

@@ -24,11 +24,20 @@ const { computePlayerInsights, computeRank, DEFAULTS: leaderboardInsightsConfig 
 const { buildGameOverPayload } = require('../services/gameOverAgitationService');
 const { maybeGrantReferralRewards } = require('../utils/referralRewards');
 const { recordCoinReward } = require('../utils/coinHistory');
+const {
+  getLeaderboardCache,
+  setLeaderboardCache,
+  invalidateLeaderboardCache,
+  getStats: getLeaderboardCacheStats
+} = require('../services/leaderboardCacheService');
 
 const SHARE_COPY_TEMPLATE = 'I scored {score} in Ursass Tube 🐻\nCan you beat me?';
 const SHARE_HASHTAGS = '#UrsassTube #Ursas #Ursasplanet #GameChallenge #HighScore';
 const TOP_CACHE_TTL_MS = Math.max(1_000, Number(process.env.LEADERBOARD_TOP_CACHE_TTL_MS || 30_000));
-const topLeaderboardCache = { value: null, expiresAt: 0, hits: 0, misses: 0 };
+const LEADERBOARD_CACHE_KEYS = {
+  anonymousTop: 'top:anonymous',
+  personalizedTop: (wallet) => `top:personalized:${wallet}`
+};
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -213,14 +222,15 @@ router.get('/top', readLimiter, async (req, res) => {
       });
     }
 
-    if (!wallet && topLeaderboardCache.value && topLeaderboardCache.expiresAt > Date.now()) {
-      topLeaderboardCache.hits += 1;
+    const cacheKey = wallet ? LEADERBOARD_CACHE_KEYS.personalizedTop(wallet) : LEADERBOARD_CACHE_KEYS.anonymousTop;
+    const cachedPayload = await getLeaderboardCache(cacheKey);
+    if (cachedPayload) {
+      const stats = getLeaderboardCacheStats();
       res.setHeader('X-Leaderboard-Cache', 'hit');
-      res.setHeader('X-Leaderboard-Cache-Hits', String(topLeaderboardCache.hits));
-      res.setHeader('X-Leaderboard-Cache-Misses', String(topLeaderboardCache.misses));
-      return res.json(topLeaderboardCache.value);
+      res.setHeader('X-Leaderboard-Cache-Hits', String(stats.hits));
+      res.setHeader('X-Leaderboard-Cache-Misses', String(stats.misses));
+      return res.json(cachedPayload);
     }
-    topLeaderboardCache.misses += 1;
 
     const topPlayers = await Player.find({ bestScore: { $gt: 0 } })
       .sort({ bestScore: -1 })
@@ -308,13 +318,11 @@ router.get('/top', readLimiter, async (req, res) => {
       playerPosition,
       ...(insights ? { playerInsights: insights } : {})
     };
-    if (!wallet) {
-      topLeaderboardCache.value = responsePayload;
-      topLeaderboardCache.expiresAt = Date.now() + TOP_CACHE_TTL_MS;
-    }
+    await setLeaderboardCache(cacheKey, responsePayload, TOP_CACHE_TTL_MS);
+    const stats = getLeaderboardCacheStats();
     res.setHeader('X-Leaderboard-Cache', 'miss');
-    res.setHeader('X-Leaderboard-Cache-Hits', String(topLeaderboardCache.hits));
-    res.setHeader('X-Leaderboard-Cache-Misses', String(topLeaderboardCache.misses));
+    res.setHeader('X-Leaderboard-Cache-Hits', String(stats.hits));
+    res.setHeader('X-Leaderboard-Cache-Misses', String(stats.misses));
     res.json(responsePayload);
 
   } catch (error) {
@@ -676,6 +684,11 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     if (coins.gold > 0 || coins.silver > 0) {
       await recordCoinReward(walletLower, 'ride', { gold: coins.gold, silver: coins.silver }, { requestId: req.requestId });
     }
+
+    await invalidateLeaderboardCache([
+      LEADERBOARD_CACHE_KEYS.anonymousTop,
+      LEADERBOARD_CACHE_KEYS.personalizedTop(walletLower)
+    ]);
 
     // Grant referral rewards on first valid run (non-blocking, errors logged internally)
     try {
