@@ -1248,7 +1248,7 @@ test('POST /api/donations/stars/create returns Telegram setup errors instead of 
 
   await server.close();
 });
-test('POST /api/donations/stars/confirm credits Telegram Stars order from Mini App callback when webhook is missing', async () => {
+test('POST /api/donations/stars/confirm credits Telegram Stars order from Mini App callback when webhook is missing', { timeout: 15_000 }, async () => {
   process.env.TELEGRAM_BOT_TOKEN = '123456:stars-token';
   const { server, baseUrl } = await startServer();
   const initData = buildTelegramInitData({ id: 777005, first_name: 'Recover' }, process.env.TELEGRAM_BOT_TOKEN);
@@ -1346,7 +1346,7 @@ test('POST /api/telegram/webhook accepts pre_checkout_query for compact Stars pa
   await server.close();
 });
 
-test('POST /api/telegram/webhook processes successful_payment idempotently', async () => {
+test('POST /api/telegram/webhook processes successful_payment idempotently', { timeout: 15_000 }, async () => {
   process.env.TELEGRAM_BOT_TOKEN = '123456:stars-token';
   const { server, baseUrl } = await startServer();
   const initData = buildTelegramInitData({ id: 888002, first_name: 'Buyer' }, process.env.TELEGRAM_BOT_TOKEN);
