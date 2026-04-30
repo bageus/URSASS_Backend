@@ -32,6 +32,9 @@ jobs:
       - name: Dependency audit (moderate+)
         run: npm audit --audit-level=moderate
 
+      - name: Unused files audit report
+        run: npm run audit:unused-files
+
       - name: Duplicate wallet validation check (guardrail)
         run: |
           COUNT=$(rg -n "isValidWalletAddress\(|Invalid wallet format" routes | wc -l)
