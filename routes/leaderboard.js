@@ -166,11 +166,10 @@ router.get('/top', readLimiter, async (req, res) => {
     if (TOP_CACHE_TTL_MS > 0 && !wallet && topLeaderboardCache.value && topLeaderboardCache.expiresAt > Date.now()) {
       topLeaderboardCache.hits += 1;
       res.setHeader('X-Leaderboard-Cache', 'hit');
-      res.setHeader('X-Leaderboard-Cache-Hits', String(topLeaderboardCache.hits));
-      res.setHeader('X-Leaderboard-Cache-Misses', String(topLeaderboardCache.misses));
-      return res.json(topLeaderboardCache.value);
+      res.setHeader('X-Leaderboard-Cache-Hits', String(stats.hits));
+      res.setHeader('X-Leaderboard-Cache-Misses', String(stats.misses));
+      return res.json(cachedPayload);
     }
-    topLeaderboardCache.misses += 1;
 
     const topPlayers = await Player.find({ bestScore: { $gt: 0 } })
       .sort({ bestScore: -1 })
@@ -263,8 +262,8 @@ router.get('/top', readLimiter, async (req, res) => {
       topLeaderboardCache.expiresAt = Date.now() + TOP_CACHE_TTL_MS;
     }
     res.setHeader('X-Leaderboard-Cache', 'miss');
-    res.setHeader('X-Leaderboard-Cache-Hits', String(topLeaderboardCache.hits));
-    res.setHeader('X-Leaderboard-Cache-Misses', String(topLeaderboardCache.misses));
+    res.setHeader('X-Leaderboard-Cache-Hits', String(stats.hits));
+    res.setHeader('X-Leaderboard-Cache-Misses', String(stats.misses));
     res.json(responsePayload);
 
   } catch (error) {
@@ -626,6 +625,11 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     if (coins.gold > 0 || coins.silver > 0) {
       await recordCoinReward(walletLower, 'ride', { gold: coins.gold, silver: coins.silver }, { requestId: req.requestId });
     }
+
+    await invalidateLeaderboardCache([
+      LEADERBOARD_CACHE_KEYS.anonymousTop,
+      LEADERBOARD_CACHE_KEYS.personalizedTop(walletLower)
+    ]);
 
     // Grant referral rewards on first valid run (non-blocking, errors logged internally)
     try {
