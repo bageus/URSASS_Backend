@@ -71,6 +71,27 @@ async function resolveShareContextByWallet(wallet) {
   };
 }
 
+async function loadShareContextByWallet(req, res, next) {
+  try {
+    const wallet = parseWalletOrNull(req.params.wallet);
+    if (!wallet) {
+      return res.status(400).json(buildInvalidWalletError());
+    }
+
+    const shareContext = await resolveShareContextByWallet(wallet);
+    if (!shareContext) {
+      return res.status(404).json({ error: 'Player not found' });
+    }
+
+    req.shareWallet = wallet;
+    req.shareContext = shareContext;
+    return next();
+  } catch (error) {
+    logger.error({ err: error.message, requestId: req.requestId }, 'loadShareContextByWallet middleware error');
+    return res.status(500).json({ error: 'Server error', requestId: req.requestId });
+  }
+}
+
 function buildSharePostText(score, referralLink = '') {
   const normalizedScore = Math.max(0, Math.floor(Number(score || 0)));
   const main = SHARE_COPY_TEMPLATE.replace('{score}', normalizedScore);
@@ -731,17 +752,10 @@ router.post('/game-over-preview', readLimiter, async (req, res) => {
   }
 });
 
-router.get('/share/payload/:wallet', readLimiter, async (req, res) => {
+router.get('/share/payload/:wallet', readLimiter, loadShareContextByWallet, async (req, res) => {
   try {
-    const wallet = parseWalletOrNull(req.params.wallet);
-    if (!wallet) {
-      return res.status(400).json(buildInvalidWalletError());
-    }
-
-    const shareContext = await resolveShareContextByWallet(wallet);
-    if (!shareContext) {
-      return res.status(404).json({ error: 'Player not found' });
-    }
+    const wallet = req.shareWallet;
+    const shareContext = req.shareContext;
 
     const baseUrl = getPublicBaseUrl(req);
     const shareUrl = `${baseUrl}/api/leaderboard/share/page/${wallet}`;
@@ -764,17 +778,9 @@ router.get('/share/payload/:wallet', readLimiter, async (req, res) => {
   }
 });
 
-router.get('/share/image/:wallet.svg', readLimiter, async (req, res) => {
+router.get('/share/image/:wallet.svg', readLimiter, loadShareContextByWallet, async (req, res) => {
   try {
-    const wallet = parseWalletOrNull(req.params.wallet);
-    if (!wallet) {
-      return res.status(400).json({ error: 'Invalid wallet format.' });
-    }
-
-    const shareContext = await resolveShareContextByWallet(wallet);
-    if (!shareContext) {
-      return res.status(404).json({ error: 'Player not found' });
-    }
+    const shareContext = req.shareContext;
 
     const score = shareContext.scoreForShare;
     const externalBackground = (process.env.SHARE_CARD_BACKGROUND_URL || '').trim();
@@ -813,17 +819,9 @@ router.get('/share/image/:wallet.svg', readLimiter, async (req, res) => {
   }
 });
 
-router.get('/share/image/:wallet.png', readLimiter, async (req, res) => {
+router.get('/share/image/:wallet.png', readLimiter, loadShareContextByWallet, async (req, res) => {
   try {
-    const wallet = parseWalletOrNull(req.params.wallet);
-    if (!wallet) {
-      return res.status(400).json({ error: 'Invalid wallet format.' });
-    }
-
-    const shareContext = await resolveShareContextByWallet(wallet);
-    if (!shareContext) {
-      return res.status(404).json({ error: 'Player not found' });
-    }
+    const shareContext = req.shareContext;
 
     const score = shareContext.scoreForShare;
     const pngBuffer = await renderScoreSharePng(score);
