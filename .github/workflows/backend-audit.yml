@@ -41,6 +41,12 @@ jobs:
             exit 1
           fi
 
+
+      - name: Rollout gates policy check (dry-run)
+        run: node scripts/check-rollout-gates.js
+
+      - name: Telemetry alias usage gate (dry-run)
+        run: node scripts/evaluate-telemetry-alias-usage.js
       - name: Upload audit report
         if: always()
         uses: actions/upload-artifact@v4
