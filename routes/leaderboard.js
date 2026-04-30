@@ -27,6 +27,8 @@ const { recordCoinReward } = require('../utils/coinHistory');
 
 const SHARE_COPY_TEMPLATE = 'I scored {score} in Ursass Tube 🐻\nCan you beat me?';
 const SHARE_HASHTAGS = '#UrsassTube #Ursas #Ursasplanet #GameChallenge #HighScore';
+const TOP_CACHE_TTL_MS = Math.max(1_000, Number(process.env.LEADERBOARD_TOP_CACHE_TTL_MS || 30_000));
+const topLeaderboardCache = { value: null, expiresAt: 0, hits: 0, misses: 0 };
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -190,6 +192,15 @@ router.get('/top', readLimiter, async (req, res) => {
       });
     }
 
+    if (!wallet && topLeaderboardCache.value && topLeaderboardCache.expiresAt > Date.now()) {
+      topLeaderboardCache.hits += 1;
+      res.setHeader('X-Leaderboard-Cache', 'hit');
+      res.setHeader('X-Leaderboard-Cache-Hits', String(topLeaderboardCache.hits));
+      res.setHeader('X-Leaderboard-Cache-Misses', String(topLeaderboardCache.misses));
+      return res.json(topLeaderboardCache.value);
+    }
+    topLeaderboardCache.misses += 1;
+
     const topPlayers = await Player.find({ bestScore: { $gt: 0 } })
       .sort({ bestScore: -1 })
       .limit(10)
@@ -260,7 +271,7 @@ router.get('/top', readLimiter, async (req, res) => {
       ? await computePlayerInsights({ wallet, player: playerRecord })
       : null;
 
-    res.json({
+    const responsePayload = {
       leaderboard: topPlayers.map((player, index) => (
         buildLeaderboardEntry(
           player,
@@ -275,7 +286,15 @@ router.get('/top', readLimiter, async (req, res) => {
       )),
       playerPosition,
       ...(insights ? { playerInsights: insights } : {})
-    });
+    };
+    if (!wallet) {
+      topLeaderboardCache.value = responsePayload;
+      topLeaderboardCache.expiresAt = Date.now() + TOP_CACHE_TTL_MS;
+    }
+    res.setHeader('X-Leaderboard-Cache', 'miss');
+    res.setHeader('X-Leaderboard-Cache-Hits', String(topLeaderboardCache.hits));
+    res.setHeader('X-Leaderboard-Cache-Misses', String(topLeaderboardCache.misses));
+    res.json(responsePayload);
 
   } catch (error) {
     logger.error({ err: error.message, requestId: req.requestId }, 'GET /top error');

@@ -88,7 +88,7 @@ Current test run shows multiple failures around `POST /api/store/donations/creat
 ### P1 progress tracking (updated 2026-04-30)
 - [x] Extracted `loadShareContextByWallet` middleware and applied it to JSON/image share endpoints.
 - [ ] Apply middleware/variant to HTML share page path while preserving text/html error contract.
-- [ ] Add top leaderboard response cache with TTL and metrics counters.
+- [x] Added in-memory top leaderboard response cache (TTL + hit/miss headers/counters) for anonymous `/api/leaderboard/top` requests.
 - [ ] Add strict timeout budgets for Telegram Stars integration tests.
 
 ### P2 (ongoing)
