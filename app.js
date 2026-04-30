@@ -12,7 +12,26 @@ const referralRoutes = require('./routes/referral');
 const shareRoutes = require('./routes/share');
 const xRoutes = require('./routes/x');
 const logger = require('./utils/logger');
-const { metricsMiddleware, renderMetricsText } = require('./middleware/requestMetrics');
+const { metricsMiddleware, markAliasRouteUsage, renderMetricsText } = require('./middleware/requestMetrics');
+
+const ROUTE_REGISTRY = [
+  { path: '/leaderboard', router: leaderboardRoutes },
+  { path: '/store', router: storeRoutes },
+  { path: '/account', router: accountRoutes },
+  { path: '/game', router: gameRoutes },
+  { path: '', router: donationsRoutes },
+  { path: '/analytics', router: analyticsRoutes },
+  { path: '/telemetry', router: analyticsRoutes },
+  { path: '/referral', router: referralRoutes },
+  { path: '/share', router: shareRoutes },
+  { path: '/x', router: xRoutes }
+];
+
+function mountApiRoutes(app, basePrefix) {
+  for (const { path, router } of ROUTE_REGISTRY) {
+    app.use(`${basePrefix}${path}`, router);
+  }
+}
 
 const ROUTE_REGISTRY = [
   { path: '/leaderboard', router: leaderboardRoutes },
@@ -109,6 +128,18 @@ function createApp() {
 
     if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
       res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
+
+    next();
+  });
+
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api/telemetry') || req.path.startsWith('/api/v1/telemetry')) {
+      markAliasRouteUsage('telemetry');
+    }
+
+    if (req.path.startsWith('/api/analytics') || req.path.startsWith('/api/v1/analytics')) {
+      markAliasRouteUsage('analytics');
     }
 
     next();
