@@ -94,6 +94,27 @@ async function loadShareContextByWallet(req, res, next) {
   }
 }
 
+async function loadSharePageContextByWallet(req, res, next) {
+  try {
+    const wallet = parseWalletOrNull(req.params.wallet);
+    if (!wallet) {
+      return res.status(400).send('Invalid wallet');
+    }
+
+    const shareContext = await resolveShareContextByWallet(wallet);
+    if (!shareContext) {
+      return res.status(404).send('Player not found');
+    }
+
+    req.shareWallet = wallet;
+    req.shareContext = shareContext;
+    return next();
+  } catch (error) {
+    logger.error({ err: error.message, requestId: req.requestId }, 'loadSharePageContextByWallet middleware error');
+    return res.status(500).send('Server error');
+  }
+}
+
 function buildSharePostText(score, referralLink = '') {
   const normalizedScore = Math.max(0, Math.floor(Number(score || 0)));
   const main = SHARE_COPY_TEMPLATE.replace('{score}', normalizedScore);
@@ -857,17 +878,10 @@ router.get('/share/image/:wallet.png', readLimiter, loadShareContextByWallet, as
   }
 });
 
-router.get('/share/page/:wallet', readLimiter, async (req, res) => {
+router.get('/share/page/:wallet', readLimiter, loadSharePageContextByWallet, async (req, res) => {
   try {
-    const wallet = parseWalletOrNull(req.params.wallet);
-    if (!wallet) {
-      return res.status(400).send('Invalid wallet');
-    }
-
-    const shareContext = await resolveShareContextByWallet(wallet);
-    if (!shareContext) {
-      return res.status(404).send('Player not found');
-    }
+    const wallet = req.shareWallet;
+    const shareContext = req.shareContext;
 
     const baseUrl = getPublicBaseUrl(req);
     const score = shareContext.scoreForShare;
