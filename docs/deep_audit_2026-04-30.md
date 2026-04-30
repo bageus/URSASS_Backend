@@ -73,6 +73,13 @@ Current test run shows multiple failures around `POST /api/store/donations/creat
 2. Introduce shared error factory for 400 wallet responses.
 3. Fix donations create-payment regression and unflake tests.
 
+### P0 progress tracking (updated 2026-04-30)
+- [x] Shared helper added in `utils/security.js` (`isValidWalletAddress`, `parseWalletOrNull`) and used across `/api/leaderboard/top`, `/api/leaderboard/share/*`, `/api/leaderboard/insights`.
+- [x] Donations create-payment regression fixed for test harness compatibility (`findOne` chain/no-chain support) and failing donation integration cluster restored to green in targeted run.
+- [x] Wallet format pre-validation added to `/api/account/auth/wallet` to fail fast before signature verification.
+- [ ] Extend shared wallet parser usage to remaining wallet-sensitive routes in `routes/store.js`.
+- [ ] Introduce a single shared 400 wallet-error response factory to remove message drift.
+
 ### P1 (2-4 days)
 1. Extract `loadShareContextByWallet` middleware.
 2. Add top leaderboard response cache with TTL and observability counters.
