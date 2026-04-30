@@ -1,6 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+const originalNodeEnv = process.env.NODE_ENV;
+process.env.NODE_ENV = 'test';
+
 const Player = require('../models/Player');
 const AccountLink = require('../models/AccountLink');
 const PlayerRun = require('../models/PlayerRun');
@@ -178,4 +181,8 @@ test('GET /api/leaderboard/top - player with leaderboardDisplay:nickname shows n
   } finally {
     server.close();
   }
+});
+
+process.on('exit', () => {
+  process.env.NODE_ENV = originalNodeEnv;
 });

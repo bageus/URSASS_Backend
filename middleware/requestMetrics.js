@@ -8,6 +8,10 @@ const state = {
     stored: 0,
     failed: 0
   },
+  aliasRouteUsage: {
+    analytics: 0,
+    telemetry: 0
+  },
   durationBuckets: {
     le_50: 0,
     le_100: 0,
@@ -76,6 +80,14 @@ function markSuspicious(type = 'generic') {
   state.suspiciousEvents[type] = (state.suspiciousEvents[type] || 0) + 1;
 }
 
+
+function markAliasRouteUsage(aliasType) {
+  if (!aliasType || !Object.prototype.hasOwnProperty.call(state.aliasRouteUsage, aliasType)) {
+    return;
+  }
+  state.aliasRouteUsage[aliasType] += 1;
+}
+
 function markAnalyticsIngest({ accepted = 0, invalid = 0, stored = 0, failed = 0 } = {}) {
   state.analyticsIngest.accepted += Math.max(0, Number(accepted) || 0);
   state.analyticsIngest.invalid += Math.max(0, Number(invalid) || 0);
@@ -109,6 +121,11 @@ async function renderMetricsText() {
     lines.push(`app_analytics_ingest_total{status="${type}"} ${count}`);
   }
 
+  lines.push('# TYPE app_alias_route_usage_total counter');
+  for (const [aliasType, count] of Object.entries(state.aliasRouteUsage)) {
+    lines.push(`app_alias_route_usage_total{alias="${aliasType}"} ${count}`);
+  }
+
   lines.push('# TYPE app_suspicious_events_total counter');
   for (const [type, count] of Object.entries(state.suspiciousEvents)) {
     const safeType = type.replace(/"/g, '\\"');
@@ -122,5 +139,6 @@ module.exports = {
   metricsMiddleware,
   markSuspicious,
   markAnalyticsIngest,
+  markAliasRouteUsage,
   renderMetricsText
 };
