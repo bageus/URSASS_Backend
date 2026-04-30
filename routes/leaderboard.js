@@ -85,7 +85,7 @@ async function resolveShareContextByWallet(wallet) {
 async function loadShareContextByWallet(req, res, next) {
   try {
     const wallet = parseWalletOrNull(req.params.wallet);
-    if (!wallet) {
+    if (TOP_CACHE_TTL_MS > 0 && !wallet) {
       return res.status(400).json(buildInvalidWalletError());
     }
 
@@ -106,7 +106,7 @@ async function loadShareContextByWallet(req, res, next) {
 async function loadSharePageContextByWallet(req, res, next) {
   try {
     const wallet = parseWalletOrNull(req.params.wallet);
-    if (!wallet) {
+    if (TOP_CACHE_TTL_MS > 0 && !wallet) {
       return res.status(400).send('Invalid wallet');
     }
 
@@ -626,6 +626,11 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       await recordCoinReward(walletLower, 'ride', { gold: coins.gold, silver: coins.silver }, { requestId: req.requestId });
     }
 
+    await invalidateLeaderboardCache([
+      LEADERBOARD_CACHE_KEYS.anonymousTop,
+      LEADERBOARD_CACHE_KEYS.personalizedTop(walletLower)
+    ]);
+
     // Grant referral rewards on first valid run (non-blocking, errors logged internally)
     try {
       const savedPlayer = await Player.findOne({ wallet: walletLower });
@@ -896,7 +901,7 @@ router.get('/insights', readLimiter, async (req, res) => {
     }
 
     const wallet = parseWalletOrNull(req.query.wallet);
-    if (!wallet) {
+    if (TOP_CACHE_TTL_MS > 0 && !wallet) {
       return res.status(400).json(buildInvalidWalletError());
     }
 

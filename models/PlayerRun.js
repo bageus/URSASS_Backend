@@ -71,6 +71,69 @@ playerRunSchema.index({ wallet: 1, createdAt: -1 });
 playerRunSchema.index({ isFirstRun: 1, score: -1 });
 playerRunSchema.index({ isFirstRun: 1, distance: -1 });
 playerRunSchema.index({ isFirstRun: 1, goldCoins: -1, silverCoins: -1 });
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, score: -1 });
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, distance: -1 });
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, goldCoins: -1 });
+
+// percentile queries in leaderboardInsightsService filter by
+// { verified: true, isValid: true, isFirstRun: true } + field.
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, score: -1 });
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, distance: -1 });
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, goldCoins: -1 });
+
+// percentile queries in leaderboardInsightsService filter by
+// { verified: true, isValid: true, isFirstRun: true } + field.
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, score: -1 });
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, distance: -1 });
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, goldCoins: -1 });
+
+// percentile queries in leaderboardInsightsService filter by
+// { verified: true, isValid: true, isFirstRun: true } + field.
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, score: -1 });
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, distance: -1 });
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, goldCoins: -1 });
+
+// percentile queries in leaderboardInsightsService filter by
+// { verified: true, isValid: true, isFirstRun: true } + field.
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, score: -1 });
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, distance: -1 });
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, goldCoins: -1 });
+
+// percentile queries in leaderboardInsightsService filter by
+// { verified: true, isValid: true, isFirstRun: true } + field.
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, score: -1 });
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, distance: -1 });
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, goldCoins: -1 });
+
+// percentile queries in leaderboardInsightsService filter by
+// { verified: true, isValid: true, isFirstRun: true } + field.
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, score: -1 });
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, distance: -1 });
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, goldCoins: -1 });
+
+// percentile queries in leaderboardInsightsService filter by
+// { verified: true, isValid: true, isFirstRun: true } + field.
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, score: -1 });
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, distance: -1 });
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, goldCoins: -1 });
+
+// percentile queries in leaderboardInsightsService filter by
+// { verified: true, isValid: true, isFirstRun: true } + field.
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, score: -1 });
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, distance: -1 });
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, goldCoins: -1 });
+
+// percentile queries in leaderboardInsightsService filter by
+// { verified: true, isValid: true, isFirstRun: true } + field.
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, score: -1 });
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, distance: -1 });
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, goldCoins: -1 });
+
+// percentile queries in leaderboardInsightsService filter by
+// { verified: true, isValid: true, isFirstRun: true } + field.
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, score: -1 });
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, distance: -1 });
+playerRunSchema.index({ verified: 1, isValid: 1, isFirstRun: 1, goldCoins: -1 });
 
 // percentile queries in leaderboardInsightsService filter by
 // { verified: true, isValid: true, isFirstRun: true } + field.
