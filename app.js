@@ -15,6 +15,7 @@ const shareRoutes = require('./routes/share');
 const xRoutes = require('./routes/x');
 const logger = require('./utils/logger');
 const { metricsMiddleware, markAliasRouteUsage, renderMetricsText } = require('./middleware/requestMetrics');
+const { renderScoreSharePng } = require('./utils/shareCard');
 
 function getRouteRegistry() {
   return [
@@ -143,7 +144,30 @@ function createApp() {
 
       const targetPath = path.join(process.cwd(), 'tmp', fileName);
       if (!fs.existsSync(targetPath)) {
-        return res.status(404).json({ error: 'file_not_found' });
+        const match = /^share-preview-(\d+)\.png$/.exec(fileName);
+        if (!match) {
+          return res.status(404).json({ error: 'file_not_found' });
+        }
+
+        const score = Number(match[1]);
+        renderScoreSharePng(score)
+          .then((buffer) => {
+            fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+            fs.writeFileSync(targetPath, buffer);
+            return res.sendFile(targetPath, {
+              headers: {
+                'Cache-Control': 'no-store'
+              }
+            });
+          })
+          .catch((err) => {
+            if (err?.code === 'share_png_unavailable') {
+              return res.status(503).json({ error: 'share_png_unavailable' });
+            }
+            logger.error({ err: err.message, fileName }, 'Share preview auto-generation failed');
+            return res.status(500).json({ error: 'share_preview_generation_failed' });
+          });
+        return;
       }
 
       return res.sendFile(targetPath, {
