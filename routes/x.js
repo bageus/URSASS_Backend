@@ -27,6 +27,13 @@ const FRONTEND_BASE_URL = () => (process.env.FRONTEND_BASE_URL || 'https://ursas
 // Minimum primaryId length to show partial chars instead of fully redacting
 const MIN_ID_LENGTH_FOR_MASKING = 6;
 
+function maskedPrimaryId(primaryId) {
+  if (!primaryId || typeof primaryId !== 'string') return '***';
+  return primaryId.length > MIN_ID_LENGTH_FOR_MASKING
+    ? `${primaryId.slice(0, 3)}***${primaryId.slice(-3)}`
+    : '***';
+}
+
 function getClientIp(req) {
   const xff = req.get('x-forwarded-for');
   if (xff && typeof xff === 'string') {
@@ -141,7 +148,7 @@ router.get('/oauth/start', oauthStartLimiter, requireXOAuth, async (req, res) =>
     }
 
     const primaryId = link.primaryId;
-    const maskedId = primaryId.length > MIN_ID_LENGTH_FOR_MASKING ? `${primaryId.slice(0, 3)}***${primaryId.slice(-3)}` : '***';
+    const maskedId = maskedPrimaryId(primaryId);
     logger.info({ primaryId: maskedId, mode: req.query.mode || 'redirect' }, 'GET /x/oauth/start');
 
     const state = crypto.randomBytes(32).toString('hex');
@@ -384,9 +391,13 @@ router.post('/share-result', shareResultLimiter, requireXOAuth, async (req, res)
     let tweet;
     try {
       const mediaId = await xOAuth.uploadMedia(tokenToUse, shareImageBuffer);
+      if (!mediaId) {
+        logger.warn({ primaryId: maskedPrimaryId(primaryId) }, 'X media upload returned empty media id');
+        return res.status(502).json({ error: 'x_media_upload_failed' });
+      }
       tweet = await xOAuth.createTweet(tokenToUse, {
         text: tweetText,
-        media: mediaId ? { media_ids: [mediaId] } : undefined
+        media: { media_ids: [mediaId] }
       });
     } catch (err) {
       if (err?.response?.status !== 401 || !player.xRefreshToken) {
@@ -402,9 +413,13 @@ router.post('/share-result', shareResultLimiter, requireXOAuth, async (req, res)
       await player.save();
 
       const mediaId = await xOAuth.uploadMedia(tokenToUse, shareImageBuffer);
+      if (!mediaId) {
+        logger.warn({ primaryId: maskedPrimaryId(primaryId) }, 'X media upload returned empty media id');
+        return res.status(502).json({ error: 'x_media_upload_failed' });
+      }
       tweet = await xOAuth.createTweet(tokenToUse, {
         text: tweetText,
-        media: mediaId ? { media_ids: [mediaId] } : undefined
+        media: { media_ids: [mediaId] }
       });
     }
 
