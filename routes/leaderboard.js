@@ -69,9 +69,8 @@ async function resolveShareContextByWallet(wallet) {
   const personalBestScore = Math.max(0, Number(player.bestScore || 0));
   const latestRunScore = latestRun ? Math.max(0, Number(latestRun.score || 0)) : 0;
   const isLatestRunPersonalBest = Boolean(latestRun?.isPersonalBest && latestRunScore > 0);
-  const scoreForShare = isLatestRunPersonalBest
-    ? latestRunScore
-    : Math.max(personalBestScore, latestRunScore);
+  // Share banner must always use persisted player's best score.
+  const scoreForShare = personalBestScore;
 
   return {
     wallet: player.wallet,
