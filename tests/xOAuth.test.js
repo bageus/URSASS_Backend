@@ -578,3 +578,39 @@ test('POST /api/x/share-result - refreshes access token on 401 and retries', asy
     server.close();
   }
 });
+
+test('POST /api/x/share-result - returns 502 when media upload has no media_id', async () => {
+  setXOAuthEnv();
+  const { server, baseUrl } = await startServer();
+  const origCreateTweet = xOAuthModule.createTweet;
+  const origUploadMedia = xOAuthModule.uploadMedia;
+  try {
+    const link = { primaryId: 'tg_x12', telegramId: '12', wallet: null };
+    AccountLink.findOne = async () => link;
+
+    const player = makePlayer({
+      wallet: 'tg_x12',
+      bestScore: 654,
+      xUserId: 'x_user_12',
+      xUsername: 'no_media_user',
+      xAccessToken: 'token_12',
+      xRefreshToken: 'refresh_12'
+    });
+
+    Player.findOne = () => chainableQuery({ ...player, save: async function() { return this; } });
+
+    xOAuthModule.uploadMedia = async () => '';
+    xOAuthModule.createTweet = async () => {
+      throw new Error('createTweet should not be called without media id');
+    };
+
+    const r = await post(baseUrl, '/api/x/share-result', {}, { 'X-Primary-Id': 'tg_x12' });
+    assert.equal(r.status, 502);
+    assert.equal(r.body.error, 'x_media_upload_failed');
+  } finally {
+    xOAuthModule.createTweet = origCreateTweet;
+    xOAuthModule.uploadMedia = origUploadMedia;
+    clearXOAuthEnv();
+    server.close();
+  }
+});
