@@ -15,21 +15,22 @@ const SCORE_TEMPLATE_PATH = path.join(__dirname, '..', 'img', 'score_result.png'
 
 const SCORE_LAYOUT = {
   canvas: { width: 2048, height: 2048 },
-  box: { x: 80, y: 610, width: 1050, height: 390 },
+  box: { x: 130, y: 700, width: 1760, height: 430 },
   fontFamily: 'Anton, Impact, Arial Black, sans-serif',
   fontWeight: 900,
-  fontSizeDefault: 330,
-  fontSizeMin: 200,
-  fontSizeMax: 390,
+  fontSizeDefault: 360,
+  fontSizeMin: 180,
+  fontSizeMax: 430,
   skewX: -6,
-  fill: '#FFFFFF',
-  strokeColor: '#E7E2FF',
+  fill: 'url(#scoreGradient)',
+  strokeColor: '#EDE8FF',
   strokeWidth: 2,
-  shadowColor: '#6A4CFF',
-  shadowBlur: 28,
+  shadowColor: '#5B35F0',
+  shadowBlur: 20,
   shadowOffsetX: 0,
   shadowOffsetY: 8,
-  maxWidth: 1030
+  maxWidth: 1700,
+  gradient: { start: '#FFFFFF', end: '#BFA6FF' }
 };
 
 function clamp(value, min, max) {
@@ -37,8 +38,12 @@ function clamp(value, min, max) {
 }
 
 function estimateTextWidth(text, fontSize) {
-  // Visual approximation for condensed heavy fonts (Anton/Impact)
-  return text.length * fontSize * 0.62;
+  // Approximation for heavy condensed fonts and digits.
+  return text.length * fontSize * 0.66;
+}
+
+function buildSkewAroundPoint(cx, cy, skewX) {
+  return `translate(${cx} ${cy}) skewX(${skewX}) translate(${-cx} ${-cy})`;
 }
 
 async function renderScoreSharePng(score) {
@@ -74,8 +79,8 @@ async function renderScoreSharePng(score) {
     : defaultSize;
   const fontSize = clamp(sizeAdjusted, minSize, maxSize);
 
-  const textX = box.x;
-  const textY = box.y + (box.height / 2);
+  const textX = Math.round(box.x + (box.width / 2));
+  const textY = Math.round(box.y + (box.height / 2));
   const strokeWidth = Math.max(1, Math.round(SCORE_LAYOUT.strokeWidth * ((scaleX + scaleY) / 2)));
   const shadowBlur = Math.max(2, Math.round(SCORE_LAYOUT.shadowBlur * ((scaleX + scaleY) / 2)));
   const shadowOffsetX = Math.round(SCORE_LAYOUT.shadowOffsetX * scaleX);
@@ -84,6 +89,10 @@ async function renderScoreSharePng(score) {
   const svgOverlay = Buffer.from(
     `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">` +
     `<defs>` +
+    `<linearGradient id="scoreGradient" x1="0%" y1="0%" x2="0%" y2="100%">` +
+    `<stop offset="0%" stop-color="${SCORE_LAYOUT.gradient.start}"/>` +
+    `<stop offset="100%" stop-color="${SCORE_LAYOUT.gradient.end}"/>` +
+    `</linearGradient>` +
     `<filter id="scoreGlow" x="-30%" y="-30%" width="160%" height="160%">` +
     `<feDropShadow dx="${shadowOffsetX}" dy="${shadowOffsetY}" stdDeviation="${shadowBlur / 2}" flood-color="${SCORE_LAYOUT.shadowColor}" flood-opacity="0.95"/>` +
     `</filter>` +
@@ -98,9 +107,8 @@ async function renderScoreSharePng(score) {
     ` paint-order="stroke fill"` +
     ` filter="url(#scoreGlow)"` +
     ` dominant-baseline="middle"` +
-    ` text-anchor="start"` +
-    ` transform="skewX(${SCORE_LAYOUT.skewX})"` +
-    ` textLength="${maxWidth}" lengthAdjust="spacingAndGlyphs">` +
+    ` text-anchor="middle"` +
+    ` transform="${buildSkewAroundPoint(textX, textY, SCORE_LAYOUT.skewX)}">` +
     `${escapeXml(scoreText)}</text>` +
     `</svg>`
   );
