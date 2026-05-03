@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const leaderboardRoutes = require('./routes/leaderboard');
 const storeRoutes = require('./routes/store');
 const accountRoutes = require('./routes/account');
@@ -129,6 +131,28 @@ function createApp() {
   });
 
   app.use(express.json({ limit: '1mb' }));
+
+
+  const enableSharePreviewPublic = String(process.env.ENABLE_SHARE_PREVIEW_PUBLIC || '').toLowerCase() === 'true';
+  if (enableSharePreviewPublic) {
+    app.get('/api/debug/share-preview/:fileName', (req, res) => {
+      const fileName = String(req.params.fileName || '').trim();
+      if (!/^[a-zA-Z0-9._-]+\.png$/.test(fileName)) {
+        return res.status(400).json({ error: 'invalid_file_name' });
+      }
+
+      const targetPath = path.join(process.cwd(), 'tmp', fileName);
+      if (!fs.existsSync(targetPath)) {
+        return res.status(404).json({ error: 'file_not_found' });
+      }
+
+      return res.sendFile(targetPath, {
+        headers: {
+          'Cache-Control': 'no-store'
+        }
+      });
+    });
+  }
   app.use(metricsMiddleware);
 
   mountApiRoutes(app, '/api');
