@@ -112,8 +112,11 @@ router.post('/start', shareStartLimiter, async (req, res) => {
       : '';
 
     const postText = buildSharePostText(scoreAtShare, referralUrl);
-    const intentUrl = walletAddress
-      ? `https://twitter.com/intent/tweet?text=${encodeURIComponent(postText)}&url=${encodeURIComponent(shareUrl)}`
+    // For share-result UX we pass image URL directly into tweet intent URL,
+    // so X composes a post with the generated score image as preview media.
+    const intentTargetUrl = imageUrl || shareUrl;
+    const intentUrl = intentTargetUrl
+      ? `https://twitter.com/intent/tweet?text=${encodeURIComponent(postText)}&url=${encodeURIComponent(intentTargetUrl)}`
       : `https://twitter.com/intent/tweet?text=${encodeURIComponent(postText)}`;
 
     if (!canShareToday) {
@@ -123,6 +126,7 @@ router.post('/start', shareStartLimiter, async (req, res) => {
         shareUrl: referralUrl,
         postText,
         imageUrl,
+        postImageUrl: imageUrl,
         previewUrl: shareUrl || null,
         intentUrl,
         eligibleForReward: false,
@@ -150,6 +154,7 @@ router.post('/start', shareStartLimiter, async (req, res) => {
       postText,
       referralUrl,
       imageUrl,
+      postImageUrl: imageUrl,
       previewUrl: shareUrl || null,
       intentUrl,
       eligibleForReward: true,
