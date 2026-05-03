@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const leaderboardRoutes = require('./routes/leaderboard');
 const storeRoutes = require('./routes/store');
 const accountRoutes = require('./routes/account');
@@ -13,6 +15,7 @@ const shareRoutes = require('./routes/share');
 const xRoutes = require('./routes/x');
 const logger = require('./utils/logger');
 const { metricsMiddleware, markAliasRouteUsage, renderMetricsText } = require('./middleware/requestMetrics');
+const { renderScoreSharePng } = require('./utils/shareCard');
 
 function getRouteRegistry() {
   return [
@@ -129,6 +132,51 @@ function createApp() {
   });
 
   app.use(express.json({ limit: '1mb' }));
+
+
+  const enableSharePreviewPublic = String(process.env.ENABLE_SHARE_PREVIEW_PUBLIC || '').toLowerCase() === 'true';
+  if (enableSharePreviewPublic) {
+    app.get('/api/debug/share-preview/:fileName', (req, res) => {
+      const fileName = String(req.params.fileName || '').trim();
+      if (!/^[a-zA-Z0-9._-]+\.png$/.test(fileName)) {
+        return res.status(400).json({ error: 'invalid_file_name' });
+      }
+
+      const targetPath = path.join(process.cwd(), 'tmp', fileName);
+      if (!fs.existsSync(targetPath)) {
+        const match = /^share-preview-(\d+)\.png$/.exec(fileName);
+        if (!match) {
+          return res.status(404).json({ error: 'file_not_found' });
+        }
+
+        const score = Number(match[1]);
+        renderScoreSharePng(score)
+          .then((buffer) => {
+            fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+            fs.writeFileSync(targetPath, buffer);
+            return res.sendFile(targetPath, {
+              headers: {
+                'Cache-Control': 'no-store'
+              }
+            });
+          })
+          .catch((err) => {
+            if (err?.code === 'share_png_unavailable') {
+              return res.status(503).json({ error: 'share_png_unavailable' });
+            }
+            logger.error({ err: err.message, fileName }, 'Share preview auto-generation failed');
+            return res.status(500).json({ error: 'share_preview_generation_failed' });
+          });
+        return;
+      }
+
+      return res.sendFile(targetPath, {
+        headers: {
+          'Cache-Control': 'no-store'
+        }
+      });
+    });
+  }
   app.use(metricsMiddleware);
 
   mountApiRoutes(app, '/api');
