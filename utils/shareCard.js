@@ -42,6 +42,10 @@ function estimateTextWidth(text, fontSize) {
   return text.length * fontSize * 0.66;
 }
 
+function buildSkewAroundPoint(cx, cy, skewX) {
+  return `translate(${cx} ${cy}) skewX(${skewX}) translate(${-cx} ${-cy})`;
+}
+
 async function renderScoreSharePng(score) {
   if (!sharp) {
     const err = new Error('PNG rendering unavailable');
@@ -75,8 +79,8 @@ async function renderScoreSharePng(score) {
     : defaultSize;
   const fontSize = clamp(sizeAdjusted, minSize, maxSize);
 
-  const textX = box.x + (box.width / 2);
-  const textY = box.y + (box.height / 2);
+  const textX = Math.round(box.x + (box.width / 2));
+  const textY = Math.round(box.y + (box.height / 2));
   const strokeWidth = Math.max(1, Math.round(SCORE_LAYOUT.strokeWidth * ((scaleX + scaleY) / 2)));
   const shadowBlur = Math.max(2, Math.round(SCORE_LAYOUT.shadowBlur * ((scaleX + scaleY) / 2)));
   const shadowOffsetX = Math.round(SCORE_LAYOUT.shadowOffsetX * scaleX);
@@ -104,7 +108,7 @@ async function renderScoreSharePng(score) {
     ` filter="url(#scoreGlow)"` +
     ` dominant-baseline="middle"` +
     ` text-anchor="middle"` +
-    ` transform="skewX(${SCORE_LAYOUT.skewX})">` +
+    ` transform="${buildSkewAroundPoint(textX, textY, SCORE_LAYOUT.skewX)}">` +
     `${escapeXml(scoreText)}</text>` +
     `</svg>`
   );
