@@ -54,6 +54,16 @@ function classifyShareResultError(err) {
   return { statusCode: 502, error: 'x_post_failed', retryable: true, fallback: 'text_intent' };
 }
 
+
+function extractUpstreamError(err) {
+  const status = Number(err?.response?.status || 0) || null;
+  const data = err?.response?.data || null;
+  const detail = typeof data === 'string'
+    ? data.slice(0, 280)
+    : (data?.detail || data?.title || data?.error || data?.message || null);
+  return { upstreamStatus: status, upstreamDetail: detail };
+}
+
 function getClientIp(req) {
   const xff = req.get('x-forwarded-for');
   if (xff && typeof xff === 'string') {
@@ -476,28 +486,9 @@ router.post('/share-result', shareResultLimiter, requireXOAuth, async (req, res)
     }
     const mapped = classifyShareResultError(err);
 
-    if (mapped.error === 'x_media_upload_failed') {
-      try {
-        const textTweet = await xOAuth.createTweet(tokenToUse, { text: tweetText });
-        if (textTweet?.id) {
-          const tweetUrl = player.xUsername
-            ? `https://x.com/${player.xUsername}/status/${textTweet.id}`
-            : `https://x.com/i/web/status/${textTweet.id}`;
-          return res.json({
-            posted: true,
-            fallbackUsed: 'text_only',
-            tweetId: textTweet.id,
-            tweetUrl,
-            text: textTweet.text || tweetText
-          });
-        }
-      } catch (fallbackErr) {
-        logger.error({ err: fallbackErr.message }, 'POST /x/share-result text fallback failed');
-      }
-    }
-
-    logger.error({ err: err.message }, 'POST /x/share-result error');
-    return res.status(mapped.statusCode).json({ error: mapped.error, retryable: mapped.retryable, fallback: mapped.fallback });
+    const upstream = extractUpstreamError(err);
+    logger.error({ err: err.message, ...upstream }, 'POST /x/share-result error');
+    return res.status(mapped.statusCode).json({ error: mapped.error, retryable: mapped.retryable, fallback: mapped.fallback, ...upstream });
   }
 });
 
