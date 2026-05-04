@@ -39,7 +39,7 @@ function getRedirectUri() {
 }
 
 function getScopes() {
-  return process.env.X_OAUTH_SCOPES || 'tweet.read tweet.write users.read offline.access';
+  return process.env.X_OAUTH_SCOPES || 'tweet.read tweet.write users.read offline.access media.write';
 }
 
 /**
