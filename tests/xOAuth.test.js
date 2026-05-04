@@ -725,7 +725,7 @@ test('POST /api/x/share-result - maps 403 insufficient scope to x_auth_expired',
 });
 
 
-test('POST /api/x/share-result - falls back to text post when media upload fails', async () => {
+test('POST /api/x/share-result - returns upstream diagnostics when media upload fails', async () => {
   setXOAuthEnv();
   const { server, baseUrl } = await startServer();
   const origUploadMedia = xOAuthModule.uploadMedia;
@@ -752,10 +752,10 @@ test('POST /api/x/share-result - falls back to text post when media upload fails
     xOAuthModule.createTweet = async (_token, payload) => ({ id: '303030', text: payload.text });
 
     const r = await post(baseUrl, '/api/x/share-result', {}, { 'X-Primary-Id': 'tg_x16' });
-    assert.equal(r.status, 200, JSON.stringify(r.body));
-    assert.equal(r.body.posted, true);
-    assert.equal(r.body.fallbackUsed, 'text_only');
-    assert.equal(r.body.tweetId, '303030');
+    assert.equal(r.status, 502, JSON.stringify(r.body));
+    assert.equal(r.body.error, 'x_media_upload_failed');
+    assert.equal(r.body.upstreamStatus, 400);
+    assert.equal(r.body.upstreamDetail, 'invalid media');
   } finally {
     xOAuthModule.uploadMedia = origUploadMedia;
     xOAuthModule.createTweet = origCreateTweet;
