@@ -112,12 +112,9 @@ router.post('/start', shareStartLimiter, async (req, res) => {
       : '';
 
     const postText = buildSharePostText(scoreAtShare, referralUrl);
-    // For share-result UX we pass image URL directly into tweet intent URL,
-    // so X composes a post with the generated score image as preview media.
-    const intentTargetUrl = imageUrl || shareUrl;
-    const intentUrl = intentTargetUrl
-      ? `https://twitter.com/intent/tweet?text=${encodeURIComponent(postText)}&url=${encodeURIComponent(intentTargetUrl)}`
-      : `https://twitter.com/intent/tweet?text=${encodeURIComponent(postText)}`;
+    // X/Twitter web intent cannot attach uploaded media files.
+    // Real image attachment is done via POST /api/x/share-result (OAuth flow).
+    const intentUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(postText)}`;
 
     if (!canShareToday) {
       return res.json({
@@ -129,6 +126,7 @@ router.post('/start', shareStartLimiter, async (req, res) => {
         postImageUrl: imageUrl,
         previewUrl: shareUrl || null,
         intentUrl,
+        shareResultApiUrl: '/api/x/share-result',
         eligibleForReward: false,
         secondsUntilReward: 0,
         referralUrl
@@ -157,6 +155,7 @@ router.post('/start', shareStartLimiter, async (req, res) => {
       postImageUrl: imageUrl,
       previewUrl: shareUrl || null,
       intentUrl,
+      shareResultApiUrl: '/api/x/share-result',
       eligibleForReward: true,
       secondsUntilReward: Math.ceil(SHARE_REWARD_DELAY_MS / 1000)
     });
