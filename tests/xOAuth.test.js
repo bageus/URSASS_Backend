@@ -763,3 +763,40 @@ test('POST /api/x/share-result - returns upstream diagnostics when media upload 
     server.close();
   }
 });
+
+
+test('POST /api/x/share-result - maps plain 403 to x_auth_expired', async () => {
+  setXOAuthEnv();
+  const { server, baseUrl } = await startServer();
+  const origUploadMedia = xOAuthModule.uploadMedia;
+  try {
+    const link = { primaryId: 'tg_x17', telegramId: '17', wallet: null };
+    AccountLink.findOne = async () => link;
+
+    const player = makePlayer({
+      wallet: 'tg_x17',
+      bestScore: 17,
+      xUserId: 'x_user_17',
+      xAccessToken: 'token_17',
+      xRefreshToken: 'refresh_17'
+    });
+    Player.findOne = () => chainableQuery({ ...player, save: async function() { return this; } });
+
+    xOAuthModule.uploadMedia = async () => {
+      const err = new Error('forbidden');
+      err.response = { status: 403 };
+      throw err;
+    };
+
+    const r = await post(baseUrl, '/api/x/share-result', {}, { 'X-Primary-Id': 'tg_x17' });
+    assert.equal(r.status, 401);
+    assert.equal(r.body.error, 'x_auth_expired');
+    assert.equal(r.body.retryable, false);
+    assert.equal(r.body.fallback, null);
+    assert.equal(r.body.upstreamStatus, 403);
+  } finally {
+    xOAuthModule.uploadMedia = origUploadMedia;
+    clearXOAuthEnv();
+    server.close();
+  }
+});
