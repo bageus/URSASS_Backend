@@ -34,6 +34,21 @@ function maskedPrimaryId(primaryId) {
     : '***';
 }
 
+
+function classifyShareResultError(err) {
+  const status = Number(err?.response?.status || err?.status || 0);
+  if (status === 401) {
+    return { statusCode: 401, error: 'x_auth_expired', retryable: false, fallback: null };
+  }
+  if (status === 429) {
+    return { statusCode: 429, error: 'x_rate_limited', retryable: true, fallback: 'text_intent' };
+  }
+  if ([400, 403, 404, 413, 415, 422].includes(status)) {
+    return { statusCode: 502, error: 'x_media_upload_failed', retryable: true, fallback: 'text_intent' };
+  }
+  return { statusCode: 502, error: 'x_post_failed', retryable: true, fallback: 'text_intent' };
+}
+
 function getClientIp(req) {
   const xff = req.get('x-forwarded-for');
   if (xff && typeof xff === 'string') {
@@ -393,7 +408,7 @@ router.post('/share-result', shareResultLimiter, requireXOAuth, async (req, res)
       const mediaId = await xOAuth.uploadMedia(tokenToUse, shareImageBuffer);
       if (!mediaId) {
         logger.warn({ primaryId: maskedPrimaryId(primaryId) }, 'X media upload returned empty media id');
-        return res.status(502).json({ error: 'x_media_upload_failed' });
+        return res.status(502).json({ error: 'x_media_upload_failed', retryable: true, fallback: 'text_intent' });
       }
       tweet = await xOAuth.createTweet(tokenToUse, {
         text: tweetText,
@@ -415,7 +430,7 @@ router.post('/share-result', shareResultLimiter, requireXOAuth, async (req, res)
       const mediaId = await xOAuth.uploadMedia(tokenToUse, shareImageBuffer);
       if (!mediaId) {
         logger.warn({ primaryId: maskedPrimaryId(primaryId) }, 'X media upload returned empty media id');
-        return res.status(502).json({ error: 'x_media_upload_failed' });
+        return res.status(502).json({ error: 'x_media_upload_failed', retryable: true, fallback: 'text_intent' });
       }
       tweet = await xOAuth.createTweet(tokenToUse, {
         text: tweetText,
@@ -424,7 +439,7 @@ router.post('/share-result', shareResultLimiter, requireXOAuth, async (req, res)
     }
 
     if (!tweet?.id) {
-      return res.status(502).json({ error: 'x_tweet_failed' });
+      return res.status(502).json({ error: 'x_post_failed', retryable: true, fallback: 'text_intent' });
     }
 
     const tweetUrl = player.xUsername
@@ -442,7 +457,8 @@ router.post('/share-result', shareResultLimiter, requireXOAuth, async (req, res)
       return res.status(503).json({ error: 'share_png_unavailable' });
     }
     logger.error({ err: err.message }, 'POST /x/share-result error');
-    return res.status(500).json({ error: 'Server error' });
+    const mapped = classifyShareResultError(err);
+    return res.status(mapped.statusCode).json({ error: mapped.error, retryable: mapped.retryable, fallback: mapped.fallback });
   }
 });
 

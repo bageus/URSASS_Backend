@@ -607,8 +607,81 @@ test('POST /api/x/share-result - returns 502 when media upload has no media_id',
     const r = await post(baseUrl, '/api/x/share-result', {}, { 'X-Primary-Id': 'tg_x12' });
     assert.equal(r.status, 502);
     assert.equal(r.body.error, 'x_media_upload_failed');
+    assert.equal(r.body.retryable, true);
+    assert.equal(r.body.fallback, 'text_intent');
   } finally {
     xOAuthModule.createTweet = origCreateTweet;
+    xOAuthModule.uploadMedia = origUploadMedia;
+    clearXOAuthEnv();
+    server.close();
+  }
+});
+
+
+test('POST /api/x/share-result - maps 429 to x_rate_limited contract', async () => {
+  setXOAuthEnv();
+  const { server, baseUrl } = await startServer();
+  const origUploadMedia = xOAuthModule.uploadMedia;
+  try {
+    const link = { primaryId: 'tg_x13', telegramId: '13', wallet: null };
+    AccountLink.findOne = async () => link;
+
+    const player = makePlayer({
+      wallet: 'tg_x13',
+      bestScore: 88,
+      xUserId: 'x_user_13',
+      xAccessToken: 'token_13',
+      xRefreshToken: 'refresh_13'
+    });
+    Player.findOne = () => chainableQuery({ ...player, save: async function() { return this; } });
+
+    xOAuthModule.uploadMedia = async () => {
+      const err = new Error('rate limited');
+      err.response = { status: 429 };
+      throw err;
+    };
+
+    const r = await post(baseUrl, '/api/x/share-result', {}, { 'X-Primary-Id': 'tg_x13' });
+    assert.equal(r.status, 429);
+    assert.equal(r.body.error, 'x_rate_limited');
+    assert.equal(r.body.retryable, true);
+    assert.equal(r.body.fallback, 'text_intent');
+  } finally {
+    xOAuthModule.uploadMedia = origUploadMedia;
+    clearXOAuthEnv();
+    server.close();
+  }
+});
+
+test('POST /api/x/share-result - maps 401 without refresh token to x_auth_expired', async () => {
+  setXOAuthEnv();
+  const { server, baseUrl } = await startServer();
+  const origUploadMedia = xOAuthModule.uploadMedia;
+  try {
+    const link = { primaryId: 'tg_x14', telegramId: '14', wallet: null };
+    AccountLink.findOne = async () => link;
+
+    const player = makePlayer({
+      wallet: 'tg_x14',
+      bestScore: 42,
+      xUserId: 'x_user_14',
+      xAccessToken: 'expired_14',
+      xRefreshToken: ''
+    });
+    Player.findOne = () => chainableQuery({ ...player, save: async function() { return this; } });
+
+    xOAuthModule.uploadMedia = async () => {
+      const err = new Error('unauthorized');
+      err.response = { status: 401 };
+      throw err;
+    };
+
+    const r = await post(baseUrl, '/api/x/share-result', {}, { 'X-Primary-Id': 'tg_x14' });
+    assert.equal(r.status, 401);
+    assert.equal(r.body.error, 'x_auth_expired');
+    assert.equal(r.body.retryable, false);
+    assert.equal(r.body.fallback, null);
+  } finally {
     xOAuthModule.uploadMedia = origUploadMedia;
     clearXOAuthEnv();
     server.close();
