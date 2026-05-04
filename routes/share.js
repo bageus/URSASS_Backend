@@ -112,9 +112,12 @@ router.post('/start', shareStartLimiter, async (req, res) => {
       : '';
 
     const postText = buildSharePostText(scoreAtShare, referralUrl);
+    const hasConnectedXAccount = Boolean(player.xUserId);
     // X/Twitter web intent cannot attach uploaded media files.
     // Real image attachment is done via POST /api/x/share-result (OAuth flow).
-    const intentUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(postText)}`;
+    const intentUrl = hasConnectedXAccount
+      ? null
+      : `https://twitter.com/intent/tweet?text=${encodeURIComponent(postText)}`;
 
     if (!canShareToday) {
       return res.json({
@@ -127,6 +130,7 @@ router.post('/start', shareStartLimiter, async (req, res) => {
         previewUrl: shareUrl || null,
         intentUrl,
         shareResultApiUrl: '/api/x/share-result',
+        preferredShareFlow: hasConnectedXAccount ? 'x_api' : 'intent',
         eligibleForReward: false,
         secondsUntilReward: 0,
         referralUrl
@@ -156,6 +160,7 @@ router.post('/start', shareStartLimiter, async (req, res) => {
       previewUrl: shareUrl || null,
       intentUrl,
       shareResultApiUrl: '/api/x/share-result',
+      preferredShareFlow: hasConnectedXAccount ? 'x_api' : 'intent',
       eligibleForReward: true,
       secondsUntilReward: Math.ceil(SHARE_REWARD_DELAY_MS / 1000)
     });
