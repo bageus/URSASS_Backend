@@ -11,13 +11,14 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
+const fs = require('fs/promises');
+const path = require('path');
 const rateLimit = require('express-rate-limit');
 const OAuthState = require('../models/OAuthState');
 const Player = require('../models/Player');
 const AccountLink = require('../models/AccountLink');
 const xOAuth = require('../utils/xOAuth');
 const { buildReferralUrl } = require('../utils/referral');
-const { renderScoreSharePng } = require('../utils/shareCard');
 const { logSecurityEvent } = require('../utils/security');
 const logger = require('../utils/logger');
 const { findLink } = require('../middleware/requireAuth');
@@ -32,6 +33,35 @@ function maskedPrimaryId(primaryId) {
   return primaryId.length > MIN_ID_LENGTH_FOR_MASKING
     ? `${primaryId.slice(0, 3)}***${primaryId.slice(-3)}`
     : '***';
+}
+
+
+function classifyShareResultError(err) {
+  const status = Number(err?.response?.status || err?.status || 0);
+  if (status === 401) {
+    return { statusCode: 401, error: 'x_auth_expired', retryable: false, fallback: null };
+  }
+  if (status === 429) {
+    return { statusCode: 429, error: 'x_rate_limited', retryable: true, fallback: 'text_intent' };
+  }
+  const dataStr = JSON.stringify(err?.response?.data || {});
+  if (status === 403 && /media\.write|insufficient|scope/i.test(dataStr)) {
+    return { statusCode: 401, error: 'x_auth_expired', retryable: false, fallback: null };
+  }
+  if ([400, 403, 404, 413, 415, 422].includes(status)) {
+    return { statusCode: 502, error: 'x_media_upload_failed', retryable: true, fallback: 'text_intent' };
+  }
+  return { statusCode: 502, error: 'x_post_failed', retryable: true, fallback: 'text_intent' };
+}
+
+
+function extractUpstreamError(err) {
+  const status = Number(err?.response?.status || 0) || null;
+  const data = err?.response?.data || null;
+  const detail = typeof data === 'string'
+    ? data.slice(0, 280)
+    : (data?.detail || data?.title || data?.error || data?.message || null);
+  return { upstreamStatus: status, upstreamDetail: detail };
 }
 
 function getClientIp(req) {
@@ -97,6 +127,12 @@ function getPublicBaseUrl(req) {
   return `${req.protocol}://${req.get('host')}`;
 }
 
+
+const STATIC_SHARE_IMAGE_PATH = path.join(__dirname, '..', 'img', 'score_result.png');
+
+async function loadStaticShareImagePng() {
+  return fs.readFile(STATIC_SHARE_IMAGE_PATH);
+}
 function buildSharePostText(score, referralUrl) {
   const normalizedScore = Math.max(0, Math.floor(Number(score || 0)));
   const main = SHARE_COPY_TEMPLATE.replace('{score}', normalizedScore);
@@ -260,7 +296,7 @@ router.get('/oauth/callback', oauthCallbackLimiter, requireXOAuth, async (req, r
     }
 
     // Update player record
-    const player = await Player.findOne({ wallet: primaryId }).select('+xAccessToken +xRefreshToken');
+    player = await Player.findOne({ wallet: primaryId }).select('+xAccessToken +xRefreshToken');
     if (!player) {
       await OAuthState.deleteOne({ state: stateStr });
       return res.redirect(302, `${frontendBase}/?x=error&reason=player_not_found`);
@@ -301,7 +337,7 @@ router.post('/disconnect', disconnectLimiter, requireXOAuth, async (req, res) =>
 
     const primaryId = link.primaryId;
 
-    const player = await Player.findOne({ wallet: primaryId }).select('+xAccessToken +xRefreshToken');
+    player = await Player.findOne({ wallet: primaryId }).select('+xAccessToken +xRefreshToken');
     if (!player) {
       return res.status(404).json({ error: 'Player not found' });
     }
@@ -361,6 +397,9 @@ router.get('/status', statusLimiter, requireXOAuth, async (req, res) => {
 // Publish share result as a real post via connected X account.
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/share-result', shareResultLimiter, requireXOAuth, async (req, res) => {
+  let tokenToUse = '';
+  let tweetText = '';
+  let player = null;
   try {
     const link = await resolveAuth(req);
     if (!link) {
@@ -368,7 +407,7 @@ router.post('/share-result', shareResultLimiter, requireXOAuth, async (req, res)
     }
 
     const primaryId = link.primaryId;
-    const player = await Player.findOne({ wallet: primaryId }).select('+xAccessToken +xRefreshToken');
+    player = await Player.findOne({ wallet: primaryId }).select('+xAccessToken +xRefreshToken');
     if (!player) {
       return res.status(404).json({ error: 'Player not found' });
     }
@@ -384,16 +423,18 @@ router.post('/share-result', shareResultLimiter, requireXOAuth, async (req, res)
     const sharePageUrl = walletAddress
       ? `${getPublicBaseUrl(req)}/api/leaderboard/share/page/${walletAddress}`
       : null;
-    const tweetText = sharePageUrl ? `${postText}\n${sharePageUrl}` : postText;
-    const shareImageBuffer = await renderScoreSharePng(scoreForShare);
+    tweetText = sharePageUrl ? `${postText}\n${sharePageUrl}` : postText;
+    const shareImageBuffer = await loadStaticShareImagePng();
 
-    let tokenToUse = player.xAccessToken;
+    tokenToUse = player.xAccessToken;
     let tweet;
     try {
       const mediaId = await xOAuth.uploadMedia(tokenToUse, shareImageBuffer);
       if (!mediaId) {
         logger.warn({ primaryId: maskedPrimaryId(primaryId) }, 'X media upload returned empty media id');
-        return res.status(502).json({ error: 'x_media_upload_failed' });
+        const noMediaErr = new Error('x_media_upload_failed');
+        noMediaErr.response = { status: 422, data: { detail: 'empty media id' } };
+        throw noMediaErr;
       }
       tweet = await xOAuth.createTweet(tokenToUse, {
         text: tweetText,
@@ -415,7 +456,9 @@ router.post('/share-result', shareResultLimiter, requireXOAuth, async (req, res)
       const mediaId = await xOAuth.uploadMedia(tokenToUse, shareImageBuffer);
       if (!mediaId) {
         logger.warn({ primaryId: maskedPrimaryId(primaryId) }, 'X media upload returned empty media id');
-        return res.status(502).json({ error: 'x_media_upload_failed' });
+        const noMediaErr = new Error('x_media_upload_failed');
+        noMediaErr.response = { status: 422, data: { detail: 'empty media id' } };
+        throw noMediaErr;
       }
       tweet = await xOAuth.createTweet(tokenToUse, {
         text: tweetText,
@@ -424,7 +467,7 @@ router.post('/share-result', shareResultLimiter, requireXOAuth, async (req, res)
     }
 
     if (!tweet?.id) {
-      return res.status(502).json({ error: 'x_tweet_failed' });
+      return res.status(502).json({ error: 'x_post_failed', retryable: true, fallback: 'text_intent' });
     }
 
     const tweetUrl = player.xUsername
@@ -441,8 +484,11 @@ router.post('/share-result', shareResultLimiter, requireXOAuth, async (req, res)
     if (err?.code === 'share_png_unavailable') {
       return res.status(503).json({ error: 'share_png_unavailable' });
     }
-    logger.error({ err: err.message }, 'POST /x/share-result error');
-    return res.status(500).json({ error: 'Server error' });
+    const mapped = classifyShareResultError(err);
+
+    const upstream = extractUpstreamError(err);
+    logger.error({ err: err.message, ...upstream }, 'POST /x/share-result error');
+    return res.status(mapped.statusCode).json({ error: mapped.error, retryable: mapped.retryable, fallback: mapped.fallback, ...upstream });
   }
 });
 
