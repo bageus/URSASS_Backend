@@ -84,7 +84,7 @@ test('POST /api/share/start - returns shareId when eligible', async () => {
   }
 });
 
-test('POST /api/share/start - wallet-linked share contains preview URL and tweet URL with page', async () => {
+test('POST /api/share/start - wallet-linked share contains preview URL and intent without url param', async () => {
   const { server, baseUrl } = await startServer();
   try {
     process.env.FRONTEND_BASE_URL = 'https://ursasstube.fun';
@@ -97,9 +97,11 @@ test('POST /api/share/start - wallet-linked share contains preview URL and tweet
     const r = await post(baseUrl, '/api/share/start', {}, { 'X-Primary-Id': 'tg_player3' });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.imageUrl, `${baseUrl}/api/leaderboard/share/image/${wallet}.png`);
+    assert.equal(r.body.postImageUrl, `${baseUrl}/api/leaderboard/share/image/${wallet}.png`);
     assert.equal(r.body.previewUrl, `${baseUrl}/api/leaderboard/share/page/${wallet}`);
+    assert.equal(r.body.shareResultApiUrl, '/api/x/share-result');
     assert.match(r.body.intentUrl, /twitter\.com\/intent\/tweet\?/);
-    assert.match(r.body.intentUrl, /&url=/);
+    assert.doesNotMatch(r.body.intentUrl, /[?&]url=/);
   } finally {
     delete process.env.FRONTEND_BASE_URL;
     server.close();
