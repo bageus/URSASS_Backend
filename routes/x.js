@@ -11,13 +11,14 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
+const fs = require('fs/promises');
+const path = require('path');
 const rateLimit = require('express-rate-limit');
 const OAuthState = require('../models/OAuthState');
 const Player = require('../models/Player');
 const AccountLink = require('../models/AccountLink');
 const xOAuth = require('../utils/xOAuth');
 const { buildReferralUrl } = require('../utils/referral');
-const { renderScoreSharePng } = require('../utils/shareCard');
 const { logSecurityEvent } = require('../utils/security');
 const logger = require('../utils/logger');
 const { findLink } = require('../middleware/requireAuth');
@@ -112,6 +113,12 @@ function getPublicBaseUrl(req) {
   return `${req.protocol}://${req.get('host')}`;
 }
 
+
+const STATIC_SHARE_IMAGE_PATH = path.join(__dirname, '..', 'img', 'score_result.png');
+
+async function loadStaticShareImagePng() {
+  return fs.readFile(STATIC_SHARE_IMAGE_PATH);
+}
 function buildSharePostText(score, referralUrl) {
   const normalizedScore = Math.max(0, Math.floor(Number(score || 0)));
   const main = SHARE_COPY_TEMPLATE.replace('{score}', normalizedScore);
@@ -400,7 +407,7 @@ router.post('/share-result', shareResultLimiter, requireXOAuth, async (req, res)
       ? `${getPublicBaseUrl(req)}/api/leaderboard/share/page/${walletAddress}`
       : null;
     const tweetText = sharePageUrl ? `${postText}\n${sharePageUrl}` : postText;
-    const shareImageBuffer = await renderScoreSharePng(scoreForShare);
+    const shareImageBuffer = await loadStaticShareImagePng();
 
     let tokenToUse = player.xAccessToken;
     let tweet;
