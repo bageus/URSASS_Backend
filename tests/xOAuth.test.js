@@ -723,3 +723,43 @@ test('POST /api/x/share-result - maps 403 insufficient scope to x_auth_expired',
     server.close();
   }
 });
+
+
+test('POST /api/x/share-result - falls back to text post when media upload fails', async () => {
+  setXOAuthEnv();
+  const { server, baseUrl } = await startServer();
+  const origUploadMedia = xOAuthModule.uploadMedia;
+  const origCreateTweet = xOAuthModule.createTweet;
+  try {
+    const link = { primaryId: 'tg_x16', telegramId: '16', wallet: null };
+    AccountLink.findOne = async () => link;
+
+    const player = makePlayer({
+      wallet: 'tg_x16',
+      bestScore: 16,
+      xUserId: 'x_user_16',
+      xUsername: 'text_fallback_user',
+      xAccessToken: 'token_16',
+      xRefreshToken: 'refresh_16'
+    });
+    Player.findOne = () => chainableQuery({ ...player, save: async function() { return this; } });
+
+    xOAuthModule.uploadMedia = async () => {
+      const err = new Error('bad media upload');
+      err.response = { status: 400, data: { detail: 'invalid media' } };
+      throw err;
+    };
+    xOAuthModule.createTweet = async (_token, payload) => ({ id: '303030', text: payload.text });
+
+    const r = await post(baseUrl, '/api/x/share-result', {}, { 'X-Primary-Id': 'tg_x16' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.posted, true);
+    assert.equal(r.body.fallbackUsed, 'text_only');
+    assert.equal(r.body.tweetId, '303030');
+  } finally {
+    xOAuthModule.uploadMedia = origUploadMedia;
+    xOAuthModule.createTweet = origCreateTweet;
+    clearXOAuthEnv();
+    server.close();
+  }
+});
