@@ -44,11 +44,10 @@ function classifyShareResultError(err) {
   if (status === 429) {
     return { statusCode: 429, error: 'x_rate_limited', retryable: true, fallback: 'text_intent' };
   }
-  const dataStr = JSON.stringify(err?.response?.data || {});
-  if (status === 403 && /media\.write|insufficient|scope/i.test(dataStr)) {
-    return { statusCode: 401, error: 'x_auth_expired', retryable: false, fallback: null };
+  if (status === 403) {
+    return { statusCode: 403, error: 'x_permissions_missing', retryable: false, fallback: null };
   }
-  if ([400, 403, 404, 413, 415, 422].includes(status)) {
+  if ([400, 404, 413, 415, 422].includes(status)) {
     return { statusCode: 502, error: 'x_media_upload_failed', retryable: true, fallback: 'text_intent' };
   }
   return { statusCode: 502, error: 'x_post_failed', retryable: true, fallback: 'text_intent' };

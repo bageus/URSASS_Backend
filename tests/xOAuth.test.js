@@ -12,6 +12,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('crypto');
+const axios = require('axios');
 
 // Tested utilities (import before setting env so we can configure per-test)
 const { generatePkcePair, buildAuthorizeUrl, isXOAuthConfigured } = require('../utils/xOAuth');
@@ -108,6 +109,43 @@ function clearXOAuthEnv() {
   delete process.env.X_OAUTH_SCOPES;
   delete process.env.FRONTEND_BASE_URL;
 }
+
+
+
+test('uploadMedia sends JSON payload to X v2 media upload and returns data.id', async () => {
+  const origPost = axios.post;
+  try {
+    let capturedUrl = '';
+    let capturedPayload = null;
+    let capturedConfig = null;
+
+    axios.post = async (url, payload, config) => {
+      capturedUrl = url;
+      capturedPayload = payload;
+      capturedConfig = config;
+      return { data: { data: { id: 'media_v2_123' } } };
+    };
+
+    const mediaBuffer = Buffer.from('png-bytes-test');
+    const mediaId = await xOAuthModule.uploadMedia('token_abc', mediaBuffer);
+
+    assert.equal(capturedUrl, 'https://api.x.com/2/media/upload');
+    assert.equal(capturedConfig?.headers?.['Content-Type'], 'application/json');
+    assert.equal(capturedPayload?.media_category, 'tweet_image');
+    assert.equal(capturedPayload?.media_type, 'image/png');
+    assert.equal(capturedPayload?.media, mediaBuffer.toString('base64'));
+    assert.equal(mediaId, 'media_v2_123');
+  } finally {
+    axios.post = origPost;
+  }
+});
+
+test('uploadMedia throws x_media_buffer_empty for empty buffer', async () => {
+  await assert.rejects(
+    () => xOAuthModule.uploadMedia('token_abc', Buffer.alloc(0)),
+    /x_media_buffer_empty/
+  );
+});
 
 // ── Utility unit tests ────────────────────────────────────────────────────────
 
@@ -689,7 +727,7 @@ test('POST /api/x/share-result - maps 401 without refresh token to x_auth_expire
 });
 
 
-test('POST /api/x/share-result - maps 403 insufficient scope to x_auth_expired', async () => {
+test('POST /api/x/share-result - maps 403 insufficient scope to x_permissions_missing', async () => {
   setXOAuthEnv();
   const { server, baseUrl } = await startServer();
   const origUploadMedia = xOAuthModule.uploadMedia;
@@ -713,8 +751,8 @@ test('POST /api/x/share-result - maps 403 insufficient scope to x_auth_expired',
     };
 
     const r = await post(baseUrl, '/api/x/share-result', {}, { 'X-Primary-Id': 'tg_x15' });
-    assert.equal(r.status, 401);
-    assert.equal(r.body.error, 'x_auth_expired');
+    assert.equal(r.status, 403);
+    assert.equal(r.body.error, 'x_permissions_missing');
     assert.equal(r.body.retryable, false);
     assert.equal(r.body.fallback, null);
   } finally {
@@ -759,6 +797,43 @@ test('POST /api/x/share-result - returns upstream diagnostics when media upload 
   } finally {
     xOAuthModule.uploadMedia = origUploadMedia;
     xOAuthModule.createTweet = origCreateTweet;
+    clearXOAuthEnv();
+    server.close();
+  }
+});
+
+
+test('POST /api/x/share-result - maps plain 403 to x_permissions_missing', async () => {
+  setXOAuthEnv();
+  const { server, baseUrl } = await startServer();
+  const origUploadMedia = xOAuthModule.uploadMedia;
+  try {
+    const link = { primaryId: 'tg_x17', telegramId: '17', wallet: null };
+    AccountLink.findOne = async () => link;
+
+    const player = makePlayer({
+      wallet: 'tg_x17',
+      bestScore: 17,
+      xUserId: 'x_user_17',
+      xAccessToken: 'token_17',
+      xRefreshToken: 'refresh_17'
+    });
+    Player.findOne = () => chainableQuery({ ...player, save: async function() { return this; } });
+
+    xOAuthModule.uploadMedia = async () => {
+      const err = new Error('forbidden');
+      err.response = { status: 403 };
+      throw err;
+    };
+
+    const r = await post(baseUrl, '/api/x/share-result', {}, { 'X-Primary-Id': 'tg_x17' });
+    assert.equal(r.status, 403);
+    assert.equal(r.body.error, 'x_permissions_missing');
+    assert.equal(r.body.retryable, false);
+    assert.equal(r.body.fallback, null);
+    assert.equal(r.body.upstreamStatus, 403);
+  } finally {
+    xOAuthModule.uploadMedia = origUploadMedia;
     clearXOAuthEnv();
     server.close();
   }
