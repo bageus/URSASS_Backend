@@ -18,7 +18,7 @@ const logger = require('../utils/logger');
 const { normalizeWallet, parseWalletOrNull, buildInvalidWalletError, validateTimestampWindow } = require('../utils/security');
 const { validateTelegramInitData } = require('../utils/telegramAuth');
 const { computeRank } = require('../services/leaderboardInsightsService');
-const { buildReferralUrl } = require('../utils/referral');
+const { buildReferralUrl, buildCanonicalShareUrl } = require('../utils/referral');
 const { getUtcDayKey, getYesterdayUtcDayKey } = require('../utils/utcDay');
 const { findLink } = require('../middleware/requireAuth');
 
@@ -335,6 +335,7 @@ router.get('/me/profile', readLimiter, requireAuth, async (req, res) => {
 
     const referralCode = player.referralCode || null;
     const referralUrl = referralCode ? buildReferralUrl(referralCode, req) : null;
+    const canonicalShareUrl = referralCode ? buildCanonicalShareUrl(referralCode, req) : null;
     const referralCount = referralCode
       ? await Player.countDocuments({ referredBy: referralCode })
       : 0;
@@ -365,6 +366,7 @@ router.get('/me/profile', readLimiter, requireAuth, async (req, res) => {
       referralCode,
       referralUrl,
       referralCount,
+      canonicalShareUrl,
       telegram: {
         connected: !!link.telegramId,
         username: link.telegramUsername || null,
