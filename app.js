@@ -14,8 +14,26 @@ const referralRoutes = require('./routes/referral');
 const shareRoutes = require('./routes/share');
 const xRoutes = require('./routes/x');
 const logger = require('./utils/logger');
+const Player = require('./models/Player');
+const { sanitizeReferralCode, buildReferralLandingUrl, isSocialPreviewCrawler } = require('./utils/referral');
 const { metricsMiddleware, markAliasRouteUsage, renderMetricsText } = require('./middleware/requestMetrics');
 const { renderScoreSharePng } = require('./utils/shareCard');
+
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function getPublicBaseUrl(req) {
+  const configured = (process.env.PUBLIC_BASE_URL || process.env.APP_BASE_URL || '').trim();
+  if (configured) return configured.replace(/\/+$/, '');
+  return `${req.protocol}://${req.get('host')}`;
+}
 
 function getRouteRegistry() {
   return [
@@ -178,6 +196,43 @@ function createApp() {
     });
   }
   app.use(metricsMiddleware);
+
+  app.get('/s/:refCode', async (req, res) => {
+    try {
+      const refCode = sanitizeReferralCode(req.params.refCode);
+      if (!refCode) return res.status(400).send('Invalid referral code');
+
+      const baseUrl = getPublicBaseUrl(req);
+      const canonicalUrl = `${baseUrl}/s/${encodeURIComponent(refCode)}`;
+      const isCrawler = isSocialPreviewCrawler(req.get('user-agent'));
+      const player = await Player.findOne({ referralCode: refCode }).select('wallet bestScore referralCode');
+
+      if (!player && !isCrawler) {
+        const frontendBaseUrl = (process.env.FRONTEND_BASE_URL || 'https://ursasstube.fun').trim().replace(/\/+$/, '');
+        return res.redirect(302, `${frontendBaseUrl}/`);
+      }
+
+      const redirectUrl = buildReferralLandingUrl(refCode, req);
+      if (!isCrawler) {
+        return res.redirect(302, redirectUrl);
+      }
+
+      const score = Math.max(0, Number(player?.bestScore || 0));
+      const title = player ? `I scored ${score} in Ursass Tube 🐻` : 'Play Ursass Tube 🐻';
+      const description = player ? 'Can you beat me? Play Ursass Tube.' : 'Can you beat the high score?';
+      const imageUrl = player?.wallet
+        ? `${baseUrl}/api/leaderboard/share/image/${player.wallet}.png`
+        : `${baseUrl}/img/score_result.png`;
+
+      const html = `<!doctype html><html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${escapeHtml(title)}</title><meta property="og:type" content="website" /><meta property="og:title" content="${escapeHtml(title)}" /><meta property="og:description" content="${escapeHtml(description)}" /><meta property="og:image" content="${escapeHtml(imageUrl)}" /><meta property="og:url" content="${escapeHtml(canonicalUrl)}" /><meta property="og:site_name" content="Ursass Tube" /><meta name="twitter:card" content="summary_large_image" /><meta name="twitter:title" content="${escapeHtml(title)}" /><meta name="twitter:description" content="${escapeHtml(description)}" /><meta name="twitter:image" content="${escapeHtml(imageUrl)}" /><meta name="twitter:image:alt" content="Ursass Tube score card" /></head><body><p>Redirecting to Ursass Tube...</p><a href="${escapeHtml(redirectUrl)}">Play Ursass Tube</a></body></html>`;
+
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.status(200).send(html);
+    } catch (error) {
+      logger.error({ err: error.message, requestId: req.requestId }, 'GET /s/:refCode error');
+      return res.status(500).json({ error: 'Server error', requestId: req.requestId });
+    }
+  });
 
   mountApiRoutes(app, '/api');
   mountApiRoutes(app, '/api/v1');
