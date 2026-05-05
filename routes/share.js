@@ -13,6 +13,9 @@ const logger = require('../utils/logger');
 
 const SHARE_REWARD_DELAY_MS = Number(process.env.SHARE_REWARD_DELAY_MS || 30000);
 const SHARE_DAILY_REWARD_GOLD = Number(process.env.SHARE_DAILY_REWARD_GOLD || 20);
+function shouldUseXApiShare() {
+  return String(process.env.USE_X_API_SHARE || 'false').toLowerCase() === 'true';
+}
 
 const SHARE_COPY_TEMPLATE = 'I scored {score} in Ursass Tube 🐻\nCan you beat me?';
 const SHARE_HASHTAGS = '#UrsassTube #Ursas #Ursasplanet #GameChallenge #HighScore';
@@ -112,25 +115,25 @@ router.post('/start', shareStartLimiter, async (req, res) => {
       : '';
 
     const postText = buildSharePostText(scoreAtShare, referralUrl);
+    const postTextWithPreviewUrl = buildSharePostText(scoreAtShare, shareUrl || referralUrl);
     const hasConnectedXAccount = Boolean(player.xUserId);
-    // X/Twitter web intent cannot attach uploaded media files.
-    // Real image attachment is done via POST /api/x/share-result (OAuth flow).
-    const intentUrl = hasConnectedXAccount
+    const shouldUsePaidXApi = shouldUseXApiShare() && hasConnectedXAccount;
+    const intentUrl = shouldUsePaidXApi
       ? null
-      : `https://twitter.com/intent/tweet?text=${encodeURIComponent(postText)}`;
+      : `https://twitter.com/intent/tweet?text=${encodeURIComponent(postTextWithPreviewUrl)}`;
 
     if (!canShareToday) {
       return res.json({
         shareId: null,
         reason: 'already_shared_today',
         shareUrl: referralUrl,
-        postText,
+        postText: postTextWithPreviewUrl,
         imageUrl,
         postImageUrl: imageUrl,
         previewUrl: shareUrl || null,
         intentUrl,
         shareResultApiUrl: '/api/x/share-result',
-        preferredShareFlow: hasConnectedXAccount ? 'x_api' : 'intent',
+        preferredShareFlow: shouldUsePaidXApi ? 'x_api' : 'intent',
         eligibleForReward: false,
         secondsUntilReward: 0,
         referralUrl
@@ -153,14 +156,14 @@ router.post('/start', shareStartLimiter, async (req, res) => {
 
     return res.json({
       shareId,
-      postText,
+      postText: postTextWithPreviewUrl,
       referralUrl,
       imageUrl,
       postImageUrl: imageUrl,
       previewUrl: shareUrl || null,
       intentUrl,
       shareResultApiUrl: '/api/x/share-result',
-      preferredShareFlow: hasConnectedXAccount ? 'x_api' : 'intent',
+      preferredShareFlow: shouldUsePaidXApi ? 'x_api' : 'intent',
       eligibleForReward: true,
       secondsUntilReward: Math.ceil(SHARE_REWARD_DELAY_MS / 1000)
     });

@@ -38,6 +38,7 @@ const {
 
 const SHARE_COPY_TEMPLATE = 'I scored {score} in Ursass Tube 🐻\nCan you beat me?';
 const SHARE_HASHTAGS = '#UrsassTube #Ursas #Ursasplanet #GameChallenge #HighScore';
+const TOP_CACHE_TTL_MS = getTopLeaderboardCacheTtlMs();
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -54,6 +55,16 @@ function getPublicBaseUrl(req) {
     return configured.replace(/\/+$/, '');
   }
   return `${req.protocol}://${req.get('host')}`;
+}
+
+function isPreviewCrawler(req) {
+  const userAgent = String(req.get('user-agent') || '').toLowerCase();
+  if (!userAgent) return false;
+  return /(twitterbot|facebookexternalhit|slackbot|telegrambot|discordbot|whatsapp|linkedinbot|skypeuripreview|googlebot|bingbot|yandexbot|embedly|quora link preview|pinterest|vkshare|crawler|spider|preview)/i.test(userAgent);
+}
+
+function getFrontendBaseUrl() {
+  return (process.env.FRONTEND_BASE_URL || 'https://ursasstube.fun').trim().replace(/\/+$/, '');
 }
 
 async function resolveShareContextByWallet(wallet) {
@@ -833,55 +844,56 @@ router.get('/share/image/:wallet.png', readLimiter, loadShareContextByWallet, as
   }
 });
 
-router.get('/share/page/:wallet', readLimiter, loadSharePageContextByWallet, async (req, res) => {
+router.get('/share/page/:wallet', readLimiter, async (req, res) => {
   try {
-    const wallet = req.shareWallet;
-    const shareContext = req.shareContext;
+    const wallet = parseWalletOrNull(req.params.wallet);
+    if (TOP_CACHE_TTL_MS > 0 && !wallet) {
+      return res.status(400).send('Invalid wallet');
+    }
 
     const baseUrl = getPublicBaseUrl(req);
-    const score = shareContext.scoreForShare;
+    const absoluteSharePageUrl = `${baseUrl}/api/leaderboard/share/page/${wallet}`;
+    const frontendBaseUrl = getFrontendBaseUrl();
     const shareImageUrl = `${baseUrl}/api/leaderboard/share/image/${wallet}.png`;
-    const referralLink = '';
-    const postText = buildSharePostText(score, referralLink);
+    const isCrawler = isPreviewCrawler(req);
+
+    const player = await Player.findOne({ wallet }).select('bestScore referralCode');
+    const score = Math.max(0, Number(player?.bestScore || 0));
+    const safeReferralCode = String(player?.referralCode || '').trim();
+    const redirectUrl = safeReferralCode
+      ? `${frontendBaseUrl}/?ref=${encodeURIComponent(safeReferralCode)}`
+      : `${frontendBaseUrl}/`;
+
+    if (!isCrawler) {
+      return res.redirect(302, redirectUrl);
+    }
+
     const title = `I scored ${score} in Ursass Tube 🐻`;
-    const description = `Can you beat me? ${SHARE_HASHTAGS}`;
+    const pageTitle = `I scored ${score} in Ursass Tube`;
+    const description = 'Can you beat me? Play Ursass Tube.';
 
     const html = `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${escapeHtml(title)}</title>
+  <title>${escapeHtml(pageTitle)}</title>
   <meta name="description" content="${escapeHtml(description)}" />
   <meta property="og:type" content="website" />
   <meta property="og:title" content="${escapeHtml(title)}" />
   <meta property="og:description" content="${escapeHtml(description)}" />
   <meta property="og:image" content="${escapeHtml(shareImageUrl)}" />
-  <meta property="og:url" content="${escapeHtml(`${baseUrl}/api/leaderboard/share/page/${wallet}`)}" />
+  <meta property="og:url" content="${escapeHtml(absoluteSharePageUrl)}" />
+  <meta property="og:site_name" content="Ursass Tube" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="${escapeHtml(title)}" />
   <meta name="twitter:description" content="${escapeHtml(description)}" />
   <meta name="twitter:image" content="${escapeHtml(shareImageUrl)}" />
-  <style>
-    :root { color-scheme: dark; }
-    body { margin: 0; font-family: Arial, sans-serif; background: #090b2d; color: #fff; }
-    main { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
-    .card { max-width: 680px; width: 100%; background: #111438; border-radius: 16px; padding: 20px; box-shadow: 0 10px 32px rgba(0,0,0,.45);}
-    img { width: 100%; border-radius: 12px; border: 1px solid rgba(255,255,255,.12);}
-    pre { white-space: pre-wrap; background: #090b2d; padding: 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.1);}
-    a.btn { display: inline-block; text-decoration: none; color: #fff; background: linear-gradient(90deg,#a55bff,#44d2ff); padding: 10px 14px; border-radius: 9px; font-weight: 700;}
-  </style>
+  <meta name="twitter:image:alt" content="${escapeHtml(`Ursass Tube score card showing score ${score}`)}" />
 </head>
 <body>
-  <main>
-    <article class="card">
-      <h1>${escapeHtml(title)}</h1>
-      <img src="${escapeHtml(shareImageUrl)}" alt="Ursass Tube share card" />
-      <p>Share text:</p>
-      <pre>${escapeHtml(postText)}</pre>
-      <a class="btn" href="https://ursasstube.fun" rel="noopener noreferrer">Play now</a>
-    </article>
-  </main>
+  <p>Redirecting to Ursass Tube...</p>
+  <a href="${escapeHtml(redirectUrl)}">Continue to Ursass Tube</a>
 </body>
 </html>`;
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
