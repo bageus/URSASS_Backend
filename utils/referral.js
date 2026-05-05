@@ -31,15 +31,31 @@ function buildReferralUrl(code, req) {
   ).replace(/\/+$/, '');
 
   if (base) {
-    return `${base}/?ref=${code}`;
+    return `${base}/?ref_hint=${encodeURIComponent(code)}`;
   }
 
   if (req) {
     const origin = req.get('origin') || `${req.protocol}://${req.get('host')}`;
-    return `${origin}/?ref=${code}`;
+    return `${origin}/?ref_hint=${encodeURIComponent(code)}`;
   }
 
-  return `/?ref=${code}`;
+  return `/?ref_hint=${encodeURIComponent(code)}`;
+}
+
+function buildWebReferralUrl(refCode) {
+  const frontendBaseUrl = (process.env.FRONTEND_BASE_URL || 'https://ursasstube.fun').trim().replace(/\/+$/, '');
+  return `${frontendBaseUrl}/?ref_hint=${encodeURIComponent(String(refCode || '').trim())}`;
+}
+
+function buildTelegramReferralUrl(refCode) {
+  const botUsername = String(process.env.TELEGRAM_BOT_USERNAME || '').trim().replace(/^@+/, '');
+  const shortName = String(process.env.TELEGRAM_MINI_APP_SHORT_NAME || '').trim();
+  if (!botUsername) return null;
+  const encodedRefCode = encodeURIComponent(String(refCode || '').trim());
+  if (shortName) {
+    return `https://t.me/${botUsername}/${shortName}?startapp=ref_${encodedRefCode}`;
+  }
+  return `https://t.me/${botUsername}?start=ref_${encodedRefCode}`;
 }
 
 function sanitizeReferralCode(refCode) {
@@ -90,4 +106,4 @@ function isSocialPreviewCrawler(userAgent) {
   return /(twitterbot|x\.com|facebookexternalhit|slackbot|telegrambot|discordbot|whatsapp|linkedinbot|pinterest|google-inspectiontool|applebot|skypeuripreview|quora link preview|embedly|vkshare|preview)/i.test(ua);
 }
 
-module.exports = { generateReferralCode, buildReferralUrl, sanitizeReferralCode, buildReferralLandingUrl, isSocialPreviewCrawler, buildCanonicalShareUrl };
+module.exports = { generateReferralCode, buildReferralUrl, sanitizeReferralCode, buildReferralLandingUrl, isSocialPreviewCrawler, buildCanonicalShareUrl, buildWebReferralUrl, buildTelegramReferralUrl };

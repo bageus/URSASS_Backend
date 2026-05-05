@@ -5,6 +5,7 @@ const shareEventSchema = new mongoose.Schema({
   wallet: { type: String, sparse: true },
   shareId: { type: String, unique: true, index: true },
   startedAt: { type: Date },
+  createdAt: { type: Date, default: Date.now },
   confirmedAt: { type: Date, default: null },
   rewardedAt: { type: Date, default: null },
   goldAwarded: { type: Number, default: 0 },
@@ -12,6 +13,10 @@ const shareEventSchema = new mongoose.Schema({
   scoreAtShare: { type: Number },
   postText: { type: String },
   imageUrl: { type: String },
+  referralCode: { type: String },
+  webShareUrl: { type: String },
+  telegramShareUrl: { type: String, default: null },
+  previewImageUrl: { type: String },
 
   // Future: X post verification
   tweetId: { type: String, default: null },

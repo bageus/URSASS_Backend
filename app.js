@@ -15,6 +15,7 @@ const shareRoutes = require('./routes/share');
 const xRoutes = require('./routes/x');
 const logger = require('./utils/logger');
 const Player = require('./models/Player');
+const ShareEvent = require('./models/ShareEvent');
 const { sanitizeReferralCode, buildReferralLandingUrl, isSocialPreviewCrawler } = require('./utils/referral');
 const { metricsMiddleware, markAliasRouteUsage, renderMetricsText } = require('./middleware/requestMetrics');
 const { renderScoreSharePng } = require('./utils/shareCard');
@@ -234,6 +235,36 @@ function createApp() {
     }
   });
 
+
+  app.get('/share/:shareId', async (req, res) => {
+    try {
+      const shareId = String(req.params.shareId || '').trim();
+      const baseUrl = getPublicBaseUrl(req);
+      const frontendBaseUrl = (process.env.FRONTEND_BASE_URL || 'https://ursasstube.fun').trim().replace(/\/+$/, '');
+      const isCrawler = isSocialPreviewCrawler(req.get('user-agent'));
+      const fallbackImage = `${baseUrl}/img/score_result.png`;
+      const share = shareId ? await ShareEvent.findOne({ shareId }) : null;
+
+      if (!isCrawler) {
+        if (!share) return res.redirect(302, `${frontendBaseUrl}/`);
+        const refHint = share.referralCode ? `&ref_hint=${encodeURIComponent(share.referralCode)}` : '';
+        return res.redirect(302, `${frontendBaseUrl}/?utm_source=x&utm_medium=social&utm_campaign=score_share&share=${encodeURIComponent(shareId)}${refHint}`);
+      }
+
+      const score = Math.max(0, Number(share?.scoreAtShare || 0));
+      const refCode = share?.referralCode || 'URSAS';
+      const title = share ? `I scored ${score} in Ursass Tube 🐻` : 'Play Ursass Tube 🐻';
+      const description = `Can you beat me? Use ref code ${refCode}.`;
+      const imageUrl = share?.previewImageUrl || fallbackImage;
+      const absoluteShareUrl = `${baseUrl}/share/${encodeURIComponent(shareId || 'unknown')}`;
+      const html = `<!doctype html><html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${escapeHtml(title)}</title><meta property="og:type" content="website" /><meta property="og:title" content="${escapeHtml(title)}" /><meta property="og:description" content="${escapeHtml(description)}" /><meta property="og:image" content="${escapeHtml(imageUrl)}" /><meta property="og:url" content="${escapeHtml(absoluteShareUrl)}" /><meta property="og:site_name" content="Ursass Tube" /><meta name="twitter:card" content="summary_large_image" /><meta name="twitter:title" content="${escapeHtml(title)}" /><meta name="twitter:description" content="${escapeHtml(description)}" /><meta name="twitter:image" content="${escapeHtml(imageUrl)}" /><meta name="twitter:image:alt" content="Ursass Tube score card" /></head><body><p>Play Ursass Tube</p></body></html>`;
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.status(200).send(html);
+    } catch (error) {
+      logger.error({ err: error.message, requestId: req.requestId }, 'GET /share/:shareId error');
+      return res.redirect(302, `${(process.env.FRONTEND_BASE_URL || 'https://ursasstube.fun').trim().replace(/\/+$/, '')}/`);
+    }
+  });
   mountApiRoutes(app, '/api');
   mountApiRoutes(app, '/api/v1');
 
