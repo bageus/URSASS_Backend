@@ -1,0 +1,724 @@
+diff --git a/app.js b/app.js
+index d9e59ff7659fad58071515da3199200f6bfce721..f3a2585af5062915ba6f9189ac7a1e0ab6721b8a 100644
+--- a/app.js
++++ b/app.js
+@@ -1,44 +1,62 @@
+ const express = require('express');
+ const cors = require('cors');
+ const mongoose = require('mongoose');
+ const crypto = require('crypto');
+ const fs = require('fs');
+ const path = require('path');
+ const leaderboardRoutes = require('./routes/leaderboard');
+ const storeRoutes = require('./routes/store');
+ const accountRoutes = require('./routes/account');
+ const gameRoutes = require('./routes/game');
+ const donationsRoutes = require('./routes/donations');
+ const analyticsRoutes = require('./routes/analytics');
+ const referralRoutes = require('./routes/referral');
+ const shareRoutes = require('./routes/share');
+ const xRoutes = require('./routes/x');
+ const logger = require('./utils/logger');
++const Player = require('./models/Player');
++const { sanitizeReferralCode, buildReferralLandingUrl, isSocialPreviewCrawler } = require('./utils/referral');
+ const { metricsMiddleware, markAliasRouteUsage, renderMetricsText } = require('./middleware/requestMetrics');
+ const { renderScoreSharePng } = require('./utils/shareCard');
+ 
++
++function escapeHtml(value) {
++  return String(value ?? '')
++    .replace(/&/g, '&amp;')
++    .replace(/</g, '&lt;')
++    .replace(/>/g, '&gt;')
++    .replace(/"/g, '&quot;')
++    .replace(/'/g, '&#39;');
++}
++
++function getPublicBaseUrl(req) {
++  const configured = (process.env.PUBLIC_BASE_URL || process.env.APP_BASE_URL || '').trim();
++  if (configured) return configured.replace(/\/+$/, '');
++  return `${req.protocol}://${req.get('host')}`;
++}
++
+ function getRouteRegistry() {
+   return [
+     { path: '/leaderboard', router: leaderboardRoutes },
+     { path: '/store', router: storeRoutes },
+     { path: '/account', router: accountRoutes },
+     { path: '/game', router: gameRoutes },
+     { path: '', router: donationsRoutes },
+     { path: '/analytics', router: analyticsRoutes },
+     { path: '/telemetry', router: analyticsRoutes },
+     { path: '/referral', router: referralRoutes },
+     { path: '/share', router: shareRoutes },
+     { path: '/x', router: xRoutes }
+   ];
+ }
+ 
+ function mountApiRoutes(app, basePrefix) {
+   for (const { path, router } of getRouteRegistry()) {
+     app.use(`${basePrefix}${path}`, router);
+   }
+ }
+ 
+ function createApp() {
+   const app = express();
+ 
+   app.disable('x-powered-by');
+@@ -157,50 +175,87 @@ function createApp() {
+             return res.sendFile(targetPath, {
+               headers: {
+                 'Cache-Control': 'no-store'
+               }
+             });
+           })
+           .catch((err) => {
+             if (err?.code === 'share_png_unavailable') {
+               return res.status(503).json({ error: 'share_png_unavailable' });
+             }
+             logger.error({ err: err.message, fileName }, 'Share preview auto-generation failed');
+             return res.status(500).json({ error: 'share_preview_generation_failed' });
+           });
+         return;
+       }
+ 
+       return res.sendFile(targetPath, {
+         headers: {
+           'Cache-Control': 'no-store'
+         }
+       });
+     });
+   }
+   app.use(metricsMiddleware);
+ 
++  app.get('/s/:refCode', async (req, res) => {
++    try {
++      const refCode = sanitizeReferralCode(req.params.refCode);
++      if (!refCode) return res.status(400).send('Invalid referral code');
++
++      const baseUrl = getPublicBaseUrl(req);
++      const canonicalUrl = `${baseUrl}/s/${encodeURIComponent(refCode)}`;
++      const isCrawler = isSocialPreviewCrawler(req.get('user-agent'));
++      const player = await Player.findOne({ referralCode: refCode }).select('wallet bestScore referralCode');
++
++      if (!player && !isCrawler) {
++        const frontendBaseUrl = (process.env.FRONTEND_BASE_URL || 'https://ursasstube.fun').trim().replace(/\/+$/, '');
++        return res.redirect(302, `${frontendBaseUrl}/`);
++      }
++
++      const redirectUrl = buildReferralLandingUrl(refCode, req);
++      if (!isCrawler) {
++        return res.redirect(302, redirectUrl);
++      }
++
++      const score = Math.max(0, Number(player?.bestScore || 0));
++      const title = player ? `I scored ${score} in Ursass Tube 🐻` : 'Play Ursass Tube 🐻';
++      const description = player ? 'Can you beat me? Play Ursass Tube.' : 'Can you beat the high score?';
++      const imageUrl = player?.wallet
++        ? `${baseUrl}/api/leaderboard/share/image/${player.wallet}.png`
++        : `${baseUrl}/img/score_result.png`;
++
++      const html = `<!doctype html><html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${escapeHtml(title)}</title><meta property="og:type" content="website" /><meta property="og:title" content="${escapeHtml(title)}" /><meta property="og:description" content="${escapeHtml(description)}" /><meta property="og:image" content="${escapeHtml(imageUrl)}" /><meta property="og:url" content="${escapeHtml(canonicalUrl)}" /><meta property="og:site_name" content="Ursass Tube" /><meta name="twitter:card" content="summary_large_image" /><meta name="twitter:title" content="${escapeHtml(title)}" /><meta name="twitter:description" content="${escapeHtml(description)}" /><meta name="twitter:image" content="${escapeHtml(imageUrl)}" /><meta name="twitter:image:alt" content="Ursass Tube score card" /></head><body><p>Redirecting to Ursass Tube...</p><a href="${escapeHtml(redirectUrl)}">Play Ursass Tube</a></body></html>`;
++
++      res.setHeader('Content-Type', 'text/html; charset=utf-8');
++      return res.status(200).send(html);
++    } catch (error) {
++      logger.error({ err: error.message, requestId: req.requestId }, 'GET /s/:refCode error');
++      return res.status(500).json({ error: 'Server error', requestId: req.requestId });
++    }
++  });
++
+   mountApiRoutes(app, '/api');
+   mountApiRoutes(app, '/api/v1');
+ 
+   // JSON 404 for any unmatched /api/* route (prevents Express default HTML response)
+   app.use('/api', (req, res) => {
+     res.status(404).json({ error: 'not_found' });
+   });
+ 
+   app.get('/health', (req, res) => {
+     const mongoStates = {
+       0: 'disconnected',
+       1: 'connected',
+       2: 'connecting',
+       3: 'disconnecting'
+     };
+     const readyState = mongoose.connection?.readyState;
+     const mongoStatus = mongoStates[readyState] || 'unknown';
+ 
+     res.json({
+       status: readyState === 1 ? 'OK' : 'DEGRADED',
+       timestamp: new Date(),
+       mongodb: mongoStatus,
+       mongodbDetails: {
+         readyState,
+         status: mongoStatus
+diff --git a/routes/account.js b/routes/account.js
+index b230a2ed20d5affd4ae2c3bb59f8f732845dc229..ef776859d06943127f1bbd3cdf9893e4d6e54b38 100644
+--- a/routes/account.js
++++ b/routes/account.js
+@@ -1,46 +1,46 @@
+ const express = require('express');
+ const router = express.Router();
+ const crypto = require('crypto');
+ const {
+   getOrCreateTelegramAccount,
+   getOrCreateWalletAccount,
+   linkAccounts,
+   resolvePrimaryId
+ } = require('../utils/accountManager');
+ const { verifySignature } = require('../utils/verifySignature');
+ const { readLimiter, writeLimiter, verifyTelegramLimiter } = require('../middleware/rateLimiter');
+ const { requireAuth } = require('../middleware/requireAuth');
+ const Player = require('../models/Player');
+ const AccountLink = require('../models/AccountLink');
+ const LinkCode = require('../models/LinkCode');
+ const CoinTransaction = require('../models/CoinTransaction');
+ const logger = require('../utils/logger');
+ const { normalizeWallet, parseWalletOrNull, buildInvalidWalletError, validateTimestampWindow } = require('../utils/security');
+ const { validateTelegramInitData } = require('../utils/telegramAuth');
+ const { computeRank } = require('../services/leaderboardInsightsService');
+-const { buildReferralUrl } = require('../utils/referral');
++const { buildReferralUrl, buildCanonicalShareUrl } = require('../utils/referral');
+ const { getUtcDayKey, getYesterdayUtcDayKey } = require('../utils/utcDay');
+ const { findLink } = require('../middleware/requireAuth');
+ 
+ const WALLET_TIMESTAMP_WINDOW_MS = Number(process.env.WALLET_AUTH_TIMESTAMP_WINDOW_MS || 10 * 60 * 1000);
+ 
+ 
+ function buildAccountAuthResponse({
+   account,
+   telegramId = null,
+   telegramUsername = null,
+   displayName = null
+ }) {
+   return {
+     success: true,
+     primaryId: account.primaryId || null,
+     telegramId: account.telegramId || telegramId || null,
+     telegramUsername: telegramUsername || null,
+     wallet: account.wallet || null,
+     isLinked: Boolean(account.isLinked),
+     displayName: displayName || null
+   };
+ }
+ 
+ function resolveTelegramInitData(req) {
+   return req.body?.telegramInitData
+@@ -313,80 +313,82 @@ const RESERVED_NICKNAMES = new Set(['admin', 'system', 'bot', 'null', 'undefined
+  */
+ router.get('/me/profile', readLimiter, requireAuth, async (req, res) => {
+   try {
+     const primaryId = req.primaryId;
+     const link = req.authLink;
+ 
+     const player = await Player.findOne({ wallet: primaryId });
+     if (!player) {
+       return res.status(404).json({ error: 'Player not found' });
+     }
+ 
+     const { rank, totalRankedPlayers } = await computeRank(player.bestScore);
+ 
+     const today = getUtcDayKey();
+     const yesterday = getYesterdayUtcDayKey();
+ 
+     const canShareToday = player.lastShareDay !== today;
+ 
+     let displayStreak = player.shareStreak || 0;
+     if (player.lastShareDay && player.lastShareDay < yesterday) {
+       displayStreak = 0;
+     }
+ 
+     const referralCode = player.referralCode || null;
+     const referralUrl = referralCode ? buildReferralUrl(referralCode, req) : null;
++    const canonicalShareUrl = referralCode ? buildCanonicalShareUrl(referralCode, req) : null;
+     const referralCount = referralCode
+       ? await Player.countDocuments({ referredBy: referralCode })
+       : 0;
+ 
+     // Compute rankDelta only for wallet-linked players
+     const eligibleForRank = !!link.wallet;
+     let rankDelta = null;
+     if (eligibleForRank) {
+       const currentRank = rank || null;
+       const prevRank = player.lastSeenRank ?? null;
+ 
+       if (currentRank !== null && prevRank === null) {
+         // Init-once: first visit — establish baseline, no delta yet
+         player.lastSeenRank = currentRank;
+         await player.save();
+         rankDelta = null;
+       } else if (currentRank !== null && prevRank !== null) {
+         rankDelta = currentRank - prevRank;
+       }
+     }
+ 
+     return res.json({
+       primaryId,
+       rank: rank || null,
+       totalRankedPlayers: totalRankedPlayers || 0,
+       bestScore: player.bestScore || 0,
+       gold: player.gold || 0,
+       referralCode,
+       referralUrl,
+       referralCount,
++      canonicalShareUrl,
+       telegram: {
+         connected: !!link.telegramId,
+         username: link.telegramUsername || null,
+         id: link.telegramId || null
+       },
+       wallet: {
+         connected: !!link.wallet,
+         address: link.wallet || null
+       },
+       x: {
+         connected: !!player.xUserId,
+         username: player.xUsername || null
+       },
+       shareStreak: displayStreak,
+       canShareToday,
+       goldRewardToday: Number(process.env.SHARE_DAILY_REWARD_GOLD || 20),
+       lastShareDay: player.lastShareDay || null,
+       rankDelta,
+       nickname: player.nickname || null,
+       leaderboardDisplay: player.leaderboardDisplay || 'wallet'
+     });
+   } catch (error) {
+     logger.error({ err: error }, 'GET /me/profile error');
+     res.status(500).json({ error: 'Server error' });
+   }
+diff --git a/routes/share.js b/routes/share.js
+index c22600702f0ad9e4357a13ad54aca1313097a608..c8464675353e001b001eafc50d8c7d982ac39a9c 100644
+--- a/routes/share.js
++++ b/routes/share.js
+@@ -1,34 +1,34 @@
+ const express = require('express');
+ const router = express.Router();
+ const crypto = require('crypto');
+ const rateLimit = require('express-rate-limit');
+ const Player = require('../models/Player');
+ const ShareEvent = require('../models/ShareEvent');
+ const AccountLink = require('../models/AccountLink');
+ const { getUtcDayKey, getYesterdayUtcDayKey } = require('../utils/utcDay');
+-const { buildReferralUrl } = require('../utils/referral');
++const { buildReferralUrl, buildCanonicalShareUrl } = require('../utils/referral');
+ const { addGold } = require('../utils/goldWallet');
+ const { recordCoinReward } = require('../utils/coinHistory');
+ const logger = require('../utils/logger');
+ 
+ const SHARE_REWARD_DELAY_MS = Number(process.env.SHARE_REWARD_DELAY_MS || 30000);
+ const SHARE_DAILY_REWARD_GOLD = Number(process.env.SHARE_DAILY_REWARD_GOLD || 20);
+ function shouldUseXApiShare() {
+   return String(process.env.USE_X_API_SHARE || 'false').toLowerCase() === 'true';
+ }
+ 
+ const SHARE_COPY_TEMPLATE = 'I scored {score} in Ursass Tube 🐻\nCan you beat me?';
+ const SHARE_HASHTAGS = '#UrsassTube #Ursas #Ursasplanet #GameChallenge #HighScore';
+ 
+ function getClientIp(req) {
+   const xff = req.get('x-forwarded-for');
+   if (xff && typeof xff === 'string') {
+     const first = xff.split(',').map((v) => v.trim()).find(Boolean);
+     if (first) return first;
+   }
+   return req.ip || req.connection?.remoteAddress || 'unknown';
+ }
+ 
+ const shareStartLimiter = rateLimit({
+   windowMs: 60 * 1000,
+   max: 10,
+@@ -80,112 +80,111 @@ function buildSharePostText(score, referralUrl) {
+   return parts.join('\n');
+ }
+ 
+ /**
+  * POST /api/share/start
+  * Begin a share flow. Creates a ShareEvent and returns share metadata.
+  */
+ router.post('/start', shareStartLimiter, async (req, res) => {
+   try {
+     const link = await resolveAuth(req);
+     if (!link) {
+       return res.status(401).json({ error: 'Authentication required' });
+     }
+ 
+     const primaryId = link.primaryId;
+ 
+     const player = await Player.findOne({ wallet: primaryId });
+     if (!player) {
+       return res.status(404).json({ error: 'Player not found. Play at least one game first.' });
+     }
+ 
+     const today = getUtcDayKey();
+     const canShareToday = player.lastShareDay !== today;
+ 
+     const referralUrl = buildReferralUrl(player.referralCode || '', req);
++    const canonicalShareUrl = buildCanonicalShareUrl(player.referralCode || '', req);
+     const scoreAtShare = player.bestScore || 0;
+     const baseUrl = getPublicBaseUrl(req);
+ 
+     // Determine image URL — use wallet for PNG if available, SVG fallback for tg-only
+     const walletAddress = link.wallet || null;
+     const imageUrl = walletAddress
+       ? `${baseUrl}/api/leaderboard/share/image/${walletAddress}.png`
+       : `${baseUrl}/api/leaderboard/share/image/default.svg`;
+-    const shareUrl = walletAddress
+-      ? `${baseUrl}/api/leaderboard/share/page/${walletAddress}`
+-      : '';
+-
+     const postText = buildSharePostText(scoreAtShare, referralUrl);
+-    const postTextWithPreviewUrl = buildSharePostText(scoreAtShare, shareUrl || referralUrl);
++    const postTextWithPreviewUrl = buildSharePostText(scoreAtShare, canonicalShareUrl || referralUrl);
+     const hasConnectedXAccount = Boolean(player.xUserId);
+     const shouldUsePaidXApi = shouldUseXApiShare() && hasConnectedXAccount;
+     const intentUrl = shouldUsePaidXApi
+       ? null
+       : `https://twitter.com/intent/tweet?text=${encodeURIComponent(postTextWithPreviewUrl)}`;
+ 
+     if (!canShareToday) {
+       return res.json({
+         shareId: null,
+         reason: 'already_shared_today',
+         shareUrl: referralUrl,
+         postText: postTextWithPreviewUrl,
+         imageUrl,
+         postImageUrl: imageUrl,
+-        previewUrl: shareUrl || null,
++        previewUrl: canonicalShareUrl || null,
+         intentUrl,
+         shareResultApiUrl: '/api/x/share-result',
+         preferredShareFlow: shouldUsePaidXApi ? 'x_api' : 'intent',
+         eligibleForReward: false,
+         secondsUntilReward: 0,
+-        referralUrl
++        referralUrl,
++        canonicalShareUrl
+       });
+     }
+ 
+     const shareId = crypto.randomUUID();
+ 
+     await ShareEvent.create({
+       primaryId,
+       wallet: walletAddress,
+       shareId,
+       startedAt: new Date(),
+       scoreAtShare,
+       postText,
+       imageUrl
+     });
+ 
+     logger.info({ primaryId, shareId }, 'Share started');
+ 
+     return res.json({
+       shareId,
+       postText: postTextWithPreviewUrl,
+       referralUrl,
+       imageUrl,
+       postImageUrl: imageUrl,
+-      previewUrl: shareUrl || null,
++      previewUrl: canonicalShareUrl || null,
+       intentUrl,
+       shareResultApiUrl: '/api/x/share-result',
+       preferredShareFlow: shouldUsePaidXApi ? 'x_api' : 'intent',
++      canonicalShareUrl,
+       eligibleForReward: true,
+       secondsUntilReward: Math.ceil(SHARE_REWARD_DELAY_MS / 1000)
+     });
+ 
+   } catch (error) {
+     logger.error({ err: error }, 'POST /share/start error');
+     return res.status(500).json({ error: 'Server error' });
+   }
+ });
+ 
+ /**
+  * POST /api/share/confirm
+  * Confirm a share and award gold if eligible.
+  * Uses atomic findOneAndUpdate to prevent double-awarding in race conditions.
+  */
+ router.post('/confirm', shareConfirmLimiter, async (req, res) => {
+   try {
+     const link = await resolveAuth(req);
+     if (!link) {
+       return res.status(401).json({ error: 'Authentication required' });
+     }
+ 
+     const primaryId = link.primaryId;
+     const shareId = String(req.body?.shareId || '').trim();
+ 
+diff --git a/tests/share.test.js b/tests/share.test.js
+index 7b91de3aad7365ad3ae895cc2ad99be100c05104..5c9c821664afd1bd438851c7a4545d9dc6755349 100644
+--- a/tests/share.test.js
++++ b/tests/share.test.js
+@@ -58,172 +58,166 @@ test('POST /api/share/start - requires auth', async () => {
+   }
+ });
+ 
+ test('POST /api/share/start - returns shareId when eligible', async () => {
+   const { server, baseUrl } = await startServer();
+   try {
+     process.env.FRONTEND_BASE_URL = 'https://ursasstube.fun';
+     const link = { primaryId: 'tg_player1', telegramId: '1', wallet: null };
+     AccountLink.findOne = async (q) => (q.primaryId === 'tg_player1' ? link : null);
+     Player.findOne = async () => makePlayer();
+ 
+     const created = [];
+     ShareEvent.create = async (doc) => {
+       created.push(doc);
+       return { ...doc };
+     };
+ 
+     const r = await post(baseUrl, '/api/share/start', {}, { 'X-Primary-Id': 'tg_player1' });
+     assert.equal(r.status, 200, JSON.stringify(r.body));
+     assert.ok(r.body.shareId, 'shareId should be present');
+     assert.ok(r.body.eligibleForReward === true);
+     assert.ok(r.body.secondsUntilReward > 0);
+     assert.equal(created.length, 1);
+   } finally {
+     delete process.env.FRONTEND_BASE_URL;
++    delete process.env.TELEGRAM_BOT_USERNAME;
+     server.close();
+   }
+ });
+ 
+ test('POST /api/share/start - wallet-linked share contains preview URL and intent without url param', async () => {
+   const { server, baseUrl } = await startServer();
+   try {
+     process.env.FRONTEND_BASE_URL = 'https://ursasstube.fun';
+     const wallet = '0x1111111111111111111111111111111111111111';
+     const link = { primaryId: 'tg_player3', telegramId: '3', wallet };
+     AccountLink.findOne = async (q) => (q.primaryId === 'tg_player3' ? link : null);
+     Player.findOne = async () => makePlayer({ wallet: 'tg_player3' });
+     ShareEvent.create = async (doc) => ({ ...doc });
+ 
+     const r = await post(baseUrl, '/api/share/start', {}, { 'X-Primary-Id': 'tg_player3' });
+     assert.equal(r.status, 200, JSON.stringify(r.body));
+     assert.equal(r.body.imageUrl, `${baseUrl}/api/leaderboard/share/image/${wallet}.png`);
+     assert.equal(r.body.postImageUrl, `${baseUrl}/api/leaderboard/share/image/${wallet}.png`);
+-    assert.equal(r.body.previewUrl, `${baseUrl}/api/leaderboard/share/page/${wallet}`);
++    assert.equal(r.body.previewUrl, `${baseUrl}/s/PLAY1234`);
+     assert.equal(r.body.shareResultApiUrl, '/api/x/share-result');
+     assert.match(r.body.intentUrl, /twitter\.com\/intent\/tweet\?/);
+     assert.doesNotMatch(r.body.intentUrl, /[?&]url=/);
+   } finally {
+     delete process.env.FRONTEND_BASE_URL;
++    delete process.env.TELEGRAM_BOT_USERNAME;
+     server.close();
+   }
+ });
+ 
+-test('GET /api/leaderboard/share/page/:wallet with Twitterbot returns meta card HTML and no redirect', async () => {
++test('GET /s/:refCode with Twitterbot returns meta card HTML and no redirect', async () => {
+   const { server, baseUrl } = await startServer();
+   try {
+-    const wallet = '0x1111111111111111111111111111111111111111';
+-    Player.findOne = async (q) => {
+-      if (q.wallet === wallet) {
+-        return { bestScore: 777, referralCode: 'REF777' };
+-      }
+-      return null;
+-    };
++    const refCode = 'REF777';
++    Player.findOne = (q) => ({ select: async () => (q.referralCode === refCode ? { bestScore: 777, referralCode: refCode, wallet: null } : null) });
+ 
+-    const res = await fetch(`${baseUrl}/api/leaderboard/share/page/${wallet}`, {
++    const res = await fetch(`${baseUrl}/s/${refCode}`, {
+       headers: { 'User-Agent': 'Twitterbot/1.0' },
+       redirect: 'manual'
+     });
+     const html = await res.text();
+     assert.equal(res.status, 200);
+     assert.match(html, /twitter:card" content="summary_large_image"/);
+     assert.match(html, /twitter:image/);
+     assert.match(html, /og:image/);
+     assert.doesNotMatch(html, /http-equiv="refresh"/i);
+   } finally {
+     server.close();
+   }
+ });
+ 
+-test('GET /api/leaderboard/share/page/:wallet with normal user-agent redirects to frontend with referral code', async () => {
++test('GET /s/:refCode with normal user-agent redirects to telegram or frontend with referral code', async () => {
+   const { server, baseUrl } = await startServer();
+   try {
+     process.env.FRONTEND_BASE_URL = 'https://ursasstube.fun';
+-    const wallet = '0x1111111111111111111111111111111111111111';
+-    Player.findOne = async (q) => {
+-      if (q.wallet === wallet) {
+-        return { bestScore: 321, referralCode: 'PLAY321' };
+-      }
+-      return null;
+-    };
++    process.env.TELEGRAM_BOT_USERNAME = 'ursas_bot';
++    const refCode = 'PLAY321';
++    Player.findOne = (q) => ({ select: async () => (q.referralCode === refCode ? { bestScore: 321, referralCode: refCode } : null) });
+ 
+-    const res = await fetch(`${baseUrl}/api/leaderboard/share/page/${wallet}`, {
++    const res = await fetch(`${baseUrl}/s/${refCode}`, {
+       headers: { 'User-Agent': 'Mozilla/5.0' },
+       redirect: 'manual'
+     });
+     assert.equal(res.status, 302);
+-    assert.match(res.headers.get('location') || '', /^https:\/\/ursasstube\.fun\/\?ref=PLAY321/);
++    assert.match(res.headers.get('location') || '', /^https:\/\/t\.me\/ursas_bot\?start=ref_PLAY321/);
+   } finally {
+     delete process.env.FRONTEND_BASE_URL;
++    delete process.env.TELEGRAM_BOT_USERNAME;
+     server.close();
+   }
+ });
+ 
+ test('GET /api/leaderboard/share/page/:wallet player missing returns generic crawler card and user redirect to frontend', async () => {
+   const { server, baseUrl } = await startServer();
+   try {
+     process.env.FRONTEND_BASE_URL = 'https://ursasstube.fun';
+     const wallet = '0x1111111111111111111111111111111111111111';
+-    Player.findOne = async () => null;
++    Player.findOne = () => ({ select: async () => null });
+ 
+     const crawlerRes = await fetch(`${baseUrl}/api/leaderboard/share/page/${wallet}`, {
+       headers: { 'User-Agent': 'Twitterbot' },
+       redirect: 'manual'
+     });
+     const html = await crawlerRes.text();
+     assert.equal(crawlerRes.status, 200);
+     assert.match(html, /summary_large_image/);
+ 
+     const userRes = await fetch(`${baseUrl}/api/leaderboard/share/page/${wallet}`, {
+       headers: { 'User-Agent': 'Mozilla/5.0' },
+       redirect: 'manual'
+     });
+     assert.equal(userRes.status, 302);
+     assert.equal(userRes.headers.get('location'), 'https://ursasstube.fun/');
+   } finally {
+     delete process.env.FRONTEND_BASE_URL;
+     server.close();
+   }
+ });
+ 
+-test('POST /api/share/start uses intent flow with preview URL when USE_X_API_SHARE is not true', async () => {
++test('POST /api/share/start uses intent flow with canonical /s/:refCode URL when USE_X_API_SHARE is not true', async () => {
+   const { server, baseUrl } = await startServer();
+   try {
+     process.env.FRONTEND_BASE_URL = 'https://ursasstube.fun';
+     process.env.USE_X_API_SHARE = 'false';
+     const wallet = '0x1111111111111111111111111111111111111111';
+     const link = { primaryId: 'tg_player4', telegramId: '4', wallet };
+     AccountLink.findOne = async (q) => (q.primaryId === 'tg_player4' ? link : null);
+     Player.findOne = async () => makePlayer({ wallet: 'tg_player4', xUserId: '12345' });
+     ShareEvent.create = async (doc) => ({ ...doc });
+ 
+     const r = await post(baseUrl, '/api/share/start', {}, { 'X-Primary-Id': 'tg_player4' });
+     assert.equal(r.status, 200, JSON.stringify(r.body));
+     assert.equal(r.body.preferredShareFlow, 'intent');
+     assert.ok(r.body.intentUrl);
+     const decoded = decodeURIComponent(String(r.body.intentUrl).split('text=')[1] || '');
+-    assert.match(decoded, new RegExp(`/api/leaderboard/share/page/${wallet}`));
++    assert.match(decoded, /\/s\/PLAY1234/);
+     assert.doesNotMatch(decoded, /^I scored[\s\S]*https:\/\/ursasstube\.fun\/\?ref=/);
+   } finally {
+     delete process.env.FRONTEND_BASE_URL;
+     delete process.env.USE_X_API_SHARE;
+     server.close();
+   }
+ });
+ 
+ test('POST /api/share/start - already_shared_today returns no shareId', async () => {
+   const { server, baseUrl } = await startServer();
+   try {
+     const today = new Date().toISOString().slice(0, 10);
+     const link = { primaryId: 'tg_player2', telegramId: '2', wallet: null };
+     AccountLink.findOne = async (q) => (q.primaryId === 'tg_player2' ? link : null);
+     Player.findOne = async () => makePlayer({ wallet: 'tg_player2', lastShareDay: today });
+     ShareEvent.create = async () => ({});
+ 
+     const r = await post(baseUrl, '/api/share/start', {}, { 'X-Primary-Id': 'tg_player2' });
+     assert.equal(r.status, 200);
+     assert.equal(r.body.shareId, null);
+     assert.equal(r.body.reason, 'already_shared_today');
+   } finally {
+     server.close();
+   }
+ });
+diff --git a/utils/referral.js b/utils/referral.js
+index 004f48d5e099ae59d789bac8498b8d4d0a38f3c5..c33f37f0cf9d37e53cd8efff13f2f7937d8f1acf 100644
+--- a/utils/referral.js
++++ b/utils/referral.js
+@@ -20,26 +20,74 @@ function generateReferralCode() {
+  * Prefers FRONTEND_BASE_URL env, falls back to PUBLIC_BASE_URL, then request origin.
+  *
+  * @param {string} code - The referral code
+  * @param {object|null} req - Express request (used as fallback for base URL)
+  * @returns {string}
+  */
+ function buildReferralUrl(code, req) {
+   const base = (
+     process.env.FRONTEND_BASE_URL ||
+     process.env.PUBLIC_BASE_URL ||
+     ''
+   ).replace(/\/+$/, '');
+ 
+   if (base) {
+     return `${base}/?ref=${code}`;
+   }
+ 
+   if (req) {
+     const origin = req.get('origin') || `${req.protocol}://${req.get('host')}`;
+     return `${origin}/?ref=${code}`;
+   }
+ 
+   return `/?ref=${code}`;
+ }
+ 
+-module.exports = { generateReferralCode, buildReferralUrl };
++function sanitizeReferralCode(refCode) {
++  const value = String(refCode || '').trim();
++  if (!/^[A-Za-z0-9_-]{1,64}$/.test(value)) {
++    return '';
++  }
++  return value;
++}
++
++function buildCanonicalShareUrl(refCode, req) {
++  const safeRefCode = sanitizeReferralCode(refCode);
++  if (!safeRefCode) return '';
++
++  const publicBase = (
++    process.env.PUBLIC_BASE_URL ||
++    process.env.APP_BASE_URL ||
++    ''
++  ).replace(/\/+$/, '');
++
++  const base = publicBase || (req ? `${req.protocol}://${req.get('host')}` : '');
++  return `${base}/s/${encodeURIComponent(safeRefCode)}`;
++}
++
++function buildReferralLandingUrl(refCode, req) {
++  const safeRefCode = sanitizeReferralCode(refCode);
++  const frontendBaseUrl = (process.env.FRONTEND_BASE_URL || 'https://ursasstube.fun').trim().replace(/\/+$/, '');
++  if (!safeRefCode) return `${frontendBaseUrl}/`;
++
++  const preferTelegram = String(process.env.PREFER_TELEGRAM_REFERRAL || 'true').toLowerCase() === 'true';
++  const botUsername = String(process.env.TELEGRAM_BOT_USERNAME || '').trim().replace(/^@+/, '');
++  const shortName = String(process.env.TELEGRAM_MINI_APP_SHORT_NAME || '').trim();
++  const encoded = encodeURIComponent(`ref_${safeRefCode}`);
++
++  if (preferTelegram && botUsername) {
++    if (shortName) {
++      return `https://t.me/${botUsername}/${shortName}?startapp=${encoded}`;
++    }
++    return `https://t.me/${botUsername}?start=${encoded}`;
++  }
++
++  return `${frontendBaseUrl}/?ref=${encodeURIComponent(safeRefCode)}`;
++}
++
++function isSocialPreviewCrawler(userAgent) {
++  const ua = String(userAgent || '').toLowerCase();
++  if (!ua) return false;
++  return /(twitterbot|x\.com|facebookexternalhit|slackbot|telegrambot|discordbot|whatsapp|linkedinbot|pinterest|google-inspectiontool|applebot|skypeuripreview|quora link preview|embedly|vkshare|preview)/i.test(ua);
++}
++
++module.exports = { generateReferralCode, buildReferralUrl, sanitizeReferralCode, buildReferralLandingUrl, isSocialPreviewCrawler, buildCanonicalShareUrl };
