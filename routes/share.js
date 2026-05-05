@@ -6,7 +6,7 @@ const Player = require('../models/Player');
 const ShareEvent = require('../models/ShareEvent');
 const AccountLink = require('../models/AccountLink');
 const { getUtcDayKey, getYesterdayUtcDayKey } = require('../utils/utcDay');
-const { buildReferralUrl } = require('../utils/referral');
+const { buildReferralUrl, buildCanonicalShareUrl } = require('../utils/referral');
 const { addGold } = require('../utils/goldWallet');
 const { recordCoinReward } = require('../utils/coinHistory');
 const logger = require('../utils/logger');
@@ -102,6 +102,7 @@ router.post('/start', shareStartLimiter, async (req, res) => {
     const canShareToday = player.lastShareDay !== today;
 
     const referralUrl = buildReferralUrl(player.referralCode || '', req);
+    const canonicalShareUrl = buildCanonicalShareUrl(player.referralCode || '', req);
     const scoreAtShare = player.bestScore || 0;
     const baseUrl = getPublicBaseUrl(req);
 
@@ -110,12 +111,8 @@ router.post('/start', shareStartLimiter, async (req, res) => {
     const imageUrl = walletAddress
       ? `${baseUrl}/api/leaderboard/share/image/${walletAddress}.png`
       : `${baseUrl}/api/leaderboard/share/image/default.svg`;
-    const shareUrl = walletAddress
-      ? `${baseUrl}/api/leaderboard/share/page/${walletAddress}`
-      : '';
-
     const postText = buildSharePostText(scoreAtShare, referralUrl);
-    const postTextWithPreviewUrl = buildSharePostText(scoreAtShare, shareUrl || referralUrl);
+    const postTextWithPreviewUrl = buildSharePostText(scoreAtShare, canonicalShareUrl || referralUrl);
     const hasConnectedXAccount = Boolean(player.xUserId);
     const shouldUsePaidXApi = shouldUseXApiShare() && hasConnectedXAccount;
     const intentUrl = shouldUsePaidXApi
@@ -130,13 +127,14 @@ router.post('/start', shareStartLimiter, async (req, res) => {
         postText: postTextWithPreviewUrl,
         imageUrl,
         postImageUrl: imageUrl,
-        previewUrl: shareUrl || null,
+        previewUrl: canonicalShareUrl || null,
         intentUrl,
         shareResultApiUrl: '/api/x/share-result',
         preferredShareFlow: shouldUsePaidXApi ? 'x_api' : 'intent',
         eligibleForReward: false,
         secondsUntilReward: 0,
-        referralUrl
+        referralUrl,
+        canonicalShareUrl
       });
     }
 
@@ -160,10 +158,11 @@ router.post('/start', shareStartLimiter, async (req, res) => {
       referralUrl,
       imageUrl,
       postImageUrl: imageUrl,
-      previewUrl: shareUrl || null,
+      previewUrl: canonicalShareUrl || null,
       intentUrl,
       shareResultApiUrl: '/api/x/share-result',
       preferredShareFlow: shouldUsePaidXApi ? 'x_api' : 'intent',
+      canonicalShareUrl,
       eligibleForReward: true,
       secondsUntilReward: Math.ceil(SHARE_REWARD_DELAY_MS / 1000)
     });

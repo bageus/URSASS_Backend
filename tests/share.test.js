@@ -80,6 +80,7 @@ test('POST /api/share/start - returns shareId when eligible', async () => {
     assert.equal(created.length, 1);
   } finally {
     delete process.env.FRONTEND_BASE_URL;
+    delete process.env.TELEGRAM_BOT_USERNAME;
     server.close();
   }
 });
@@ -98,28 +99,24 @@ test('POST /api/share/start - wallet-linked share contains preview URL and inten
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.imageUrl, `${baseUrl}/api/leaderboard/share/image/${wallet}.png`);
     assert.equal(r.body.postImageUrl, `${baseUrl}/api/leaderboard/share/image/${wallet}.png`);
-    assert.equal(r.body.previewUrl, `${baseUrl}/api/leaderboard/share/page/${wallet}`);
+    assert.equal(r.body.previewUrl, `${baseUrl}/s/PLAY1234`);
     assert.equal(r.body.shareResultApiUrl, '/api/x/share-result');
     assert.match(r.body.intentUrl, /twitter\.com\/intent\/tweet\?/);
     assert.doesNotMatch(r.body.intentUrl, /[?&]url=/);
   } finally {
     delete process.env.FRONTEND_BASE_URL;
+    delete process.env.TELEGRAM_BOT_USERNAME;
     server.close();
   }
 });
 
-test('GET /api/leaderboard/share/page/:wallet with Twitterbot returns meta card HTML and no redirect', async () => {
+test('GET /s/:refCode with Twitterbot returns meta card HTML and no redirect', async () => {
   const { server, baseUrl } = await startServer();
   try {
-    const wallet = '0x1111111111111111111111111111111111111111';
-    Player.findOne = async (q) => {
-      if (q.wallet === wallet) {
-        return { bestScore: 777, referralCode: 'REF777' };
-      }
-      return null;
-    };
+    const refCode = 'REF777';
+    Player.findOne = (q) => ({ select: async () => (q.referralCode === refCode ? { bestScore: 777, referralCode: refCode, wallet: null } : null) });
 
-    const res = await fetch(`${baseUrl}/api/leaderboard/share/page/${wallet}`, {
+    const res = await fetch(`${baseUrl}/s/${refCode}`, {
       headers: { 'User-Agent': 'Twitterbot/1.0' },
       redirect: 'manual'
     });
@@ -134,26 +131,23 @@ test('GET /api/leaderboard/share/page/:wallet with Twitterbot returns meta card 
   }
 });
 
-test('GET /api/leaderboard/share/page/:wallet with normal user-agent redirects to frontend with referral code', async () => {
+test('GET /s/:refCode with normal user-agent redirects to telegram or frontend with referral code', async () => {
   const { server, baseUrl } = await startServer();
   try {
     process.env.FRONTEND_BASE_URL = 'https://ursasstube.fun';
-    const wallet = '0x1111111111111111111111111111111111111111';
-    Player.findOne = async (q) => {
-      if (q.wallet === wallet) {
-        return { bestScore: 321, referralCode: 'PLAY321' };
-      }
-      return null;
-    };
+    process.env.TELEGRAM_BOT_USERNAME = 'ursas_bot';
+    const refCode = 'PLAY321';
+    Player.findOne = (q) => ({ select: async () => (q.referralCode === refCode ? { bestScore: 321, referralCode: refCode } : null) });
 
-    const res = await fetch(`${baseUrl}/api/leaderboard/share/page/${wallet}`, {
+    const res = await fetch(`${baseUrl}/s/${refCode}`, {
       headers: { 'User-Agent': 'Mozilla/5.0' },
       redirect: 'manual'
     });
     assert.equal(res.status, 302);
-    assert.match(res.headers.get('location') || '', /^https:\/\/ursasstube\.fun\/\?ref=PLAY321/);
+    assert.match(res.headers.get('location') || '', /^https:\/\/t\.me\/ursas_bot\?start=ref_PLAY321/);
   } finally {
     delete process.env.FRONTEND_BASE_URL;
+    delete process.env.TELEGRAM_BOT_USERNAME;
     server.close();
   }
 });
@@ -163,7 +157,7 @@ test('GET /api/leaderboard/share/page/:wallet player missing returns generic cra
   try {
     process.env.FRONTEND_BASE_URL = 'https://ursasstube.fun';
     const wallet = '0x1111111111111111111111111111111111111111';
-    Player.findOne = async () => null;
+    Player.findOne = () => ({ select: async () => null });
 
     const crawlerRes = await fetch(`${baseUrl}/api/leaderboard/share/page/${wallet}`, {
       headers: { 'User-Agent': 'Twitterbot' },
@@ -185,7 +179,7 @@ test('GET /api/leaderboard/share/page/:wallet player missing returns generic cra
   }
 });
 
-test('POST /api/share/start uses intent flow with preview URL when USE_X_API_SHARE is not true', async () => {
+test('POST /api/share/start uses intent flow with canonical /s/:refCode URL when USE_X_API_SHARE is not true', async () => {
   const { server, baseUrl } = await startServer();
   try {
     process.env.FRONTEND_BASE_URL = 'https://ursasstube.fun';
@@ -201,7 +195,7 @@ test('POST /api/share/start uses intent flow with preview URL when USE_X_API_SHA
     assert.equal(r.body.preferredShareFlow, 'intent');
     assert.ok(r.body.intentUrl);
     const decoded = decodeURIComponent(String(r.body.intentUrl).split('text=')[1] || '');
-    assert.match(decoded, new RegExp(`/api/leaderboard/share/page/${wallet}`));
+    assert.match(decoded, /\/s\/PLAY1234/);
     assert.doesNotMatch(decoded, /^I scored[\s\S]*https:\/\/ursasstube\.fun\/\?ref=/);
   } finally {
     delete process.env.FRONTEND_BASE_URL;
