@@ -12,6 +12,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('crypto');
+const axios = require('axios');
 
 // Tested utilities (import before setting env so we can configure per-test)
 const { generatePkcePair, buildAuthorizeUrl, isXOAuthConfigured } = require('../utils/xOAuth');
@@ -108,6 +109,43 @@ function clearXOAuthEnv() {
   delete process.env.X_OAUTH_SCOPES;
   delete process.env.FRONTEND_BASE_URL;
 }
+
+
+
+test('uploadMedia sends JSON payload to X v2 media upload and returns data.id', async () => {
+  const origPost = axios.post;
+  try {
+    let capturedUrl = '';
+    let capturedPayload = null;
+    let capturedConfig = null;
+
+    axios.post = async (url, payload, config) => {
+      capturedUrl = url;
+      capturedPayload = payload;
+      capturedConfig = config;
+      return { data: { data: { id: 'media_v2_123' } } };
+    };
+
+    const mediaBuffer = Buffer.from('png-bytes-test');
+    const mediaId = await xOAuthModule.uploadMedia('token_abc', mediaBuffer);
+
+    assert.equal(capturedUrl, 'https://api.x.com/2/media/upload');
+    assert.equal(capturedConfig?.headers?.['Content-Type'], 'application/json');
+    assert.equal(capturedPayload?.media_category, 'tweet_image');
+    assert.equal(capturedPayload?.media_type, 'image/png');
+    assert.equal(capturedPayload?.media, mediaBuffer.toString('base64'));
+    assert.equal(mediaId, 'media_v2_123');
+  } finally {
+    axios.post = origPost;
+  }
+});
+
+test('uploadMedia throws x_media_buffer_empty for empty buffer', async () => {
+  await assert.rejects(
+    () => xOAuthModule.uploadMedia('token_abc', Buffer.alloc(0)),
+    /x_media_buffer_empty/
+  );
+});
 
 // ── Utility unit tests ────────────────────────────────────────────────────────
 
@@ -681,6 +719,119 @@ test('POST /api/x/share-result - maps 401 without refresh token to x_auth_expire
     assert.equal(r.body.error, 'x_auth_expired');
     assert.equal(r.body.retryable, false);
     assert.equal(r.body.fallback, null);
+  } finally {
+    xOAuthModule.uploadMedia = origUploadMedia;
+    clearXOAuthEnv();
+    server.close();
+  }
+});
+
+
+test('POST /api/x/share-result - maps 403 insufficient scope to x_permissions_missing', async () => {
+  setXOAuthEnv();
+  const { server, baseUrl } = await startServer();
+  const origUploadMedia = xOAuthModule.uploadMedia;
+  try {
+    const link = { primaryId: 'tg_x15', telegramId: '15', wallet: null };
+    AccountLink.findOne = async () => link;
+
+    const player = makePlayer({
+      wallet: 'tg_x15',
+      bestScore: 7,
+      xUserId: 'x_user_15',
+      xAccessToken: 'token_15',
+      xRefreshToken: 'refresh_15'
+    });
+    Player.findOne = () => chainableQuery({ ...player, save: async function() { return this; } });
+
+    xOAuthModule.uploadMedia = async () => {
+      const err = new Error('forbidden');
+      err.response = { status: 403, data: { detail: 'missing media.write scope' } };
+      throw err;
+    };
+
+    const r = await post(baseUrl, '/api/x/share-result', {}, { 'X-Primary-Id': 'tg_x15' });
+    assert.equal(r.status, 403);
+    assert.equal(r.body.error, 'x_permissions_missing');
+    assert.equal(r.body.retryable, false);
+    assert.equal(r.body.fallback, null);
+  } finally {
+    xOAuthModule.uploadMedia = origUploadMedia;
+    clearXOAuthEnv();
+    server.close();
+  }
+});
+
+
+test('POST /api/x/share-result - returns upstream diagnostics when media upload fails', async () => {
+  setXOAuthEnv();
+  const { server, baseUrl } = await startServer();
+  const origUploadMedia = xOAuthModule.uploadMedia;
+  const origCreateTweet = xOAuthModule.createTweet;
+  try {
+    const link = { primaryId: 'tg_x16', telegramId: '16', wallet: null };
+    AccountLink.findOne = async () => link;
+
+    const player = makePlayer({
+      wallet: 'tg_x16',
+      bestScore: 16,
+      xUserId: 'x_user_16',
+      xUsername: 'text_fallback_user',
+      xAccessToken: 'token_16',
+      xRefreshToken: 'refresh_16'
+    });
+    Player.findOne = () => chainableQuery({ ...player, save: async function() { return this; } });
+
+    xOAuthModule.uploadMedia = async () => {
+      const err = new Error('bad media upload');
+      err.response = { status: 400, data: { detail: 'invalid media' } };
+      throw err;
+    };
+    xOAuthModule.createTweet = async (_token, payload) => ({ id: '303030', text: payload.text });
+
+    const r = await post(baseUrl, '/api/x/share-result', {}, { 'X-Primary-Id': 'tg_x16' });
+    assert.equal(r.status, 502, JSON.stringify(r.body));
+    assert.equal(r.body.error, 'x_media_upload_failed');
+    assert.equal(r.body.upstreamStatus, 400);
+    assert.equal(r.body.upstreamDetail, 'invalid media');
+  } finally {
+    xOAuthModule.uploadMedia = origUploadMedia;
+    xOAuthModule.createTweet = origCreateTweet;
+    clearXOAuthEnv();
+    server.close();
+  }
+});
+
+
+test('POST /api/x/share-result - maps plain 403 to x_permissions_missing', async () => {
+  setXOAuthEnv();
+  const { server, baseUrl } = await startServer();
+  const origUploadMedia = xOAuthModule.uploadMedia;
+  try {
+    const link = { primaryId: 'tg_x17', telegramId: '17', wallet: null };
+    AccountLink.findOne = async () => link;
+
+    const player = makePlayer({
+      wallet: 'tg_x17',
+      bestScore: 17,
+      xUserId: 'x_user_17',
+      xAccessToken: 'token_17',
+      xRefreshToken: 'refresh_17'
+    });
+    Player.findOne = () => chainableQuery({ ...player, save: async function() { return this; } });
+
+    xOAuthModule.uploadMedia = async () => {
+      const err = new Error('forbidden');
+      err.response = { status: 403 };
+      throw err;
+    };
+
+    const r = await post(baseUrl, '/api/x/share-result', {}, { 'X-Primary-Id': 'tg_x17' });
+    assert.equal(r.status, 403);
+    assert.equal(r.body.error, 'x_permissions_missing');
+    assert.equal(r.body.retryable, false);
+    assert.equal(r.body.fallback, null);
+    assert.equal(r.body.upstreamStatus, 403);
   } finally {
     xOAuthModule.uploadMedia = origUploadMedia;
     clearXOAuthEnv();

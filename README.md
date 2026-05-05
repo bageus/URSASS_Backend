@@ -436,7 +436,7 @@ The migration is **idempotent** — safe to run multiple times.
 1. Create an application at [developer.twitter.com](https://developer.twitter.com).
 2. Enable **OAuth 2.0** in the app settings.
 3. Set the **Callback URL** to your `X_OAUTH_REDIRECT_URI`, e.g. `https://api.ursasstube.fun/api/x/oauth/callback`.
-4. Request at least these **Scopes**: `tweet.read users.read offline.access`.
+4. Request at least these **Scopes**: `tweet.read tweet.write users.read offline.access media.write`.
 5. Copy your **Client ID** (and **Client Secret** for confidential clients) into the environment variables below.
 
 ### Environment Variables
@@ -447,7 +447,9 @@ The migration is **idempotent** — safe to run multiple times.
 | `X_OAUTH_CLIENT_SECRET` | *(required for confidential clients)* | Client Secret; omit if using public client |
 | `X_OAUTH_PUBLIC_CLIENT` | `false` | Set `true` to skip Basic auth on token exchange (public client) |
 | `X_OAUTH_REDIRECT_URI` | *(required)* | e.g. `https://api.ursasstube.fun/api/x/oauth/callback` |
-| `X_OAUTH_SCOPES` | `tweet.read users.read offline.access` | Space-separated scopes |
+| `X_OAUTH_SCOPES` | `tweet.read tweet.write users.read offline.access media.write` | Space-separated scopes; must include `media.write` for image attachment in `/api/x/share-result` |
+
+> **Production requirement:** if `media.write` is added later, users who connected X before this change must disconnect/reconnect X so newly issued access/refresh tokens include the new scope.
 
 If `X_OAUTH_CLIENT_ID` or `X_OAUTH_REDIRECT_URI` are missing, all `/api/x/*` endpoints return **503 `application/json { error: "x_oauth_not_configured" }`** — the server does not crash.
 
