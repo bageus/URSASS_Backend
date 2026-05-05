@@ -45,7 +45,7 @@ function classifyShareResultError(err) {
     return { statusCode: 429, error: 'x_rate_limited', retryable: true, fallback: 'text_intent' };
   }
   if (status === 403) {
-    return { statusCode: 401, error: 'x_auth_expired', retryable: false, fallback: null };
+    return { statusCode: 403, error: 'x_permissions_missing', retryable: false, fallback: null };
   }
   if ([400, 404, 413, 415, 422].includes(status)) {
     return { statusCode: 502, error: 'x_media_upload_failed', retryable: true, fallback: 'text_intent' };

@@ -6,7 +6,7 @@
  *   X_OAUTH_CLIENT_SECRET   – Client Secret (omit or set X_OAUTH_PUBLIC_CLIENT=true for public clients)
  *   X_OAUTH_PUBLIC_CLIENT   – "true" → skip Basic auth on token exchange
  *   X_OAUTH_REDIRECT_URI    – e.g. https://api.ursasstube.fun/api/x/oauth/callback
- *   X_OAUTH_SCOPES          – default "tweet.read tweet.write users.read offline.access"
+ *   X_OAUTH_SCOPES          – default "tweet.read tweet.write users.read offline.access media.write"
  */
 
 const crypto = require('crypto');
@@ -18,7 +18,7 @@ const X_TOKEN_URL = 'https://api.twitter.com/2/oauth2/token';
 const X_USERS_ME_URL = 'https://api.twitter.com/2/users/me';
 const X_REVOKE_URL = 'https://api.twitter.com/2/oauth2/revoke';
 const X_CREATE_TWEET_URL = 'https://api.twitter.com/2/tweets';
-const X_MEDIA_UPLOAD_URL = 'https://upload.twitter.com/1.1/media/upload.json';
+const X_MEDIA_UPLOAD_URL = 'https://api.x.com/2/media/upload';
 
 const HTTP_TIMEOUT_MS = 10_000;
 
@@ -180,18 +180,44 @@ async function revokeToken(token) {
  * @returns {Promise<string>}
  */
 async function uploadMedia(accessToken, mediaBuffer) {
-  const base64 = Buffer.from(mediaBuffer).toString('base64');
-  const body = new URLSearchParams({ media_data: base64 });
+  if (!Buffer.isBuffer(mediaBuffer)) {
+    throw new Error('x_media_buffer_invalid');
+  }
+  if (mediaBuffer.length === 0) {
+    throw new Error('x_media_buffer_empty');
+  }
 
-  const response = await axios.post(X_MEDIA_UPLOAD_URL, body.toString(), {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/x-www-form-urlencoded'
-    },
-    timeout: 30_000
-  });
+  const payload = {
+    media: mediaBuffer.toString('base64'),
+    media_category: 'tweet_image',
+    media_type: 'image/png',
+    shared: false
+  };
 
-  return response.data?.media_id_string || '';
+  try {
+    const response = await axios.post(X_MEDIA_UPLOAD_URL, payload, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 30_000
+    });
+
+    const mediaId = response.data?.data?.id || response.data?.media_id_string || '';
+    logger.info({ mediaIdPresent: Boolean(mediaId), sizeBytes: mediaBuffer.length }, 'X media upload successful');
+    return mediaId;
+  } catch (err) {
+    const status = err?.response?.status || null;
+    const raw = err?.response?.data;
+    const safeBody = typeof raw === 'string'
+      ? raw.slice(0, 500)
+      : (raw && typeof raw === 'object'
+        ? { title: raw.title, detail: raw.detail, type: raw.type, errors: raw.errors, error: raw.error, message: raw.message }
+        : null);
+
+    logger.error({ upstreamStatus: status, upstreamBody: safeBody }, 'X media upload failed');
+    throw err;
+  }
 }
 
 /**
