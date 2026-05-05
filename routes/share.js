@@ -6,7 +6,7 @@ const Player = require('../models/Player');
 const ShareEvent = require('../models/ShareEvent');
 const AccountLink = require('../models/AccountLink');
 const { getUtcDayKey, getYesterdayUtcDayKey } = require('../utils/utcDay');
-const { buildReferralUrl, buildCanonicalShareUrl } = require('../utils/referral');
+const { buildWebReferralUrl, buildTelegramReferralUrl } = require('../utils/referral');
 const { addGold } = require('../utils/goldWallet');
 const { recordCoinReward } = require('../utils/coinHistory');
 const logger = require('../utils/logger');
@@ -17,7 +17,6 @@ function shouldUseXApiShare() {
   return String(process.env.USE_X_API_SHARE || 'false').toLowerCase() === 'true';
 }
 
-const SHARE_COPY_TEMPLATE = 'I scored {score} in Ursass Tube 🐻\nCan you beat me?';
 const SHARE_HASHTAGS = '#UrsassTube #Ursas #Ursasplanet #GameChallenge #HighScore';
 
 function getClientIp(req) {
@@ -73,10 +72,21 @@ function getPublicBaseUrl(req) {
   return `${req.protocol}://${req.get('host')}`;
 }
 
-function buildSharePostText(score, referralUrl) {
+function buildSharePostText(score, referralCode, webShareUrl, telegramShareUrl) {
   const normalizedScore = Math.max(0, Math.floor(Number(score || 0)));
-  const main = SHARE_COPY_TEMPLATE.replace('{score}', normalizedScore);
-  const parts = [main, referralUrl ? referralUrl.trim() : '', SHARE_HASHTAGS].filter(Boolean);
+  const parts = [
+    `I scored ${normalizedScore} in Ursass Tube 🐻`,
+    'Can you beat me?',
+    '',
+    `Use my ref code: ${referralCode}`,
+    '',
+    'Play Web:',
+    webShareUrl
+  ];
+  if (telegramShareUrl) {
+    parts.push('', 'Play Telegram:', telegramShareUrl);
+  }
+  parts.push('', SHARE_HASHTAGS);
   return parts.join('\n');
 }
 
@@ -100,69 +110,71 @@ router.post('/start', shareStartLimiter, async (req, res) => {
 
     const today = getUtcDayKey();
     const canShareToday = player.lastShareDay !== today;
-
-    const referralUrl = buildReferralUrl(player.referralCode || '', req);
-    const canonicalShareUrl = buildCanonicalShareUrl(player.referralCode || '', req);
     const scoreAtShare = player.bestScore || 0;
     const baseUrl = getPublicBaseUrl(req);
-
-    // Determine image URL — use wallet for PNG if available, SVG fallback for tg-only
     const walletAddress = link.wallet || null;
-    const imageUrl = walletAddress
+    const referralCode = player.referralCode || '';
+    const previewImageUrl = walletAddress
       ? `${baseUrl}/api/leaderboard/share/image/${walletAddress}.png`
-      : `${baseUrl}/api/leaderboard/share/image/default.svg`;
-    const postText = buildSharePostText(scoreAtShare, referralUrl);
-    const postTextWithPreviewUrl = buildSharePostText(scoreAtShare, canonicalShareUrl || referralUrl);
+      : `${baseUrl}/img/score_result.png`;
+    const shareId = crypto.randomUUID();
+    const webShareUrl = `${baseUrl}/share/${shareId}`;
+    const telegramShareUrl = buildTelegramReferralUrl(referralCode);
+    const postText = buildSharePostText(scoreAtShare, referralCode, webShareUrl, telegramShareUrl);
     const hasConnectedXAccount = Boolean(player.xUserId);
     const shouldUsePaidXApi = shouldUseXApiShare() && hasConnectedXAccount;
-    const intentUrl = shouldUsePaidXApi
-      ? null
-      : `https://twitter.com/intent/tweet?text=${encodeURIComponent(postTextWithPreviewUrl)}`;
-
-    if (!canShareToday) {
-      return res.json({
-        shareId: null,
-        reason: 'already_shared_today',
-        shareUrl: referralUrl,
-        postText: postTextWithPreviewUrl,
-        imageUrl,
-        postImageUrl: imageUrl,
-        previewUrl: canonicalShareUrl || null,
-        intentUrl,
-        shareResultApiUrl: '/api/x/share-result',
-        preferredShareFlow: shouldUsePaidXApi ? 'x_api' : 'intent',
-        eligibleForReward: false,
-        secondsUntilReward: 0,
-        referralUrl,
-        canonicalShareUrl
-      });
-    }
-
-    const shareId = crypto.randomUUID();
+    const intentUrl = shouldUsePaidXApi ? null : `https://twitter.com/intent/tweet?text=${encodeURIComponent(postText)}`;
 
     await ShareEvent.create({
       primaryId,
       wallet: walletAddress,
       shareId,
       startedAt: new Date(),
+      createdAt: new Date(),
       scoreAtShare,
+      referralCode,
       postText,
-      imageUrl
+      imageUrl: previewImageUrl,
+      previewImageUrl,
+      webShareUrl,
+      telegramShareUrl
     });
+
+    if (!canShareToday) {
+      return res.json({
+        shareId,
+        reason: 'already_shared_today',
+        shareUrl: webShareUrl,
+        postText,
+        imageUrl: previewImageUrl,
+        postImageUrl: previewImageUrl,
+        previewUrl: webShareUrl,
+        intentUrl,
+        shareResultApiUrl: '/api/x/share-result',
+        preferredShareFlow: shouldUsePaidXApi ? 'x_api' : 'intent',
+        eligibleForReward: false,
+        secondsUntilReward: 0,
+        referralUrl: buildWebReferralUrl(referralCode),
+        webShareUrl,
+        telegramShareUrl
+      });
+    }
 
     logger.info({ primaryId, shareId }, 'Share started');
 
     return res.json({
       shareId,
-      postText: postTextWithPreviewUrl,
-      referralUrl,
-      imageUrl,
-      postImageUrl: imageUrl,
-      previewUrl: canonicalShareUrl || null,
+      postText,
+      referralUrl: buildWebReferralUrl(referralCode),
+      telegramShareUrl,
+      webShareUrl,
+      imageUrl: previewImageUrl,
+      postImageUrl: previewImageUrl,
+      previewUrl: webShareUrl,
       intentUrl,
       shareResultApiUrl: '/api/x/share-result',
       preferredShareFlow: shouldUsePaidXApi ? 'x_api' : 'intent',
-      canonicalShareUrl,
+
       eligibleForReward: true,
       secondsUntilReward: Math.ceil(SHARE_REWARD_DELAY_MS / 1000)
     });
