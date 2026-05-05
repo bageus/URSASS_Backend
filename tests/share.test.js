@@ -108,6 +108,108 @@ test('POST /api/share/start - wallet-linked share contains preview URL and inten
   }
 });
 
+test('GET /api/leaderboard/share/page/:wallet with Twitterbot returns meta card HTML and no redirect', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const wallet = '0x1111111111111111111111111111111111111111';
+    Player.findOne = async (q) => {
+      if (q.wallet === wallet) {
+        return { bestScore: 777, referralCode: 'REF777' };
+      }
+      return null;
+    };
+
+    const res = await fetch(`${baseUrl}/api/leaderboard/share/page/${wallet}`, {
+      headers: { 'User-Agent': 'Twitterbot/1.0' },
+      redirect: 'manual'
+    });
+    const html = await res.text();
+    assert.equal(res.status, 200);
+    assert.match(html, /twitter:card" content="summary_large_image"/);
+    assert.match(html, /twitter:image/);
+    assert.match(html, /og:image/);
+    assert.doesNotMatch(html, /http-equiv="refresh"/i);
+  } finally {
+    server.close();
+  }
+});
+
+test('GET /api/leaderboard/share/page/:wallet with normal user-agent redirects to frontend with referral code', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    process.env.FRONTEND_BASE_URL = 'https://ursasstube.fun';
+    const wallet = '0x1111111111111111111111111111111111111111';
+    Player.findOne = async (q) => {
+      if (q.wallet === wallet) {
+        return { bestScore: 321, referralCode: 'PLAY321' };
+      }
+      return null;
+    };
+
+    const res = await fetch(`${baseUrl}/api/leaderboard/share/page/${wallet}`, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      redirect: 'manual'
+    });
+    assert.equal(res.status, 302);
+    assert.match(res.headers.get('location') || '', /^https:\/\/ursasstube\.fun\/\?ref=PLAY321/);
+  } finally {
+    delete process.env.FRONTEND_BASE_URL;
+    server.close();
+  }
+});
+
+test('GET /api/leaderboard/share/page/:wallet player missing returns generic crawler card and user redirect to frontend', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    process.env.FRONTEND_BASE_URL = 'https://ursasstube.fun';
+    const wallet = '0x1111111111111111111111111111111111111111';
+    Player.findOne = async () => null;
+
+    const crawlerRes = await fetch(`${baseUrl}/api/leaderboard/share/page/${wallet}`, {
+      headers: { 'User-Agent': 'Twitterbot' },
+      redirect: 'manual'
+    });
+    const html = await crawlerRes.text();
+    assert.equal(crawlerRes.status, 200);
+    assert.match(html, /summary_large_image/);
+
+    const userRes = await fetch(`${baseUrl}/api/leaderboard/share/page/${wallet}`, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      redirect: 'manual'
+    });
+    assert.equal(userRes.status, 302);
+    assert.equal(userRes.headers.get('location'), 'https://ursasstube.fun/');
+  } finally {
+    delete process.env.FRONTEND_BASE_URL;
+    server.close();
+  }
+});
+
+test('POST /api/share/start uses intent flow with preview URL when USE_X_API_SHARE is not true', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    process.env.FRONTEND_BASE_URL = 'https://ursasstube.fun';
+    process.env.USE_X_API_SHARE = 'false';
+    const wallet = '0x1111111111111111111111111111111111111111';
+    const link = { primaryId: 'tg_player4', telegramId: '4', wallet };
+    AccountLink.findOne = async (q) => (q.primaryId === 'tg_player4' ? link : null);
+    Player.findOne = async () => makePlayer({ wallet: 'tg_player4', xUserId: '12345' });
+    ShareEvent.create = async (doc) => ({ ...doc });
+
+    const r = await post(baseUrl, '/api/share/start', {}, { 'X-Primary-Id': 'tg_player4' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.preferredShareFlow, 'intent');
+    assert.ok(r.body.intentUrl);
+    const decoded = decodeURIComponent(String(r.body.intentUrl).split('text=')[1] || '');
+    assert.match(decoded, new RegExp(`/api/leaderboard/share/page/${wallet}`));
+    assert.doesNotMatch(decoded, /^I scored[\s\S]*https:\/\/ursasstube\.fun\/\?ref=/);
+  } finally {
+    delete process.env.FRONTEND_BASE_URL;
+    delete process.env.USE_X_API_SHARE;
+    server.close();
+  }
+});
+
 test('POST /api/share/start - already_shared_today returns no shareId', async () => {
   const { server, baseUrl } = await startServer();
   try {
