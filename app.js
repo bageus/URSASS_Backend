@@ -18,6 +18,7 @@ const ShareEvent = require('./models/ShareEvent');
 const { sanitizeReferralCode, buildReferralLandingUrl, isSocialPreviewCrawler } = require('./utils/referral');
 const { metricsMiddleware, renderMetricsText } = require('./middleware/requestMetrics');
 const { renderScoreSharePng } = require('./utils/shareCard');
+const { getPublicTelegramAnalyticsConfig } = require('./src/config/analytics');
 
 
 function escapeHtml(value) {
@@ -250,6 +251,15 @@ function createApp() {
       return res.redirect(302, `${(process.env.FRONTEND_BASE_URL || 'https://ursasstube.fun').trim().replace(/\/+$/, '')}/`);
     }
   });
+
+  app.get('/api/public-config', (req, res) => {
+    const telegramAnalytics = getPublicTelegramAnalyticsConfig();
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json({
+      telegramAnalytics
+    });
+  });
+
   mountApiRoutes(app, '/api');
   mountApiRoutes(app, '/api/v1');
 
