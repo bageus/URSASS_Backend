@@ -9,7 +9,6 @@ const storeRoutes = require('./routes/store');
 const accountRoutes = require('./routes/account');
 const gameRoutes = require('./routes/game');
 const donationsRoutes = require('./routes/donations');
-const analyticsRoutes = require('./routes/analytics');
 const referralRoutes = require('./routes/referral');
 const shareRoutes = require('./routes/share');
 const xRoutes = require('./routes/x');
@@ -17,8 +16,9 @@ const logger = require('./utils/logger');
 const Player = require('./models/Player');
 const ShareEvent = require('./models/ShareEvent');
 const { sanitizeReferralCode, buildReferralLandingUrl, isSocialPreviewCrawler } = require('./utils/referral');
-const { metricsMiddleware, markAliasRouteUsage, renderMetricsText } = require('./middleware/requestMetrics');
+const { metricsMiddleware, renderMetricsText } = require('./middleware/requestMetrics');
 const { renderScoreSharePng } = require('./utils/shareCard');
+const { getPublicTelegramAnalyticsConfig } = require('./src/config/analytics');
 
 
 function escapeHtml(value) {
@@ -43,8 +43,6 @@ function getRouteRegistry() {
     { path: '/account', router: accountRoutes },
     { path: '/game', router: gameRoutes },
     { path: '', router: donationsRoutes },
-    { path: '/analytics', router: analyticsRoutes },
-    { path: '/telemetry', router: analyticsRoutes },
     { path: '/referral', router: referralRoutes },
     { path: '/share', router: shareRoutes },
     { path: '/x', router: xRoutes }
@@ -133,18 +131,6 @@ function createApp() {
 
     if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
       res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-    }
-
-    next();
-  });
-
-  app.use((req, res, next) => {
-    if (req.path.startsWith('/api/telemetry') || req.path.startsWith('/api/v1/telemetry')) {
-      markAliasRouteUsage('telemetry');
-    }
-
-    if (req.path.startsWith('/api/analytics') || req.path.startsWith('/api/v1/analytics')) {
-      markAliasRouteUsage('analytics');
     }
 
     next();
@@ -265,6 +251,15 @@ function createApp() {
       return res.redirect(302, `${(process.env.FRONTEND_BASE_URL || 'https://ursasstube.fun').trim().replace(/\/+$/, '')}/`);
     }
   });
+
+  app.get('/api/public-config', (req, res) => {
+    const telegramAnalytics = getPublicTelegramAnalyticsConfig();
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json({
+      telegramAnalytics
+    });
+  });
+
   mountApiRoutes(app, '/api');
   mountApiRoutes(app, '/api/v1');
 

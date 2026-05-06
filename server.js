@@ -6,6 +6,7 @@ const { createApp } = require('./app');
 const { startDonationPaymentRecheckLoop } = require('./utils/donationService');
 const { validateStartupConfig } = require('./utils/startupConfig');
 const { startLeaderboardAggregateRefreshLoop } = require('./services/leaderboardAggregateRefreshService');
+const { getPublicTelegramAnalyticsConfig } = require('./src/config/analytics');
 
 const app = createApp();
 
@@ -21,6 +22,10 @@ if (startupValidation.errors.length > 0) {
   });
   process.exit(1);
 }
+
+const telegramAnalyticsConfig = getPublicTelegramAnalyticsConfig();
+logger.info(`Analytics enabled: ${telegramAnalyticsConfig.enabled}`);
+logger.info(`Analytics appName: ${telegramAnalyticsConfig.appName}`);
 
 const runBotInProcess = process.env.BOT_MODE !== 'worker' && process.env.START_BOT_IN_PROCESS !== 'false';
 
