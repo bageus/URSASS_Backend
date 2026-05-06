@@ -3,6 +3,9 @@ const TelegramBot = require('node-telegram-bot-api');
 let bot = null;
 let restartTimer = null;
 
+const miniAppUrl = process.env.TELEGRAM_MINI_APP_URL || process.env.FRONTEND_BASE_URL || 'https://ursasstube.fun';
+console.log('🤖 Telegram Mini App URL:', miniAppUrl);
+
 async function processSuccessfulPaymentMessage(message) {
   const paymentMessage = message?.successful_payment ? message : message?.message;
   if (!paymentMessage?.successful_payment) {
@@ -40,7 +43,7 @@ function registerHandlers(currentBot) {
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [[
-            { text: '🎮 Play Game', web_app: { url: 'https://ursass-tube.vercel.app' } }
+            { text: '🎮 Play Game', web_app: { url: miniAppUrl } }
           ]]
         }
       }
