@@ -216,7 +216,7 @@ test('POST /api/share/start uses intent flow with web share URL and no frontend 
   }
 });
 
-test('POST /api/share/start - already_shared_today returns no shareId', async () => {
+test('POST /api/share/start - creates new shareId even after share today', async () => {
   const { server, baseUrl } = await startServer();
   try {
     const today = new Date().toISOString().slice(0, 10);
