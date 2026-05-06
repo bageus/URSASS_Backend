@@ -51,7 +51,7 @@ test('buildReferralUrl uses FRONTEND_BASE_URL env', () => {
   const orig = process.env.FRONTEND_BASE_URL;
   process.env.FRONTEND_BASE_URL = 'https://ursasstube.fun';
   const url = buildReferralUrl('ABCD1234');
-  assert.equal(url, 'https://ursasstube.fun/?ref=ABCD1234');
+  assert.equal(url, 'https://ursasstube.fun/?ref_hint=ABCD1234');
   process.env.FRONTEND_BASE_URL = orig || '';
 });
 
