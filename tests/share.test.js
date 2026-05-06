@@ -99,7 +99,7 @@ test('POST /api/share/start - wallet-linked share contains preview URL and inten
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.imageUrl, `${baseUrl}/api/leaderboard/share/image/${wallet}.png`);
     assert.equal(r.body.postImageUrl, `${baseUrl}/api/leaderboard/share/image/${wallet}.png`);
-    assert.equal(r.body.previewUrl, `${baseUrl}/s/PLAY1234`);
+    assert.equal(r.body.previewUrl, `${baseUrl}/share/${r.body.shareId}`);
     assert.equal(r.body.shareResultApiUrl, '/api/x/share-result');
     assert.match(r.body.intentUrl, /twitter\.com\/intent\/tweet\?/);
     assert.doesNotMatch(r.body.intentUrl, /[?&]url=/);
@@ -195,7 +195,7 @@ test('POST /api/share/start uses intent flow with canonical /s/:refCode URL when
     assert.equal(r.body.preferredShareFlow, 'intent');
     assert.ok(r.body.intentUrl);
     const decoded = decodeURIComponent(String(r.body.intentUrl).split('text=')[1] || '');
-    assert.match(decoded, /\/s\/PLAY1234/);
+    assert.match(decoded, /\/share\/[0-9a-f-]{36}/);
     assert.doesNotMatch(decoded, /^I scored[\s\S]*https:\/\/ursasstube\.fun\/\?ref=/);
   } finally {
     delete process.env.FRONTEND_BASE_URL;
@@ -204,7 +204,7 @@ test('POST /api/share/start uses intent flow with canonical /s/:refCode URL when
   }
 });
 
-test('POST /api/share/start - already_shared_today returns no shareId', async () => {
+test('POST /api/share/start - creates new shareId even after share today', async () => {
   const { server, baseUrl } = await startServer();
   try {
     const today = new Date().toISOString().slice(0, 10);
@@ -215,7 +215,7 @@ test('POST /api/share/start - already_shared_today returns no shareId', async ()
 
     const r = await post(baseUrl, '/api/share/start', {}, { 'X-Primary-Id': 'tg_player2' });
     assert.equal(r.status, 200);
-    assert.equal(r.body.shareId, null);
+    assert.match(String(r.body.shareId || ''), /^[0-9a-f-]{36}$/i);
     assert.equal(r.body.reason, 'already_shared_today');
   } finally {
     server.close();
