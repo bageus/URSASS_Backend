@@ -47,15 +47,10 @@ function buildWebReferralUrl(refCode) {
   return `${frontendBaseUrl}/?ref_hint=${encodeURIComponent(String(refCode || '').trim())}`;
 }
 
-function buildTelegramReferralUrl(refCode) {
-  const botUsername = String(process.env.TELEGRAM_BOT_USERNAME || '').trim().replace(/^@+/, '');
-  const shortName = String(process.env.TELEGRAM_MINI_APP_SHORT_NAME || '').trim();
-  if (!botUsername) return null;
-  const encodedRefCode = encodeURIComponent(String(refCode || '').trim());
-  if (shortName) {
-    return `https://t.me/${botUsername}/${shortName}?startapp=ref_${encodedRefCode}`;
-  }
-  return `https://t.me/${botUsername}?start=ref_${encodedRefCode}`;
+function buildTelegramReferralUrl() {
+  const configuredBotUrl = String(process.env.TELEGRAM_BOT_URL || '').trim();
+  if (configuredBotUrl) return configuredBotUrl;
+  return 'https://t.me/ursastube_bot';
 }
 
 function sanitizeReferralCode(refCode) {

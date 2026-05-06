@@ -17,7 +17,7 @@ function shouldUseXApiShare() {
   return String(process.env.USE_X_API_SHARE || 'false').toLowerCase() === 'true';
 }
 
-const SHARE_HASHTAGS = '#UrsassTube #Ursas #Ursasplanet #GameChallenge #HighScore';
+const SHARE_HASHTAGS = '#UrsassTube #Ursas #Ursasplanet #GameChallenge';
 
 function getClientIp(req) {
   const xff = req.get('x-forwarded-for');
@@ -78,15 +78,16 @@ function buildSharePostText(score, referralCode, webShareUrl, telegramShareUrl) 
     `I scored ${normalizedScore} in Ursass Tube 🐻`,
     'Can you beat me?',
     '',
-    `Use my ref code: ${referralCode}`,
-    '',
     'Play Web:',
-    webShareUrl
+    webShareUrl,
+    '',
+    'Play Telegram:',
+    telegramShareUrl,
+    '',
+    `Get bonus — use my ref code: ${referralCode}`,
+    '',
+    SHARE_HASHTAGS
   ];
-  if (telegramShareUrl) {
-    parts.push('', 'Play Telegram:', telegramShareUrl);
-  }
-  parts.push('', SHARE_HASHTAGS);
   return parts.join('\n');
 }
 
@@ -119,7 +120,7 @@ router.post('/start', shareStartLimiter, async (req, res) => {
       : `${baseUrl}/img/score_result.png`;
     const shareId = crypto.randomUUID();
     const webShareUrl = `${baseUrl}/share/${shareId}`;
-    const telegramShareUrl = buildTelegramReferralUrl(referralCode);
+    const telegramShareUrl = buildTelegramReferralUrl();
     const postText = buildSharePostText(scoreAtShare, referralCode, webShareUrl, telegramShareUrl);
     const hasConnectedXAccount = Boolean(player.xUserId);
     const shouldUsePaidXApi = shouldUseXApiShare() && hasConnectedXAccount;

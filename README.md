@@ -60,6 +60,7 @@ npm start
 | `MONGO_URL` | MongoDB connection string |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token |
 | `TELEGRAM_BOT_USERNAME` | Telegram bot username (without `@`) |
+| `TELEGRAM_BOT_URL` | Telegram bot URL for sharing (default: `https://t.me/ursastube_bot`) |
 | `CORS_ALLOWED_ORIGINS` | Optional comma-separated list of extra allowed origins |
 | `MAX_RESULT_TIMESTAMP_AGE_MS` | Max allowed age for game result timestamp in the past (default: `7200000`, i.e. 2h) |
 | `MAX_RESULT_FUTURE_SKEW_MS` | Max allowed future clock skew for game result timestamp (default: `180000`, i.e. 3m) |

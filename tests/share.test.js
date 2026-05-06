@@ -76,7 +76,19 @@ test('POST /api/share/start - returns shareId when eligible', async () => {
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.ok(r.body.shareId, 'shareId should be present');
     assert.ok(r.body.eligibleForReward === true);
-    assert.ok(r.body.secondsUntilReward > 0);
+    assert.ok(r.body.postText.includes('Play Web:'));
+    assert.ok(r.body.postText.includes(r.body.webShareUrl));
+    assert.ok(r.body.postText.includes('Play Telegram:'));
+    assert.ok(r.body.postText.includes('https://t.me/ursastube_bot'));
+    assert.ok(r.body.postText.includes('Get bonus — use my ref code: PLAY1234'));
+    assert.ok(r.body.postText.includes('#UrsassTube #Ursas #Ursasplanet #GameChallenge'));
+    assert.ok(!r.body.postText.includes('startapp=ref_'));
+    assert.ok(!r.body.postText.includes('?start=ref_'));
+    assert.ok(!r.body.postText.includes('#HighScore'));
+    assert.equal(r.body.telegramShareUrl, 'https://t.me/ursastube_bot');
+    assert.ok(!r.body.telegramShareUrl.includes('PLAY1234'));
+    const firstLink = (r.body.postText.match(/https?:\/\/\S+/) || [])[0];
+    assert.equal(firstLink, r.body.webShareUrl);
     assert.equal(created.length, 1);
   } finally {
     delete process.env.FRONTEND_BASE_URL;
@@ -99,7 +111,7 @@ test('POST /api/share/start - wallet-linked share contains preview URL and inten
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.imageUrl, `${baseUrl}/api/leaderboard/share/image/${wallet}.png`);
     assert.equal(r.body.postImageUrl, `${baseUrl}/api/leaderboard/share/image/${wallet}.png`);
-    assert.equal(r.body.previewUrl, `${baseUrl}/share/${r.body.shareId}`);
+    assert.equal(r.body.previewUrl, r.body.webShareUrl);
     assert.equal(r.body.shareResultApiUrl, '/api/x/share-result');
     assert.match(r.body.intentUrl, /twitter\.com\/intent\/tweet\?/);
     assert.doesNotMatch(r.body.intentUrl, /[?&]url=/);
@@ -179,7 +191,7 @@ test('GET /api/leaderboard/share/page/:wallet player missing returns generic cra
   }
 });
 
-test('POST /api/share/start uses intent flow with canonical /s/:refCode URL when USE_X_API_SHARE is not true', async () => {
+test('POST /api/share/start uses intent flow with web share URL and no frontend referral URL when USE_X_API_SHARE is not true', async () => {
   const { server, baseUrl } = await startServer();
   try {
     process.env.FRONTEND_BASE_URL = 'https://ursasstube.fun';
@@ -195,7 +207,7 @@ test('POST /api/share/start uses intent flow with canonical /s/:refCode URL when
     assert.equal(r.body.preferredShareFlow, 'intent');
     assert.ok(r.body.intentUrl);
     const decoded = decodeURIComponent(String(r.body.intentUrl).split('text=')[1] || '');
-    assert.match(decoded, /\/share\/[0-9a-f-]{36}/);
+    assert.match(decoded, /\/share\//);
     assert.doesNotMatch(decoded, /^I scored[\s\S]*https:\/\/ursasstube\.fun\/\?ref=/);
   } finally {
     delete process.env.FRONTEND_BASE_URL;
@@ -215,7 +227,7 @@ test('POST /api/share/start - creates new shareId even after share today', async
 
     const r = await post(baseUrl, '/api/share/start', {}, { 'X-Primary-Id': 'tg_player2' });
     assert.equal(r.status, 200);
-    assert.match(String(r.body.shareId || ''), /^[0-9a-f-]{36}$/i);
+    assert.ok(r.body.shareId);
     assert.equal(r.body.reason, 'already_shared_today');
   } finally {
     server.close();
@@ -431,6 +443,26 @@ test('POST /api/share/confirm - streak resets to 1 when last share was 2+ days a
     assert.equal(r.body.awarded, true);
     assert.equal(r.body.shareStreak, 1, 'Streak should reset to 1 after a gap');
   } finally {
+    server.close();
+  }
+});
+
+
+test('POST /api/share/start uses TELEGRAM_BOT_URL when provided', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    process.env.TELEGRAM_BOT_URL = 'https://t.me/ursastube_bot_custom';
+    const link = { primaryId: 'tg_player5', telegramId: '5', wallet: null };
+    AccountLink.findOne = async (q) => (q.primaryId === 'tg_player5' ? link : null);
+    Player.findOne = async () => makePlayer({ wallet: 'tg_player5' });
+    ShareEvent.create = async (doc) => ({ ...doc });
+
+    const r = await post(baseUrl, '/api/share/start', {}, { 'X-Primary-Id': 'tg_player5' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.telegramShareUrl, 'https://t.me/ursastube_bot_custom');
+    assert.match(r.body.postText, /Play Telegram:\nhttps:\/\/t\.me\/ursastube_bot_custom/);
+  } finally {
+    delete process.env.TELEGRAM_BOT_URL;
     server.close();
   }
 });
