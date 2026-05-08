@@ -20,6 +20,12 @@ async function startServer() {
   });
 }
 
+async function get(baseUrl, path, headers = {}) {
+  const res = await fetch(`${baseUrl}${path}`, { headers });
+  const json = await res.json().catch(() => ({}));
+  return { status: res.status, body: json };
+}
+
 async function post(baseUrl, path, body, headers = {}) {
   const res = await fetch(`${baseUrl}${path}`, {
     method: 'POST',
@@ -303,6 +309,8 @@ test('POST /api/share/confirm - awards 20 gold after 30s', async () => {
       return doc;
     };
 
+    Player.countDocuments = async () => 0;
+
     const r = await post(baseUrl, '/api/share/confirm', { shareId }, { 'X-Primary-Id': 'tg_gold' });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.awarded, true);
@@ -311,6 +319,12 @@ test('POST /api/share/confirm - awards 20 gold after 30s', async () => {
     assert.equal(historyDoc.type, 'share');
     assert.equal(historyDoc.gold, 20);
     assert.equal(historyDoc.silver, 0);
+
+    const profile = await get(baseUrl, '/api/account/me/profile', { 'X-Primary-Id': 'tg_gold' });
+    assert.equal(profile.status, 200, JSON.stringify(profile.body));
+    assert.equal(profile.body.rewardGold, 20);
+    assert.equal(profile.body.totalGoldCoins, 0);
+    assert.equal(profile.body.gold, 20);
   } finally {
     server.close();
   }
