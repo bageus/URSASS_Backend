@@ -21,9 +21,15 @@ async function recordCoinReward(primaryId, type, amounts = {}, opts = {}) {
   }
 
   try {
+    if (opts.contextKey) {
+      const existing = await CoinTransaction.findOne({ contextKey: opts.contextKey });
+      if (existing) return existing;
+    }
+
     const entry = await CoinTransaction.create({
       primaryId: normalizedPrimaryId,
       type,
+      contextKey: opts.contextKey || null,
       gold,
       silver,
       createdAt: opts.createdAt || new Date()

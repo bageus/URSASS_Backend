@@ -6,6 +6,11 @@ const referralRewardSchema = new mongoose.Schema({
   referralCode: { type: String, required: true, index: true },
   referredGoldAwarded: { type: Number, default: 100 },
   referrerGoldAwarded: { type: Number, default: 50 },
+  referredBalanceCreditedAt: { type: Date, default: null },
+  referrerBalanceCreditedAt: { type: Date, default: null },
+  referredHistoryRecordedAt: { type: Date, default: null },
+  referrerHistoryRecordedAt: { type: Date, default: null },
+  appliedAt: { type: Date, default: null },
   createdAt: { type: Date, default: Date.now }
 });
 
