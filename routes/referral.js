@@ -110,6 +110,11 @@ router.post('/apply', writeLimiter, async (req, res) => {
 
     const referrer = await Player.findOne({ referralCode });
     if (!referrer) return res.status(404).json({ error: 'referral_code_not_found' });
+    const normalizedReferrerWallet = String(referrer.wallet || '').trim().toLowerCase();
+    const normalizedCurrentPrimaryId = String(currentPrimaryId || '').trim().toLowerCase();
+    if (normalizedReferrerWallet && normalizedReferrerWallet === normalizedCurrentPrimaryId) {
+      return res.status(400).json({ error: 'cannot_use_own_referral_code' });
+    }
 
     try {
       await ReferralReward.create({
