@@ -18,6 +18,15 @@ async function startServer() {
   });
 }
 
+
+async function get(baseUrl, path, headers = {}) {
+  const res = await fetch(`${baseUrl}${path}`, {
+    headers
+  });
+  const json = await res.json().catch(() => ({}));
+  return { status: res.status, body: json };
+}
+
 async function post(baseUrl, path, body, headers = {}) {
   const res = await fetch(`${baseUrl}${path}`, {
     method: 'POST',
@@ -234,11 +243,20 @@ test('POST /api/referral/apply - awards both users and writes history', async ()
     CoinTransaction.findOne = async (q) => history.find(h => h.contextKey === q.contextKey) || null;
     CoinTransaction.create = async (doc) => { history.push(doc); return doc; };
 
+    Player.countDocuments = async () => 0;
+
     const r = await post(baseUrl, '/api/referral/apply', { referralCode: 'REF11111' }, { 'X-Primary-Id': 'tg_apply1' });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(players.tg_apply1.gold, 100);
     assert.equal(players.tg_referrer.gold, 50);
     assert.equal(history.length, 2);
+    assert.ok(history.some((entry) => entry.type === 'referral' && entry.primaryId === 'tg_apply1' && entry.gold === 100));
+
+    const profile = await get(baseUrl, '/api/account/me/profile', { 'X-Primary-Id': 'tg_apply1' });
+    assert.equal(profile.status, 200, JSON.stringify(profile.body));
+    assert.equal(profile.body.rewardGold, 100);
+    assert.equal(profile.body.totalGoldCoins, 0);
+    assert.equal(profile.body.gold, 100);
   } finally { server.close(); }
 });
 
