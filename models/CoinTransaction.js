@@ -5,12 +5,14 @@ const COIN_TRANSACTION_TYPES = ['share', 'ride', 'buy', 'referral', 'refer', 'ta
 const coinTransactionSchema = new mongoose.Schema({
   primaryId: { type: String, required: true, index: true, trim: true, lowercase: true },
   type: { type: String, required: true, enum: COIN_TRANSACTION_TYPES },
+  contextKey: { type: String, default: null, index: true },
   gold: { type: Number, required: true, min: 0, default: 0 },
   silver: { type: Number, required: true, min: 0, default: 0 },
   createdAt: { type: Date, default: Date.now, index: true }
 }, { versionKey: false });
 
 coinTransactionSchema.index({ primaryId: 1, createdAt: -1 });
+coinTransactionSchema.index({ contextKey: 1 }, { unique: true, sparse: true });
 
 coinTransactionSchema.pre('validate', function(next) {
   if ((this.gold || 0) <= 0 && (this.silver || 0) <= 0) {

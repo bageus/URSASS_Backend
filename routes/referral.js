@@ -96,7 +96,7 @@ router.post('/apply', writeLimiter, async (req, res) => {
     const link = await resolveAuth(req);
     if (!link) return res.status(401).json({ error: 'authentication_required' });
 
-    const currentPrimaryId = link.primaryId;
+    const currentPrimaryId = String(link.primaryId || '').trim().toLowerCase();
     const referralCode = String(req.body?.referralCode || '').trim().toUpperCase();
     if (!/^[A-Z0-9_-]{1,64}$/.test(referralCode)) {
       return res.status(400).json({ error: 'invalid_referral_code' });
@@ -110,31 +110,73 @@ router.post('/apply', writeLimiter, async (req, res) => {
 
     const referrer = await Player.findOne({ referralCode });
     if (!referrer) return res.status(404).json({ error: 'referral_code_not_found' });
-    const normalizedReferrerWallet = String(referrer.wallet || '').trim().toLowerCase();
-    const normalizedCurrentPrimaryId = String(currentPrimaryId || '').trim().toLowerCase();
-    if (normalizedReferrerWallet && normalizedReferrerWallet === normalizedCurrentPrimaryId) {
+    const referrerPrimaryId = String(referrer.wallet || '').trim().toLowerCase();
+
+    if (referrerPrimaryId && referrerPrimaryId === currentPrimaryId) {
       return res.status(400).json({ error: 'cannot_use_own_referral_code' });
     }
 
-    try {
-      await ReferralReward.create({
+    let reward = await ReferralReward.findOne({ referredPrimaryId: currentPrimaryId });
+    let repairedPartial = false;
+    if (!reward) {
+      reward = await ReferralReward.create({
         referredPrimaryId: currentPrimaryId,
-        referrerPrimaryId: referrer.wallet,
+        referrerPrimaryId,
         referralCode,
         referredGoldAwarded: 100,
         referrerGoldAwarded: 50
       });
-    } catch (e) {
-      if (e?.code === 11000) return res.status(409).json({ error: 'referral_already_applied', alreadyApplied: true });
-      throw e;
+    } else {
+      repairedPartial = true;
+      if (reward.referralCode !== referralCode) {
+        return res.status(409).json({ error: 'referral_already_applied', alreadyApplied: true });
+      }
+    }
+
+    const op = {
+      referredBalance: !!reward.referredBalanceCreditedAt,
+      referrerBalance: !!reward.referrerBalanceCreditedAt,
+      referredHistory: !!reward.referredHistoryRecordedAt,
+      referrerHistory: !!reward.referrerHistoryRecordedAt,
+      referredBy: false
+    };
+
+    if (!reward.referredBalanceCreditedAt) {
+      const bal = await addGold(currentPrimaryId, 100, 'referral_apply_referred');
+      if (bal === null) throw new Error('failed_referred_balance_credit');
+      reward.referredBalanceCreditedAt = new Date();
+      op.referredBalance = true;
+    }
+
+    if (!reward.referrerBalanceCreditedAt) {
+      const bal = await addGold(referrerPrimaryId, 50, 'referral_apply_referrer');
+      if (bal === null) throw new Error('failed_referrer_balance_credit');
+      reward.referrerBalanceCreditedAt = new Date();
+      op.referrerBalance = true;
+    }
+
+    if (!reward.referredHistoryRecordedAt) {
+      const entry = await recordCoinReward(currentPrimaryId, 'referral', { gold: 100 }, { contextKey: `referral:${reward._id}:referred` });
+      if (!entry) throw new Error('failed_referred_history');
+      reward.referredHistoryRecordedAt = new Date();
+      op.referredHistory = true;
+    }
+
+    if (!reward.referrerHistoryRecordedAt) {
+      const entry = await recordCoinReward(referrerPrimaryId, 'refer', { gold: 50 }, { contextKey: `referral:${reward._id}:referrer` });
+      if (!entry) throw new Error('failed_referrer_history');
+      reward.referrerHistoryRecordedAt = new Date();
+      op.referrerHistory = true;
     }
 
     await Player.updateOne({ wallet: currentPrimaryId }, { $set: { referredBy: referralCode } });
-    await addGold(currentPrimaryId, 100, 'referral_apply_referred');
-    await addGold(referrer.wallet, 50, 'referral_apply_referrer');
-    await recordCoinReward(currentPrimaryId, 'referral_apply', { gold: 100 });
-    await recordCoinReward(referrer.wallet, 'refer_apply', { gold: 50 });
+    op.referredBy = true;
+
+    reward.appliedAt = new Date();
+    await reward.save();
+
     const refreshed = await Player.findOne({ wallet: currentPrimaryId });
+    logger.info({ currentPrimaryId, referrerPrimaryId, referralCode, repairedPartial, ...op }, 'Referral apply completed');
 
     return res.json({
       applied: true,
