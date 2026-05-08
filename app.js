@@ -44,6 +44,7 @@ function getRouteRegistry() {
     { path: '/game', router: gameRoutes },
     { path: '', router: donationsRoutes },
     { path: '/referral', router: referralRoutes },
+    { path: '/referrals', router: referralRoutes },
     { path: '/share', router: shareRoutes },
     { path: '/x', router: xRoutes }
   ];
