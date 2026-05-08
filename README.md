@@ -195,6 +195,26 @@ MONGO_URI='mongodb://...' node scripts/migrations/2026-04-26-referral-and-share.
 
 The script is idempotent — safe to run multiple times.
 
+
+### Referral rewards repair script
+
+If some `ReferralReward` rows were marked/applied but one or more credits/history rows were not written, run:
+
+```bash
+MONGO_URL='mongodb://...' node scripts/repair-referral-rewards.js
+```
+
+The script is **dry-run by default** and only prints what would be repaired.
+
+To apply fixes:
+
+```bash
+MONGO_URL='mongodb://...' node scripts/repair-referral-rewards.js --apply
+```
+
+The repair is idempotent and only fills missing pieces (balance/history) without deleting referral records or changing reward amounts.
+
+
 ---
 
 - Use `GET /api/game/config?mode=unauth` to fetch the runtime preset for browser users who choose not to authenticate.
