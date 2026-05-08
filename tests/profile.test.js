@@ -33,6 +33,8 @@ function makePlayer(overrides = {}) {
     referredBy: null,
     bestScore: 8350,
     gold: 1240,
+    totalGoldCoins: 350,
+    totalSilverCoins: 75,
     shareStreak: 3,
     lastShareDay: null,
     lastShareAt: null,
@@ -92,7 +94,11 @@ test('GET /api/account/me/profile - returns full profile', async () => {
 
     assert.equal(r.body.primaryId, 'tg_profile1');
     assert.equal(r.body.bestScore, 8350);
-    assert.equal(r.body.gold, 1240);
+    assert.equal(r.body.gold, 1590);
+    assert.equal(r.body.rewardGold, 1240);
+    assert.equal(r.body.totalGoldCoins, 350);
+    assert.equal(r.body.totalSilverCoins, 75);
+    assert.equal(r.body.silver, 75);
     assert.equal(r.body.referralCode, 'PROF1234');
     assert.ok(r.body.referralUrl.includes('PROF1234'), `referralUrl should contain code: ${r.body.referralUrl}`);
     assert.equal(r.body.rank, 42, 'rank = 41 + 1 = 42');
