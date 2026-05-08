@@ -159,15 +159,13 @@ function buildLeaderboardEntry(player, displayName, position) {
 // ✅ GET: Top 10 players
 router.get('/top', readLimiter, async (req, res) => {
   try {
-    const walletQuery = typeof req.query.wallet === 'string' ? req.query.wallet.trim() : '';
-    const wallet = walletQuery ? parseWalletOrNull(walletQuery) : null;
-
+    const walletQuery = typeof req.query.wallet === 'string' ? req.query.wallet.trim().toLowerCase() : '';
+    let wallet = walletQuery ? parseWalletOrNull(walletQuery) : null;
     if (walletQuery && !wallet) {
-      logger.warn({ wallet: walletQuery, requestId: req.requestId }, 'GET /top rejected: invalid wallet format');
-      return res.status(400).json({
-        ...buildInvalidWalletError(),
-        requestId: req.requestId
+      const link = await AccountLink.findOne({
+        $or: [{ primaryId: walletQuery }, { wallet: walletQuery }]
       });
+      wallet = link?.primaryId || null;
     }
 
     if (!wallet) {
@@ -244,7 +242,7 @@ router.get('/top', readLimiter, async (req, res) => {
 
     const includeInsights =
       leaderboardInsightsConfig.insightsEnabled &&
-      wallet &&
+      parseWalletOrNull(wallet) &&
       (req.query.v === '2' || req.query.includeInsights === 'true');
 
     const insights = includeInsights && playerRecord

@@ -134,7 +134,12 @@ test('POST /api/referral/track - self-referral blocked (400)', async () => {
       save: async function() {}
     };
     Player.findOne = async () => currentPlayer;
-    Player.findOneAndUpdate = async () => null;
+    Player.findOneAndUpdate = async (q, update) => {
+      const p = players[q.wallet];
+      if (!p) return null;
+      p.gold = (p.gold || 0) + (update.$inc?.gold || 0);
+      return p;
+    };
 
     const r = await post(baseUrl, '/api/referral/track', { ref: 'SELFREF1' }, {
       'X-Primary-Id': 'tg_222'
@@ -165,7 +170,7 @@ test('POST /api/referral/track - unknown ref returns 404', async () => {
       if (q.referralCode) return null; // not found
       return null;
     };
-    Player.findOneAndUpdate = async () => null;
+    Player.findOneAndUpdate = async (q, update) => { const p = players[q.wallet]; if (!p) return null; p.gold = (p.gold || 0) + (update.$inc?.gold || 0); return p; };
 
     const r = await post(baseUrl, '/api/referral/track', { ref: 'UNKNOWN1' }, {
       'X-Primary-Id': 'tg_333'
@@ -200,4 +205,73 @@ test('POST /api/referral/track - second time idempotent (returns already:true)',
   } finally {
     server.close();
   }
+});
+
+const ReferralReward = require('../models/ReferralReward');
+const CoinTransaction = require('../models/CoinTransaction');
+
+test('POST /api/referral/apply - awards both users and writes history', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const players = {
+      tg_apply1: { wallet: 'tg_apply1', referralCode: 'ME111111', gold: 0 },
+      tg_referrer: { wallet: 'tg_referrer', referralCode: 'REF11111', gold: 0 }
+    };
+    const rewards = [];
+    const history = [];
+
+    AccountLink.findOne = async (q) => (q.primaryId === 'tg_apply1' ? { primaryId: 'tg_apply1' } : null);
+    Player.findOne = async (q) => q.wallet ? players[q.wallet] || null : Object.values(players).find(p => p.referralCode === q.referralCode) || null;
+    Player.findOneAndUpdate = async (q, update) => {
+      const p = players[q.wallet];
+      if (!p) return null;
+      p.gold = (p.gold || 0) + (update.$inc?.gold || 0);
+      return p;
+    };
+    Player.updateOne = async (q, update) => { if (players[q.wallet]) players[q.wallet].referredBy = update.$set.referredBy; return { acknowledged: true }; };
+    ReferralReward.findOne = async (q) => rewards.find(r => r.referredPrimaryId === q.referredPrimaryId) || null;
+    ReferralReward.create = async (doc) => { const r = { _id: 'rw1', ...doc, save: async function(){} }; rewards.push(r); return r; };
+    CoinTransaction.findOne = async (q) => history.find(h => h.contextKey === q.contextKey) || null;
+    CoinTransaction.create = async (doc) => { history.push(doc); return doc; };
+
+    const r = await post(baseUrl, '/api/referral/apply', { referralCode: 'REF11111' }, { 'X-Primary-Id': 'tg_apply1' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(players.tg_apply1.gold, 100);
+    assert.equal(players.tg_referrer.gold, 50);
+    assert.equal(history.length, 2);
+  } finally { server.close(); }
+});
+
+test('POST /api/referral/apply - retry after partial reward repairs without double-award', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const players = {
+      tg_apply2: { wallet: 'tg_apply2', referralCode: 'ME222222', gold: 0 },
+      tg_referrer2: { wallet: 'tg_referrer2', referralCode: 'REF22222', gold: 0 }
+    };
+    const reward = { _id: 'rw2', referredPrimaryId: 'tg_apply2', referrerPrimaryId: 'tg_referrer2', referralCode: 'REF22222', referredBalanceCreditedAt: null, referrerBalanceCreditedAt: null, referredHistoryRecordedAt: null, referrerHistoryRecordedAt: null, save: async function(){} };
+    const history = [];
+
+    AccountLink.findOne = async (q) => (q.primaryId === 'tg_apply2' ? { primaryId: 'tg_apply2' } : null);
+    Player.findOne = async (q) => q.wallet ? players[q.wallet] || null : Object.values(players).find(p => p.referralCode === q.referralCode) || null;
+    Player.findOneAndUpdate = async (q, update) => {
+      const p = players[q.wallet];
+      if (!p) return null;
+      p.gold = (p.gold || 0) + (update.$inc?.gold || 0);
+      return p;
+    };
+    Player.updateOne = async () => ({ acknowledged: true });
+    ReferralReward.findOne = async () => reward;
+    ReferralReward.create = async () => { throw new Error('should not create'); };
+    CoinTransaction.findOne = async (q) => history.find(h => h.contextKey === q.contextKey) || null;
+    CoinTransaction.create = async (doc) => { history.push(doc); return doc; };
+
+    const r1 = await post(baseUrl, '/api/referral/apply', { referralCode: 'REF22222' }, { 'X-Primary-Id': 'tg_apply2' });
+    const r2 = await post(baseUrl, '/api/referral/apply', { referralCode: 'REF22222' }, { 'X-Primary-Id': 'tg_apply2' });
+    assert.equal(r1.status, 200);
+    assert.equal(r2.status, 200);
+    assert.equal(players.tg_apply2.gold, 100);
+    assert.equal(players.tg_referrer2.gold, 50);
+    assert.equal(history.length, 2);
+  } finally { server.close(); }
 });
