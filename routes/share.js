@@ -7,8 +7,7 @@ const ShareEvent = require('../models/ShareEvent');
 const AccountLink = require('../models/AccountLink');
 const { getUtcDayKey, getYesterdayUtcDayKey } = require('../utils/utcDay');
 const { buildWebReferralUrl, buildTelegramReferralUrl } = require('../utils/referral');
-const { addGold } = require('../utils/goldWallet');
-const { recordCoinReward } = require('../utils/coinHistory');
+const { grantGoldReward } = require('../utils/goldRewards');
 const logger = require('../utils/logger');
 
 const SHARE_REWARD_DELAY_MS = Number(process.env.SHARE_REWARD_DELAY_MS || 30000);
@@ -296,11 +295,17 @@ router.post('/confirm', shareConfirmLimiter, async (req, res) => {
     player.lastShareAt = now;
     await player.save();
 
-    // Award gold
-    const newGoldBalance = await addGold(primaryId, SHARE_DAILY_REWARD_GOLD, 'share_daily', {
-      requestId: req.requestId
-    });
-    await recordCoinReward(primaryId, 'share', { gold: SHARE_DAILY_REWARD_GOLD }, { requestId: req.requestId });
+    // Award gold + history atomically and idempotently
+    const rewardResult = await grantGoldReward(
+      primaryId,
+      SHARE_DAILY_REWARD_GOLD,
+      'share',
+      `share:${shareId}`,
+      { requestId: req.requestId }
+    );
+    if (!rewardResult.history || rewardResult.balance === null) {
+      throw new Error('failed_share_reward');
+    }
 
     logger.info(
       { primaryId, shareId, goldAwarded: SHARE_DAILY_REWARD_GOLD, shareStreak: player.shareStreak },
@@ -311,7 +316,7 @@ router.post('/confirm', shareConfirmLimiter, async (req, res) => {
       awarded: true,
       goldAwarded: SHARE_DAILY_REWARD_GOLD,
       shareStreak: player.shareStreak,
-      totalGold: newGoldBalance !== null ? newGoldBalance : player.gold
+      totalGold: rewardResult.balance
     });
 
   } catch (error) {

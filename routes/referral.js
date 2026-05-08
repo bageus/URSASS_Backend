@@ -3,8 +3,7 @@ const router = express.Router();
 const Player = require('../models/Player');
 const AccountLink = require('../models/AccountLink');
 const ReferralReward = require('../models/ReferralReward');
-const { addGold } = require('../utils/goldWallet');
-const { recordCoinReward } = require('../utils/coinHistory');
+const { grantGoldReward } = require('../utils/goldRewards');
 const { readLimiter, writeLimiter } = require('../middleware/rateLimiter');
 const logger = require('../utils/logger');
 
@@ -141,31 +140,21 @@ router.post('/apply', writeLimiter, async (req, res) => {
       referredBy: false
     };
 
-    if (!reward.referredBalanceCreditedAt) {
-      const bal = await addGold(currentPrimaryId, 100, 'referral_apply_referred');
-      if (bal === null) throw new Error('failed_referred_balance_credit');
-      reward.referredBalanceCreditedAt = new Date();
+    if (!reward.referredBalanceCreditedAt || !reward.referredHistoryRecordedAt) {
+      const referredReward = await grantGoldReward(currentPrimaryId, 100, 'referral', `referral:${reward._id}:referred`);
+      if (!referredReward.history || referredReward.balance === null) throw new Error('failed_referred_reward');
+      reward.referredBalanceCreditedAt = reward.referredBalanceCreditedAt || new Date();
+      reward.referredHistoryRecordedAt = reward.referredHistoryRecordedAt || new Date();
       op.referredBalance = true;
-    }
-
-    if (!reward.referrerBalanceCreditedAt) {
-      const bal = await addGold(referrerPrimaryId, 50, 'referral_apply_referrer');
-      if (bal === null) throw new Error('failed_referrer_balance_credit');
-      reward.referrerBalanceCreditedAt = new Date();
-      op.referrerBalance = true;
-    }
-
-    if (!reward.referredHistoryRecordedAt) {
-      const entry = await recordCoinReward(currentPrimaryId, 'referral', { gold: 100 }, { contextKey: `referral:${reward._id}:referred` });
-      if (!entry) throw new Error('failed_referred_history');
-      reward.referredHistoryRecordedAt = new Date();
       op.referredHistory = true;
     }
 
-    if (!reward.referrerHistoryRecordedAt) {
-      const entry = await recordCoinReward(referrerPrimaryId, 'refer', { gold: 50 }, { contextKey: `referral:${reward._id}:referrer` });
-      if (!entry) throw new Error('failed_referrer_history');
-      reward.referrerHistoryRecordedAt = new Date();
+    if (!reward.referrerBalanceCreditedAt || !reward.referrerHistoryRecordedAt) {
+      const referrerReward = await grantGoldReward(referrerPrimaryId, 50, 'refer', `referral:${reward._id}:referrer`);
+      if (!referrerReward.history || referrerReward.balance === null) throw new Error('failed_referrer_reward');
+      reward.referrerBalanceCreditedAt = reward.referrerBalanceCreditedAt || new Date();
+      reward.referrerHistoryRecordedAt = reward.referrerHistoryRecordedAt || new Date();
+      op.referrerBalance = true;
       op.referrerHistory = true;
     }
 
