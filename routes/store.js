@@ -136,6 +136,15 @@ async function getOrCreatePlayerUpgrades(wallet) {
   return upgrades;
 }
 
+async function resolvePrimaryIdFromIdentifier(identifier) {
+  const normalized = String(identifier || '').trim().toLowerCase();
+  if (!normalized) return null;
+  const link = await AccountLink.findOne({
+    $or: [{ primaryId: normalized }, { wallet: normalized }]
+  });
+  return link?.primaryId || null;
+}
+
 async function prepareUpgrades(upgrades, { persist = false } = {}) {
   const ridesChanged = upgrades.refreshFreeRides();
   const shieldChanged = normalizeShieldUpgrades(upgrades);
@@ -306,9 +315,9 @@ function createPurchaseAudit({ wallet, req, res, purchaseDetails }) {
  */
 router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
   try {
-    const wallet = parseWalletOrNull(req.params.wallet);
+    const wallet = await resolvePrimaryIdFromIdentifier(req.params.wallet);
     if (!wallet) {
-      return res.status(400).json(buildInvalidWalletError('Invalid wallet address'));
+      return res.status(404).json({ error: 'Account not found' });
     }
 
     const upgrades = await getOrCreatePlayerUpgrades(wallet);
@@ -396,15 +405,26 @@ router.get('/donations/history/:wallet', readLimiter, async (req, res) => {
  */
 router.get('/donations/:wallet', readLimiter, async (req, res) => {
   try {
-    const wallet = parseWalletOrNull(req.params.wallet);
-    if (!wallet) {
-      return res.status(400).json(buildInvalidWalletError('Invalid wallet address'));
-    }
+    const wallet = await resolvePrimaryIdFromIdentifier(req.params.wallet);
 
     const payload = await listDonationProducts(wallet);
     res.json(payload);
   } catch (error) {
     logger.error({ err: error }, 'GET /donations error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * GET /api/store/donations
+ * Public donation products catalog (no auth/wallet required)
+ */
+router.get('/donations', readLimiter, async (req, res) => {
+  try {
+    const payload = await listDonationProducts(null);
+    res.json(payload);
+  } catch (error) {
+    logger.error({ err: error }, 'GET /donations (public) error');
     res.status(500).json({ error: 'Server error' });
   }
 });
