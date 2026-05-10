@@ -424,7 +424,7 @@ Recommended payload:
 ## 17) Acceptance Checklist
 
 - [x] Onboarding state persists in Mongo and restores after reload/reopen.
-- [ ] Guests do not progress authenticated onboarding runs.
+- [x] Guests do not progress authenticated onboarding runs.
 - [x] 2nd authenticated run grants +100 silver exactly once.
 - [x] 3rd authenticated run grants +100 gold exactly once.
 - [x] Store intro finalizes on existing 3 rides pack purchase.

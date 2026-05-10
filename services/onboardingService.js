@@ -1,5 +1,6 @@
 const OnboardingState = require('../models/OnboardingState');
 const PlayerUpgrades = require('../models/PlayerUpgrades');
+const AccountLink = require('../models/AccountLink');
 
 const CLAIMABLE_REWARDS = new Set(['radar_obstacles_24h', 'radar_gold_24h']);
 
@@ -7,6 +8,18 @@ function resolvePrimaryIdFromRequest(req) {
   return String(req.primaryId || req.get('x-primary-id') || req.get('x-wallet') || req.body?.primaryId || req.query?.primaryId || '')
     .trim()
     .toLowerCase();
+}
+
+
+async function shouldCountAuthenticatedRun(primaryId) {
+  if (!primaryId) return false;
+  const link = await AccountLink.findOne({
+    $or: [
+      { primaryId },
+      { wallet: primaryId }
+    ]
+  }).select('_id');
+  return Boolean(link);
 }
 
 async function getOrCreateOnboardingState(primaryId) {
@@ -94,4 +107,4 @@ async function claimReward({ state, primaryId, reward }) {
   return { alreadyClaimed: false, until };
 }
 
-module.exports = { resolvePrimaryIdFromRequest, getOrCreateOnboardingState, applyRunProgress, updateStep, claimReward };
+module.exports = { resolvePrimaryIdFromRequest, shouldCountAuthenticatedRun, getOrCreateOnboardingState, applyRunProgress, updateStep, claimReward };
