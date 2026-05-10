@@ -139,6 +139,9 @@ async function getOrCreatePlayerUpgrades(wallet) {
 async function resolvePrimaryIdFromIdentifier(identifier) {
   const normalized = String(identifier || '').trim().toLowerCase();
   if (!normalized) return null;
+  if (parseWalletOrNull(normalized)) {
+    return normalized;
+  }
   const link = await AccountLink.findOne({
     $or: [{ primaryId: normalized }, { wallet: normalized }]
   });
