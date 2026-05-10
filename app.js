@@ -12,6 +12,7 @@ const donationsRoutes = require('./routes/donations');
 const referralRoutes = require('./routes/referral');
 const shareRoutes = require('./routes/share');
 const xRoutes = require('./routes/x');
+const onboardingRoutes = require('./routes/onboarding');
 const logger = require('./utils/logger');
 const Player = require('./models/Player');
 const ShareEvent = require('./models/ShareEvent');
@@ -46,7 +47,8 @@ function getRouteRegistry() {
     { path: '/referral', router: referralRoutes },
     { path: '/referrals', router: referralRoutes },
     { path: '/share', router: shareRoutes },
-    { path: '/x', router: xRoutes }
+    { path: '/x', router: xRoutes },
+    { path: '/onboarding', router: onboardingRoutes }
   ];
 }
 
