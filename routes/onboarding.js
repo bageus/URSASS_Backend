@@ -5,9 +5,11 @@ const {
   resolvePrimaryIdFromRequest,
   getOrCreateOnboardingState,
   applyRunProgress,
+  shouldCountAuthenticatedRun,
   updateStep,
   claimReward
 } = require('../services/onboardingService');
+const { trackOnboardingEvent } = require('../services/onboardingAnalytics');
 
 const router = express.Router();
 
@@ -51,15 +53,22 @@ router.post('/event', async (req, res) => {
   if (!supported.has(event)) return res.status(400).json({ error: 'unsupported_event' });
 
   const state = await getOrCreateOnboardingState(primaryId);
-  if (event === 'run_finished' && req.body?.authType && req.body.authType !== 'guest') {
-    applyRunProgress(state);
+  if (event === 'run_finished') {
+    const canProgress = await shouldCountAuthenticatedRun(primaryId);
+    if (canProgress) {
+      applyRunProgress(state);
+    }
   }
   if (event === 'store_opened') state.storeIntro.shown = true;
   if (event === 'ride_pack_bought') {
     state.storeIntro.ridePackBought = true;
     state.mainFlowCompleted = true;
+    await trackOnboardingEvent('onboarding_completed', { primaryId, flowVersion: state.flowVersion || 'v2' });
   }
-  if (event === 'skip_step') state.mainFlowSkipped = true;
+  if (event === 'skip_step') {
+    state.mainFlowSkipped = true;
+    await trackOnboardingEvent('onboarding_step_skipped', { primaryId, flowVersion: state.flowVersion || 'v2', currentStep: state.currentStep });
+  }
   updateStep(state);
   await state.save();
   return res.json({ success: true, state });
@@ -72,6 +81,10 @@ router.post('/claim', async (req, res) => {
     const reward = String(req.body?.reward || '').trim();
     const state = await getOrCreateOnboardingState(primaryId);
     const claim = await claimReward({ state, primaryId, reward });
+    if (!claim.alreadyClaimed) {
+      await trackOnboardingEvent('onboarding_reward_claimed', { primaryId, reward, flowVersion: state.flowVersion || 'v2' });
+      await trackOnboardingEvent('radar_gift_claimed', { primaryId, reward, flowVersion: state.flowVersion || 'v2' });
+    }
     return res.json({ success: true, reward, ...claim });
   } catch (error) {
     return res.status(error.statusCode || 500).json({ error: error.message || 'claim_failed' });
