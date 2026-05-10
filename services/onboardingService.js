@@ -31,15 +31,17 @@ function updateStep(state) {
 
 function applyRunProgress(state) {
   state.authRunsCount += 1;
-  const rewards = { silverBonus: 0, goldBonus: 0, unlocked: [] };
+  const rewards = { silverBonus: 0, goldBonus: 0, unlocked: [], granted: [] };
 
   if (state.authRunsCount >= 2 && !state.rewards.silverAfterSecondRunGranted) {
     state.rewards.silverAfterSecondRunGranted = true;
     rewards.silverBonus = 100;
+    rewards.granted.push('silver_after_second_run');
   }
   if (state.authRunsCount >= 3 && !state.rewards.goldAfterThirdRunGranted) {
     state.rewards.goldAfterThirdRunGranted = true;
     rewards.goldBonus = 100;
+    rewards.granted.push('gold_after_third_run');
   }
   if (state.authRunsCount >= 6 && !state.gifts.radarObstacles.unlocked) {
     state.gifts.radarObstacles.unlocked = true;

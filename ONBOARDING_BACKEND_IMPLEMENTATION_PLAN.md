@@ -429,7 +429,7 @@ Recommended payload:
 - [x] 3rd authenticated run grants +100 gold exactly once.
 - [x] Store intro finalizes on existing 3 rides pack purchase.
 - [x] Gifts unlock at run 6 and run 15 thresholds.
-- [ ] Gift claims are idempotent and non-repeatable.
+- [x] Gift claims are idempotent and non-repeatable.
 - [x] Temporary radar boosts activate for 24h.
 - [x] Runtime effects respect permanent OR temporary boost logic.
-- [ ] Analytics events emitted for key onboarding milestones.
+- [x] Analytics events emitted for key onboarding milestones.
