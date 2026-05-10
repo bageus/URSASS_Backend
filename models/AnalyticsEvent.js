@@ -3,6 +3,12 @@ const mongoose = require('mongoose');
 const ANALYTICS_EVENT_TYPES = Object.freeze([
   'app_opened',
   'onboarding_completed',
+  'onboarding_step_shown',
+  'onboarding_step_skipped',
+  'onboarding_reward_granted',
+  'onboarding_reward_claimed',
+  'radar_gift_unlocked',
+  'radar_gift_claimed',
   'run_started',
   'leaderboard_opened',
   'wallet_connect_started',
