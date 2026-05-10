@@ -14,6 +14,7 @@ const onboardingStateSchema = new mongoose.Schema({
   storeIntro: {
     shown: { type: Boolean, default: false },
     skipped: { type: Boolean, default: false },
+    unlocked: { type: Boolean, default: false },
     ridePackBought: { type: Boolean, default: false }
   },
   gifts: {

@@ -31,8 +31,16 @@ async function getOrCreateOnboardingState(primaryId) {
 function updateStep(state) {
   if (state.mainFlowCompleted) {
     state.currentStep = 'completed';
-  } else if (state.authRunsCount >= 3 && !state.storeIntro.ridePackBought) {
-    state.currentStep = 'store_intro';
+  } else if (state.authRunsCount >= 3) {
+    if (state.storeIntro.ridePackBought) {
+      state.currentStep = 'store_back';
+    } else if (state.storeIntro.shown) {
+      state.currentStep = 'store_ride_pack';
+    } else if (state.storeIntro.unlocked) {
+      state.currentStep = 'store_intro';
+    } else {
+      state.currentStep = 'auth_run_3_done';
+    }
   } else if (state.authRunsCount >= 2) {
     state.currentStep = 'auth_run_2_done';
   } else if (state.authRunsCount >= 1) {
