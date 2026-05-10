@@ -12,6 +12,7 @@ const logger = require('../utils/logger');
 const { markSuspicious } = require('../middleware/requestMetrics');
 const { logSecurityEvent, normalizeWallet, parseWalletOrNull, buildInvalidWalletError, validateTimestampWindow } = require('../utils/security');
 const { hasAiModeAccess, hasAiModeAccessByTelegramUsername } = require('../utils/aiModeAccess');
+const { getOrCreateOnboardingState, updateStep } = require('../services/onboardingService');
 
 const UPGRADE_KEY_ALIASES = {
   spin_alert: 'alert',
@@ -644,6 +645,12 @@ router.post('/buy', writeLimiter, async (req, res) => {
       upgrades.paidRidesRemaining += config.amount;
 
       logger.info({ wallet: walletLower, ridesBought: config.amount, price, currency: 'gold', paidRidesRemaining: upgrades.paidRidesRemaining }, 'Rides purchased');
+
+      const onboardingState = await getOrCreateOnboardingState(walletLower);
+      onboardingState.storeIntro.ridePackBought = true;
+      onboardingState.mainFlowCompleted = true;
+      updateStep(onboardingState);
+      await onboardingState.save();
 
     } else {
       return failPurchase(400, 'unknown_upgrade_type', 'Unknown upgrade type');

@@ -23,6 +23,8 @@ const { hasAiModeAccess, hasAiModeAccessByTelegramUsername, validateAiSettings }
 const { computePlayerInsights, computeRank, DEFAULTS: leaderboardInsightsConfig } = require('../services/leaderboardInsightsService');
 const { buildGameOverPayload } = require('../services/gameOverAgitationService');
 const { maybeGrantReferralRewards } = require('../utils/referralRewards');
+const { getOrCreateOnboardingState, applyRunProgress } = require('../services/onboardingService');
+const { trackOnboardingEvent } = require('../services/onboardingAnalytics');
 const { recordCoinReward } = require('../utils/coinHistory');
 const {
   resolveDisplayNameFromPreferences,
@@ -622,6 +624,43 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       await persistResultAndPlayer();
     }
 
+
+    const onboardingState = await getOrCreateOnboardingState(walletLower);
+    const onboardingReward = applyRunProgress(onboardingState);
+    await onboardingState.save();
+
+
+    for (const rewardType of onboardingReward.granted || []) {
+      await trackOnboardingEvent('onboarding_reward_granted', {
+        primaryId: walletLower,
+        rewardType,
+        authRunsCount: onboardingState.authRunsCount,
+        flowVersion: onboardingState.flowVersion || 'v2'
+      });
+    }
+    for (const unlockedReward of onboardingReward.unlocked || []) {
+      await trackOnboardingEvent('radar_gift_unlocked', {
+        primaryId: walletLower,
+        rewardType: unlockedReward,
+        authRunsCount: onboardingState.authRunsCount,
+        flowVersion: onboardingState.flowVersion || 'v2'
+      });
+    }
+
+    if (onboardingReward.silverBonus > 0 || onboardingReward.goldBonus > 0) {
+      await Player.updateOne(
+        { wallet: walletLower },
+        {
+          $inc: {
+            totalSilverCoins: onboardingReward.silverBonus,
+            totalGoldCoins: onboardingReward.goldBonus
+          }
+        }
+      );
+      responsePayload.totalSilverCoins += onboardingReward.silverBonus;
+      responsePayload.totalGoldCoins += onboardingReward.goldBonus;
+    }
+
     logger.info({
       wallet: walletLower,
       bestScore: responsePayload.bestScore,
@@ -695,6 +734,8 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       totalSilverCoins: responsePayload.totalSilverCoins,
       gamesPlayed: responsePayload.gamesPlayed,
       gameOverPrompt,
+      onboardingSilverBonus: onboardingReward?.silverBonus || 0,
+      onboardingGoldBonus: onboardingReward?.goldBonus || 0,
       ...(gameOverInsights ? { playerInsights: gameOverInsights } : {})
     });
 
