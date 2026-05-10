@@ -196,6 +196,12 @@ function calculateEffects(upgrades) {
   const legacyRadarLevel = toUpgradeLevel(upgrades.radar);
   const alertLevel = toUpgradeLevel(upgrades.alert);
 
+  const now = Date.now();
+  const radarObstaclesTempUntil = upgrades?.temporaryBoosts?.radarObstaclesUntil ? new Date(upgrades.temporaryBoosts.radarObstaclesUntil).getTime() : 0;
+  const radarGoldTempUntil = upgrades?.temporaryBoosts?.radarGoldUntil ? new Date(upgrades.temporaryBoosts.radarGoldUntil).getTime() : 0;
+  const hasRadarObstaclesTemp = Number.isFinite(radarObstaclesTempUntil) && radarObstaclesTempUntil > now;
+  const hasRadarGoldTemp = Number.isFinite(radarGoldTempUntil) && radarGoldTempUntil > now;
+
   const hasSeparateShieldCapacity = Number.isFinite(shieldCapacityLevel);
   const normalizedShieldLevel = legacyShieldLevel > 0 ? 1 : 0;
   const normalizedShieldCapacityLevel = hasSeparateShieldCapacity
@@ -250,10 +256,10 @@ function calculateEffects(upgrades) {
       ? UPGRADES_CONFIG.shield_capacity.effects[normalizedShieldCapacityLevel - 1]
       : 1,
     start_with_shield: normalizedShieldLevel > 0,
-    start_with_radar_obstacles: radarObstaclesLevel > 0,
-    start_with_radar_gold: normalizedRadarGoldLevel > 0,
+    start_with_radar_obstacles: radarObstaclesLevel > 0 || hasRadarObstaclesTemp,
+    start_with_radar_gold: normalizedRadarGoldLevel > 0 || hasRadarGoldTemp,
     // Backward compatibility for clients that still read `start_with_radar`.
-    start_with_radar: normalizedRadarGoldLevel > 0,
+    start_with_radar: normalizedRadarGoldLevel > 0 || hasRadarGoldTemp,
     alert_level: alertLevel,
     spin_alert_mode: alertLevel > 0
       ? UPGRADES_CONFIG.alert.effects[alertLevel - 1]

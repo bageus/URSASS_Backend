@@ -57,6 +57,12 @@ const playerUpgradesSchema = new mongoose.Schema({
       default: []
     },
 
+
+  temporaryBoosts: {
+    radarObstaclesUntil: { type: Date, default: null },
+    radarGoldUntil: { type: Date, default: null }
+  },
+
   updatedAt: {
     type: Date,
     default: Date.now
