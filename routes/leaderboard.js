@@ -162,11 +162,15 @@ router.get('/top', readLimiter, async (req, res) => {
   try {
     const walletQuery = typeof req.query.wallet === 'string' ? req.query.wallet.trim().toLowerCase() : '';
     let wallet = walletQuery ? parseWalletOrNull(walletQuery) : null;
-    if (walletQuery && !wallet) {
+    const isPrimaryIdQuery = walletQuery.startsWith('tg_');
+    if (walletQuery && !wallet && isPrimaryIdQuery) {
       const link = await AccountLink.findOne({
         $or: [{ primaryId: walletQuery }, { wallet: walletQuery }]
       });
       wallet = link?.primaryId || null;
+    }
+    if (walletQuery && !wallet) {
+      return res.status(400).json(buildInvalidWalletError());
     }
 
     if (!wallet) {
