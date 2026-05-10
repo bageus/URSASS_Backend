@@ -60,8 +60,11 @@ router.post('/event', async (req, res) => {
     }
   }
   if (event === 'store_opened') state.storeIntro.shown = true;
+  if (event === 'x_connected' || event === 'share_confirmed') state.storeIntro.unlocked = true;
   if (event === 'ride_pack_bought') {
     state.storeIntro.ridePackBought = true;
+  }
+  if (event === 'store_back_clicked') {
     state.mainFlowCompleted = true;
     await trackOnboardingEvent('onboarding_completed', { primaryId, flowVersion: state.flowVersion || 'v2' });
   }
@@ -71,7 +74,8 @@ router.post('/event', async (req, res) => {
   }
   updateStep(state);
   await state.save();
-  return res.json({ success: true, state });
+  const upgrades = await PlayerUpgrades.findOne({ wallet: primaryId });
+  return res.json({ success: true, state: buildStateResponse(state, upgrades) });
 });
 
 router.post('/claim', async (req, res) => {
