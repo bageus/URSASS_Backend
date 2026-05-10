@@ -423,13 +423,13 @@ Recommended payload:
 
 ## 17) Acceptance Checklist
 
-- [ ] Onboarding state persists in Mongo and restores after reload/reopen.
+- [x] Onboarding state persists in Mongo and restores after reload/reopen.
 - [ ] Guests do not progress authenticated onboarding runs.
-- [ ] 2nd authenticated run grants +100 silver exactly once.
-- [ ] 3rd authenticated run grants +100 gold exactly once.
-- [ ] Store intro finalizes on existing 3 rides pack purchase.
-- [ ] Gifts unlock at run 6 and run 15 thresholds.
+- [x] 2nd authenticated run grants +100 silver exactly once.
+- [x] 3rd authenticated run grants +100 gold exactly once.
+- [x] Store intro finalizes on existing 3 rides pack purchase.
+- [x] Gifts unlock at run 6 and run 15 thresholds.
 - [ ] Gift claims are idempotent and non-repeatable.
-- [ ] Temporary radar boosts activate for 24h.
-- [ ] Runtime effects respect permanent OR temporary boost logic.
+- [x] Temporary radar boosts activate for 24h.
+- [x] Runtime effects respect permanent OR temporary boost logic.
 - [ ] Analytics events emitted for key onboarding milestones.
