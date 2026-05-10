@@ -645,6 +645,12 @@ router.post('/buy', writeLimiter, async (req, res) => {
 
       logger.info({ wallet: walletLower, ridesBought: config.amount, price, currency: 'gold', paidRidesRemaining: upgrades.paidRidesRemaining }, 'Rides purchased');
 
+      const onboardingState = await getOrCreateOnboardingState(walletLower);
+      onboardingState.storeIntro.ridePackBought = true;
+      onboardingState.mainFlowCompleted = true;
+      updateStep(onboardingState);
+      await onboardingState.save();
+
     } else {
       return failPurchase(400, 'unknown_upgrade_type', 'Unknown upgrade type');
     }
