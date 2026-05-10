@@ -23,6 +23,7 @@ const { hasAiModeAccess, hasAiModeAccessByTelegramUsername, validateAiSettings }
 const { computePlayerInsights, computeRank, DEFAULTS: leaderboardInsightsConfig } = require('../services/leaderboardInsightsService');
 const { buildGameOverPayload } = require('../services/gameOverAgitationService');
 const { maybeGrantReferralRewards } = require('../utils/referralRewards');
+const { getOrCreateOnboardingState, applyRunProgress } = require('../services/onboardingService');
 const { recordCoinReward } = require('../utils/coinHistory');
 const {
   resolveDisplayNameFromPreferences,
@@ -622,6 +623,25 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       await persistResultAndPlayer();
     }
 
+
+    const onboardingState = await getOrCreateOnboardingState(walletLower);
+    const onboardingReward = applyRunProgress(onboardingState);
+    await onboardingState.save();
+
+    if (onboardingReward.silverBonus > 0 || onboardingReward.goldBonus > 0) {
+      await Player.updateOne(
+        { wallet: walletLower },
+        {
+          $inc: {
+            totalSilverCoins: onboardingReward.silverBonus,
+            totalGoldCoins: onboardingReward.goldBonus
+          }
+        }
+      );
+      responsePayload.totalSilverCoins += onboardingReward.silverBonus;
+      responsePayload.totalGoldCoins += onboardingReward.goldBonus;
+    }
+
     logger.info({
       wallet: walletLower,
       bestScore: responsePayload.bestScore,
@@ -695,6 +715,8 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       totalSilverCoins: responsePayload.totalSilverCoins,
       gamesPlayed: responsePayload.gamesPlayed,
       gameOverPrompt,
+      onboardingSilverBonus: onboardingReward?.silverBonus || 0,
+      onboardingGoldBonus: onboardingReward?.goldBonus || 0,
       ...(gameOverInsights ? { playerInsights: gameOverInsights } : {})
     });
 
