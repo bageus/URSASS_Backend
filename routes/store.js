@@ -12,6 +12,7 @@ const logger = require('../utils/logger');
 const { markSuspicious } = require('../middleware/requestMetrics');
 const { logSecurityEvent, normalizeWallet, parseWalletOrNull, buildInvalidWalletError, validateTimestampWindow } = require('../utils/security');
 const { hasAiModeAccess, hasAiModeAccessByTelegramUsername } = require('../utils/aiModeAccess');
+const { getOrCreateOnboardingState, updateStep } = require('../services/onboardingService');
 
 const UPGRADE_KEY_ALIASES = {
   spin_alert: 'alert',
