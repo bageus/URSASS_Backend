@@ -6,6 +6,7 @@ const logger = require('../utils/logger');
 const {
   ONBOARDING_KEYS,
   resolvePrimaryIdFromRequest,
+  resolveIdentity,
   getOrCreateOnboardingState,
   getGameplayHistorySnapshot,
   applyRunProgress,
@@ -65,9 +66,10 @@ router.get('/state', readLimiter, async (req, res) => {
   const primaryId = resolvePrimaryIdFromRequest(req);
   if (!primaryId) return res.status(400).json({ error: 'primaryId_required' });
 
-  const account = await AccountLink.findOne({ $or: [{ primaryId }, { wallet: primaryId }] }).select('wallet telegramId').lean();
+  const identity = await resolveIdentity(primaryId);
+  const account = await AccountLink.findOne({ $or: [{ primaryId }, { wallet: primaryId }, { telegramId: primaryId }] }).select('wallet telegramId').lean();
   const canUseAuthOnboarding = await shouldCountAuthenticatedRun(primaryId);
-  const gameplayHistory = canUseAuthOnboarding ? await getGameplayHistorySnapshot(primaryId) : { raceCount: 0, xConnected: false };
+  const gameplayHistory = await getGameplayHistorySnapshot(primaryId);
 
   const state = await getOrCreateOnboardingState(primaryId);
   if (canUseAuthOnboarding) applyRunProgress(state, gameplayHistory.raceCount);
@@ -84,9 +86,12 @@ router.get('/state', readLimiter, async (req, res) => {
   });
   logger.info({
     userId: primaryId,
-    wallet: account?.wallet || primaryId,
-    telegramId: account?.telegramId || null,
+    resolvedWallet: identity.wallet || account?.wallet || null,
+    telegramId: identity.telegramId || account?.telegramId || null,
     screen,
+    canUseAuthOnboarding,
+    playerGamesPlayed: gameplayHistory.playerGamesPlayed,
+    leaderboardCompletedCount: gameplayHistory.leaderboardCompletedCount,
     raceCount: gameplayHistory.raceCount,
     xConnected: gameplayHistory.xConnected,
     onboardingStatuses: response.onboarding,
