@@ -4,6 +4,8 @@ const PlayerUpgrades = require('../models/PlayerUpgrades');
 const {
   resolvePrimaryIdFromRequest,
   getOrCreateOnboardingState,
+  getGameplayHistorySnapshot,
+  alignOnboardingStateWithGameplayHistory,
   applyRunProgress,
   shouldCountAuthenticatedRun,
   updateStep,
@@ -15,6 +17,8 @@ const router = express.Router();
 
 function buildStateResponse(state, upgrades) {
   return {
+    completed: state.mainFlowCompleted,
+    step: state.currentStep,
     currentStep: state.currentStep,
     mainFlowCompleted: state.mainFlowCompleted,
     authRunsCount: state.authRunsCount,
@@ -40,9 +44,29 @@ function buildStateResponse(state, upgrades) {
 router.get('/state', readLimiter, async (req, res) => {
   const primaryId = resolvePrimaryIdFromRequest(req);
   if (!primaryId) return res.status(400).json({ error: 'primaryId_required' });
+
+  const canUseAuthOnboarding = await shouldCountAuthenticatedRun(primaryId);
+  const gameplayHistory = canUseAuthOnboarding
+    ? await getGameplayHistorySnapshot(primaryId)
+    : {
+      completedRunsCount: 0,
+      gamesPlayed: 0,
+      leaderboardEntries: 0,
+      finishedSessions: 0,
+      hasGameplayHistory: false
+    };
+
   const state = await getOrCreateOnboardingState(primaryId);
+  if (canUseAuthOnboarding) {
+    alignOnboardingStateWithGameplayHistory(state, gameplayHistory);
+    await state.save();
+  }
+
   const upgrades = await PlayerUpgrades.findOne({ wallet: primaryId });
-  return res.json(buildStateResponse(state, upgrades));
+  return res.json({
+    ...buildStateResponse(state, upgrades),
+    gameplayHistory
+  });
 });
 
 router.post('/event', async (req, res) => {
