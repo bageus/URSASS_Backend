@@ -1,6 +1,9 @@
 const OnboardingState = require('../models/OnboardingState');
 const PlayerUpgrades = require('../models/PlayerUpgrades');
 const AccountLink = require('../models/AccountLink');
+const Player = require('../models/Player');
+const GameResult = require('../models/GameResult');
+const PlayerRun = require('../models/PlayerRun');
 
 const CLAIMABLE_REWARDS = new Set(['radar_obstacles_24h', 'radar_gold_24h']);
 
@@ -26,6 +29,48 @@ async function getOrCreateOnboardingState(primaryId) {
   let state = await OnboardingState.findOne({ primaryId });
   if (!state) state = await OnboardingState.create({ primaryId });
   return state;
+}
+
+async function getGameplayHistorySnapshot(primaryId) {
+  if (!primaryId) {
+    return {
+      completedRunsCount: 0,
+      gamesPlayed: 0,
+      leaderboardEntries: 0,
+      finishedSessions: 0,
+      hasGameplayHistory: false
+    };
+  }
+
+  const [player, completedRunsCount, finishedSessions] = await Promise.all([
+    Player.findOne({ wallet: primaryId }).select('gamesPlayed bestScore').lean(),
+    PlayerRun.countDocuments({ wallet: primaryId, verified: true, isValid: true }),
+    GameResult.countDocuments({ wallet: primaryId, verified: true })
+  ]);
+
+  const gamesPlayed = Number(player?.gamesPlayed || 0);
+  const leaderboardEntries = player ? 1 : 0;
+
+  return {
+    completedRunsCount,
+    gamesPlayed,
+    leaderboardEntries,
+    finishedSessions,
+    hasGameplayHistory: completedRunsCount > 0 || gamesPlayed > 0 || leaderboardEntries > 0 || finishedSessions > 0
+  };
+}
+
+function alignOnboardingStateWithGameplayHistory(state, snapshot) {
+  const nextRuns = Math.max(state.authRunsCount || 0, snapshot.completedRunsCount || 0, snapshot.gamesPlayed || 0);
+  state.authRunsCount = nextRuns;
+
+  if (!snapshot.hasGameplayHistory && (snapshot.gamesPlayed || 0) === 0 && (snapshot.completedRunsCount || 0) === 0) {
+    state.mainFlowCompleted = false;
+    state.currentStep = 'auth_start';
+    return;
+  }
+
+  updateStep(state);
 }
 
 function updateStep(state) {
@@ -115,4 +160,13 @@ async function claimReward({ state, primaryId, reward }) {
   return { alreadyClaimed: false, until };
 }
 
-module.exports = { resolvePrimaryIdFromRequest, shouldCountAuthenticatedRun, getOrCreateOnboardingState, applyRunProgress, updateStep, claimReward };
+module.exports = {
+  resolvePrimaryIdFromRequest,
+  shouldCountAuthenticatedRun,
+  getOrCreateOnboardingState,
+  getGameplayHistorySnapshot,
+  alignOnboardingStateWithGameplayHistory,
+  applyRunProgress,
+  updateStep,
+  claimReward
+};
