@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
 const mongoose = require('mongoose');
+const ethers = require('ethers');
 const { renderScoreSharePng } = require('../utils/shareCard');
 const Player = require('../models/Player');
 const GameResult = require('../models/GameResult');
@@ -399,13 +400,34 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       // Keep the exact wallet string provided by client in signed payload.
       // EIP-191 signatures are case-sensitive for message contents,
       // so lowercasing here can break verification for checksum addresses.
-      const messageToVerify = createMessageToVerify(wallet, score, distance, timestamp);
+      const messageToVerify = createMessageToVerify(wallet, score, distance, coins.gold, coins.silver, timestamp);
+      const messageHash = crypto.createHash('sha256').update(messageToVerify, 'utf8').digest('hex');
 
-      logger.info({ wallet: walletLower, messageToVerify }, 'Message for verification');
+      logger.info({ wallet: walletLower, messageHash }, 'Message for verification');
       const isSignatureValid = verifySignature(messageToVerify, signature, walletLower);
 
       if (!isSignatureValid) {
-        logger.warn({ wallet: walletLower }, 'Invalid signature');
+        let recoveredAddress = null;
+        try {
+          recoveredAddress = ethers.utils.verifyMessage(messageToVerify, signature);
+        } catch (error) {
+          recoveredAddress = `unrecoverable:${error.message}`;
+        }
+        logger.warn({
+          recoveredAddress,
+          submittedWallet: wallet,
+          normalizedWallet: walletLower,
+          messageHash,
+          expectedMessageHash: messageHash,
+          verificationFields: {
+            wallet,
+            score: Math.floor(score),
+            distance: Math.floor(distance),
+            goldCoins: coins.gold,
+            silverCoins: coins.silver,
+            timestamp
+          }
+        }, 'Invalid signature');
         return res.status(401).json({
           error: 'Invalid signature. Result cannot be verified.',
           details: 'Your wallet signature does not match the submitted data.'
