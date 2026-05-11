@@ -30,6 +30,7 @@ async function recordCoinReward(primaryId, type, amounts = {}, opts = {}) {
       primaryId: normalizedPrimaryId,
       type,
       contextKey: opts.contextKey || null,
+      reason: opts.reason || null,
       gold,
       silver,
       createdAt: opts.createdAt || new Date()

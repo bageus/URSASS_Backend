@@ -651,44 +651,56 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     }
 
 
-    const onboardingState = await getOrCreateOnboardingState(walletLower);
-    const onboardingReward = applyRunProgress(onboardingState, responsePayload.gamesPlayed);
-    await onboardingState.save();
+    let onboardingReward = { silverBonus: 0, goldBonus: 0, granted: [], unlocked: [] };
+    try {
+      const onboardingState = await getOrCreateOnboardingState(walletLower);
+      onboardingReward = applyRunProgress(onboardingState, responsePayload.gamesPlayed);
+      await onboardingState.save();
 
+      for (const rewardType of onboardingReward.granted || []) {
+        await trackOnboardingEvent('onboarding_reward_granted', {
+          primaryId: walletLower,
+          rewardType,
+          authRunsCount: onboardingState.authRunsCount,
+          flowVersion: onboardingState.flowVersion || 'v2'
+        });
+      }
+      for (const unlockedReward of onboardingReward.unlocked || []) {
+        await trackOnboardingEvent('radar_gift_unlocked', {
+          primaryId: walletLower,
+          rewardType: unlockedReward,
+          authRunsCount: onboardingState.authRunsCount,
+          flowVersion: onboardingState.flowVersion || 'v2'
+        });
+      }
 
-    for (const rewardType of onboardingReward.granted || []) {
-      await trackOnboardingEvent('onboarding_reward_granted', {
-        primaryId: walletLower,
-        rewardType,
-        authRunsCount: onboardingState.authRunsCount,
-        flowVersion: onboardingState.flowVersion || 'v2'
-      });
-    }
-    for (const unlockedReward of onboardingReward.unlocked || []) {
-      await trackOnboardingEvent('radar_gift_unlocked', {
-        primaryId: walletLower,
-        rewardType: unlockedReward,
-        authRunsCount: onboardingState.authRunsCount,
-        flowVersion: onboardingState.flowVersion || 'v2'
-      });
-    }
-
-    if (onboardingReward.silverBonus > 0 || onboardingReward.goldBonus > 0) {
-      await Player.updateOne(
-        { wallet: walletLower },
-        {
-          $inc: {
-            totalSilverCoins: onboardingReward.silverBonus,
-            totalGoldCoins: onboardingReward.goldBonus
+      if (onboardingReward.silverBonus > 0 || onboardingReward.goldBonus > 0) {
+        await Player.updateOne(
+          { wallet: walletLower },
+          {
+            $inc: {
+              totalSilverCoins: onboardingReward.silverBonus,
+              totalGoldCoins: onboardingReward.goldBonus
+            }
           }
-        }
-      );
-      responsePayload.totalSilverCoins += onboardingReward.silverBonus;
-      responsePayload.totalGoldCoins += onboardingReward.goldBonus;
-      await recordCoinReward(walletLower, 'onboarding_bonus', { gold: onboardingReward.goldBonus, silver: onboardingReward.silverBonus }, {
-        requestId: req.requestId,
-        contextKey: `onboarding_bonus_${walletLower}_${onboardingState.authRunsCount}`
-      });
+        );
+        responsePayload.totalSilverCoins += onboardingReward.silverBonus;
+        responsePayload.totalGoldCoins += onboardingReward.goldBonus;
+
+        const onboardingReason = onboardingState.authRunsCount === 2
+          ? 'second_race_bonus'
+          : onboardingState.authRunsCount === 3
+            ? 'third_race_bonus'
+            : null;
+
+        await recordCoinReward(walletLower, 'onboarding_bonus', { gold: onboardingReward.goldBonus, silver: onboardingReward.silverBonus }, {
+          requestId: req.requestId,
+          contextKey: `onboarding_bonus_${walletLower}_${onboardingState.authRunsCount}`,
+          reason: onboardingReason
+        });
+      }
+    } catch (onboardingErr) {
+      logger.error({ err: onboardingErr, wallet: walletLower, requestId: req.requestId }, 'Onboarding reward side effects failed after leaderboard result persisted');
     }
 
     logger.info({
