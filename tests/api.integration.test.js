@@ -256,7 +256,7 @@ test('POST /api/leaderboard/save accepts valid signature and blocks replay', asy
 
   const { server, baseUrl } = await startServer();
   const timestamp = Date.now();
-  const message = `Save game result\nWallet: ${wallet.address}\nScore: 200\nDistance: 80\nTimestamp: ${timestamp}`;
+  const message = `Save game result\nWallet: ${wallet.address}\nScore: 200\nDistance: 80\nGoldCoins: 0\nSilverCoins: 0\nTimestamp: ${timestamp}`;
   const signature = await wallet.signMessage(message);
 
   const payload = {
@@ -1042,7 +1042,7 @@ test('GET /api/store/upgrades/:wallet returns ai_mode_access=false for regular w
 test('POST /api/leaderboard/save rejects non-whitelisted wallet when ai mode enabled', async () => {
   const wallet = Wallet.createRandom();
   const timestamp = Date.now();
-  const message = `Save game result\nWallet: ${wallet.address}\nScore: 210\nDistance: 90\nTimestamp: ${timestamp}`;
+  const message = `Save game result\nWallet: ${wallet.address}\nScore: 210\nDistance: 90\nGoldCoins: 0\nSilverCoins: 0\nTimestamp: ${timestamp}`;
   const signature = await wallet.signMessage(message);
 
   const { server, baseUrl } = await startServer();
@@ -1074,7 +1074,7 @@ test('POST /api/leaderboard/save rejects non-whitelisted wallet when ai mode ena
 test('POST /api/leaderboard/save validates aiSettings fields', async () => {
   const wallet = Wallet.createRandom();
   const timestamp = Date.now();
-  const message = `Save game result\nWallet: ${wallet.address}\nScore: 220\nDistance: 95\nTimestamp: ${timestamp}`;
+  const message = `Save game result\nWallet: ${wallet.address}\nScore: 220\nDistance: 95\nGoldCoins: 0\nSilverCoins: 0\nTimestamp: ${timestamp}`;
   const signature = await wallet.signMessage(message);
 
   const { server, baseUrl } = await startServer();
