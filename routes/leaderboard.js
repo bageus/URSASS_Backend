@@ -451,8 +451,21 @@ router.post('/save', saveResultLimiter, async (req, res) => {
 
     const scoreValue = Math.floor(score);
     const distanceValue = Math.floor(distance);
+    const clientRunId = typeof req.body?.clientRunId === 'string' ? req.body.clientRunId.trim() : null;
+    const resultHash = crypto
+      .createHash('sha256')
+      .update(`${walletLower}:${scoreValue}:${distanceValue}:${coins.gold}:${coins.silver}:${timestamp}`)
+      .digest('hex');
     let responsePayload;
     let runContext;
+
+    logger.info({
+      requestId: req.requestId,
+      clientRunId,
+      resultHash,
+      deduplicationToken,
+      wallet: walletLower
+    }, 'Leaderboard save request context');
 
     const persistResultAndPlayer = async (session = null) => {
       const gameResultQuery = GameResult.findOne({ signature: deduplicationToken });
@@ -464,6 +477,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       if (existingResult) {
         const duplicateError = new Error('DUPLICATE_RESULT');
         duplicateError.code = 409;
+        duplicateError.alreadySaved = true;
         throw duplicateError;
       }
 
@@ -651,6 +665,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     }
 
 
+<<<<<<< codex/fix-onboarding-bonus-validation-crash
     let onboardingReward = { silverBonus: 0, goldBonus: 0, granted: [], unlocked: [] };
     try {
       const onboardingState = await getOrCreateOnboardingState(walletLower);
@@ -658,6 +673,34 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       await onboardingState.save();
 
       for (const rewardType of onboardingReward.granted || []) {
+=======
+    const onboardingReward = { silverBonus: 0, goldBonus: 0, granted: [], unlocked: [] };
+    const safeSideEffect = async (name, fn) => {
+      try {
+        await fn();
+      } catch (sideEffectError) {
+        logger.error({
+          err: sideEffectError,
+          sideEffect: name,
+          requestId: req.requestId,
+          clientRunId,
+          resultHash,
+          wallet: walletLower
+        }, 'Leaderboard post-save side effect failed');
+      }
+    };
+
+    await safeSideEffect('onboarding', async () => {
+      const onboardingState = await getOrCreateOnboardingState(walletLower);
+      const computedReward = applyRunProgress(onboardingState, responsePayload.gamesPlayed);
+      onboardingReward.silverBonus = computedReward.silverBonus || 0;
+      onboardingReward.goldBonus = computedReward.goldBonus || 0;
+      onboardingReward.granted = computedReward.granted || [];
+      onboardingReward.unlocked = computedReward.unlocked || [];
+      await onboardingState.save();
+
+      for (const rewardType of onboardingReward.granted) {
+>>>>>>> dev
         await trackOnboardingEvent('onboarding_reward_granted', {
           primaryId: walletLower,
           rewardType,
@@ -665,7 +708,11 @@ router.post('/save', saveResultLimiter, async (req, res) => {
           flowVersion: onboardingState.flowVersion || 'v2'
         });
       }
+<<<<<<< codex/fix-onboarding-bonus-validation-crash
       for (const unlockedReward of onboardingReward.unlocked || []) {
+=======
+      for (const unlockedReward of onboardingReward.unlocked) {
+>>>>>>> dev
         await trackOnboardingEvent('radar_gift_unlocked', {
           primaryId: walletLower,
           rewardType: unlockedReward,
@@ -686,6 +733,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
         );
         responsePayload.totalSilverCoins += onboardingReward.silverBonus;
         responsePayload.totalGoldCoins += onboardingReward.goldBonus;
+<<<<<<< codex/fix-onboarding-bonus-validation-crash
 
         const onboardingReason = onboardingState.authRunsCount === 2
           ? 'second_race_bonus'
@@ -702,6 +750,14 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     } catch (onboardingErr) {
       logger.error({ err: onboardingErr, wallet: walletLower, requestId: req.requestId }, 'Onboarding reward side effects failed after leaderboard result persisted');
     }
+=======
+        await recordCoinReward(walletLower, 'onboarding_bonus', { gold: onboardingReward.goldBonus, silver: onboardingReward.silverBonus }, {
+          requestId: req.requestId,
+          contextKey: `onboarding_bonus_${walletLower}_${onboardingState.authRunsCount}`
+        });
+      }
+    });
+>>>>>>> dev
 
     logger.info({
       wallet: walletLower,
@@ -712,7 +768,9 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     }, 'Result saved (VERIFIED)');
 
     if (coins.gold > 0 || coins.silver > 0) {
-      await recordCoinReward(walletLower, 'ride', { gold: coins.gold, silver: coins.silver }, { requestId: req.requestId });
+      await safeSideEffect('coin_history_ride', async () => {
+        await recordCoinReward(walletLower, 'ride', { gold: coins.gold, silver: coins.silver }, { requestId: req.requestId });
+      });
     }
 
     await invalidateLeaderboardCache([
@@ -782,13 +840,16 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     });
 
   } catch (error) {
-    if (error?.code === 409 || error?.code === 11000) {
-      return res.status(409).json({
-        error: 'This result has already been submitted.'
+    if (error?.alreadySaved || error?.code === 409 || error?.code === 11000) {
+      return res.status(200).json({
+        success: true,
+        alreadySaved: true,
+        message: 'Result was already saved earlier.',
+        requestId: req.requestId
       });
     }
 
-    logger.error({ err: error }, 'POST /save error');
+    logger.error({ err: error, requestId: req.requestId, clientRunId, resultHash, wallet: walletLower }, 'POST /save error');
     res.status(500).json({ error: 'Server error' });
   }
 });

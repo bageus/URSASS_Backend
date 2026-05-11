@@ -243,7 +243,7 @@ test('GET /health reports actual mongoose connection state', async () => {
   }
 });
 
-test('POST /api/leaderboard/save accepts valid signature and blocks replay', async () => {
+test('POST /api/leaderboard/save accepts valid signature and treats replay as already saved', async () => {
   const wallet = Wallet.createRandom();
   const seenSignatures = new Set();
 
@@ -275,7 +275,10 @@ test('POST /api/leaderboard/save accepts valid signature and blocks replay', asy
   const second = await fetch(`${baseUrl}/api/leaderboard/save`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload)
   });
-  assert.equal(second.status, 409);
+  assert.equal(second.status, 200);
+  const secondBody = await second.json();
+  assert.equal(secondBody.success, true);
+  assert.equal(secondBody.alreadySaved, true);
 
   await server.close();
 });
