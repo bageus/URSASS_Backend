@@ -2,37 +2,41 @@ const express = require('express');
 const { readLimiter } = require('../middleware/rateLimiter');
 const PlayerUpgrades = require('../models/PlayerUpgrades');
 const {
+  ONBOARDING_KEYS,
   resolvePrimaryIdFromRequest,
   getOrCreateOnboardingState,
   getGameplayHistorySnapshot,
-  alignOnboardingStateWithGameplayHistory,
   applyRunProgress,
   shouldCountAuthenticatedRun,
-  updateStep,
+  setOnboardingEvent,
+  resolveActiveOnboarding,
   claimReward
 } = require('../services/onboardingService');
 const { trackOnboardingEvent } = require('../services/onboardingAnalytics');
 
 const router = express.Router();
 
-function buildStateResponse(state, upgrades) {
+function buildStateResponse(state, upgrades, gameplayHistory, screen) {
+  const onboarding = Object.fromEntries(ONBOARDING_KEYS.map((key) => [key, state.onboarding.get(key)?.status || 'none']));
+  const activeOnboarding = resolveActiveOnboarding({
+    state,
+    raceCount: gameplayHistory.raceCount,
+    xConnected: gameplayHistory.xConnected,
+    screen
+  });
   return {
-    completed: state.mainFlowCompleted,
-    step: state.currentStep,
-    currentStep: state.currentStep,
-    mainFlowCompleted: state.mainFlowCompleted,
-    authRunsCount: state.authRunsCount,
-    rewards: state.rewards,
-    storeIntro: state.storeIntro,
+    completed: ONBOARDING_KEYS.every((key) => onboarding[key] !== 'none'),
+    raceCount: gameplayHistory.raceCount,
+    xConnected: gameplayHistory.xConnected,
+    activeOnboarding: activeOnboarding ? { ...activeOnboarding, status: onboarding[activeOnboarding.key] } : null,
+    onboarding,
+    rewards: {
+      secondRaceSilver100Claimed: Boolean(state.rewards.secondRaceSilver100Claimed || state.rewards.silverAfterSecondRunGranted),
+      thirdRaceGold100Claimed: Boolean(state.rewards.thirdRaceGold100Claimed || state.rewards.goldAfterThirdRunGranted)
+    },
     gifts: {
-      radarObstacles: {
-        unlocked: state.gifts.radarObstacles.unlocked,
-        claimed: state.gifts.radarObstacles.claimed
-      },
-      radarGold: {
-        unlocked: state.gifts.radarGold.unlocked,
-        claimed: state.gifts.radarGold.claimed
-      }
+      radar_obstacles_24h: { available: gameplayHistory.raceCount >= 6, claimed: state.gifts.radarObstacles.claimed },
+      radar_gold_24h: { available: gameplayHistory.raceCount >= 15, claimed: state.gifts.radarGold.claimed }
     },
     activeBoosts: {
       radarObstaclesUntil: upgrades?.temporaryBoosts?.radarObstaclesUntil || null,
@@ -46,60 +50,33 @@ router.get('/state', readLimiter, async (req, res) => {
   if (!primaryId) return res.status(400).json({ error: 'primaryId_required' });
 
   const canUseAuthOnboarding = await shouldCountAuthenticatedRun(primaryId);
-  const gameplayHistory = canUseAuthOnboarding
-    ? await getGameplayHistorySnapshot(primaryId)
-    : {
-      completedRunsCount: 0,
-      gamesPlayed: 0,
-      leaderboardEntries: 0,
-      finishedSessions: 0,
-      hasGameplayHistory: false
-    };
+  const gameplayHistory = canUseAuthOnboarding ? await getGameplayHistorySnapshot(primaryId) : { raceCount: 0, xConnected: false };
 
   const state = await getOrCreateOnboardingState(primaryId);
-  if (canUseAuthOnboarding) {
-    alignOnboardingStateWithGameplayHistory(state, gameplayHistory);
-    await state.save();
-  }
+  if (canUseAuthOnboarding) applyRunProgress(state, gameplayHistory.raceCount);
+  await state.save();
 
   const upgrades = await PlayerUpgrades.findOne({ wallet: primaryId });
-  return res.json({
-    ...buildStateResponse(state, upgrades),
-    gameplayHistory
-  });
+  const screen = String(req.query?.screen || 'menu').trim();
+  return res.json(buildStateResponse(state, upgrades, gameplayHistory, screen));
 });
 
 router.post('/event', async (req, res) => {
   const primaryId = resolvePrimaryIdFromRequest(req);
   if (!primaryId) return res.status(400).json({ error: 'primaryId_required' });
-  const event = String(req.body?.event || '').trim();
-  const supported = new Set(['wallet_connected', 'run_finished', 'x_connected', 'share_confirmed', 'store_opened', 'ride_pack_bought', 'store_back_clicked', 'skip_step']);
-  if (!supported.has(event)) return res.status(400).json({ error: 'unsupported_event' });
+  const key = String(req.body?.key || '').trim();
+  const action = String(req.body?.action || '').trim();
+  const screen = String(req.body?.screen || '').trim();
+  if (!ONBOARDING_KEYS.includes(key)) return res.status(400).json({ error: 'unsupported_key' });
+  if (!['shown', 'skip', 'complete'].includes(action)) return res.status(400).json({ error: 'unsupported_action' });
 
   const state = await getOrCreateOnboardingState(primaryId);
-  if (event === 'run_finished') {
-    const canProgress = await shouldCountAuthenticatedRun(primaryId);
-    if (canProgress) {
-      applyRunProgress(state);
-    }
-  }
-  if (event === 'store_opened') state.storeIntro.shown = true;
-  if (event === 'x_connected' || event === 'share_confirmed') state.storeIntro.unlocked = true;
-  if (event === 'ride_pack_bought') {
-    state.storeIntro.ridePackBought = true;
-  }
-  if (event === 'store_back_clicked') {
-    state.mainFlowCompleted = true;
-    await trackOnboardingEvent('onboarding_completed', { primaryId, flowVersion: state.flowVersion || 'v2' });
-  }
-  if (event === 'skip_step') {
-    state.mainFlowSkipped = true;
-    await trackOnboardingEvent('onboarding_step_skipped', { primaryId, flowVersion: state.flowVersion || 'v2', currentStep: state.currentStep });
-  }
-  updateStep(state);
+  setOnboardingEvent(state, { key, action, screen });
   await state.save();
+  await trackOnboardingEvent('onboarding_event', { primaryId, key, action, screen });
+  const gameplayHistory = await getGameplayHistorySnapshot(primaryId);
   const upgrades = await PlayerUpgrades.findOne({ wallet: primaryId });
-  return res.json({ success: true, state: buildStateResponse(state, upgrades) });
+  return res.json({ success: true, state: buildStateResponse(state, upgrades, gameplayHistory, screen || 'menu') });
 });
 
 router.post('/claim', async (req, res) => {

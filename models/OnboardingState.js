@@ -9,7 +9,18 @@ const onboardingStateSchema = new mongoose.Schema({
   authRunsCount: { type: Number, default: 0, min: 0 },
   rewards: {
     silverAfterSecondRunGranted: { type: Boolean, default: false },
-    goldAfterThirdRunGranted: { type: Boolean, default: false }
+    goldAfterThirdRunGranted: { type: Boolean, default: false },
+    secondRaceSilver100Claimed: { type: Boolean, default: false },
+    thirdRaceGold100Claimed: { type: Boolean, default: false }
+  },
+  onboarding: {
+    type: Map,
+    of: new mongoose.Schema({
+      status: { type: String, enum: ['none', 'skip', 'complete'], default: 'none' },
+      shownContext: { type: [String], default: [] },
+      updatedAt: { type: Date, default: Date.now }
+    }, { _id: false }),
+    default: {}
   },
   storeIntro: {
     shown: { type: Boolean, default: false },
