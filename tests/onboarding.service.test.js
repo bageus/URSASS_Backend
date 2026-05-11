@@ -76,3 +76,32 @@ test('resolveActiveOnboarding does not return second-race keys when status is sk
   const activeGameOver = resolveActiveOnboarding({ state: completed, raceCount: 1, xConnected: false, screen: 'game-over' });
   assert.equal(activeGameOver, null);
 });
+
+test('resolveActiveOnboarding never returns share result onboarding on menu screen', () => {
+  const state = baseState();
+  const active = resolveActiveOnboarding({ state, raceCount: 3, xConnected: false, screen: 'menu' });
+  assert.notEqual(active?.key, 'share_result_game_over');
+  assert.notEqual(active?.key, 'share_result_player_menu');
+});
+
+test('resolveActiveOnboarding returns share_result_player_menu on player-menu for 3+ runs and disconnected X', () => {
+  const state = baseState();
+  const active = resolveActiveOnboarding({ state, raceCount: 3, xConnected: false, screen: 'player-menu' });
+  assert.deepEqual(active, {
+    key: 'share_result_player_menu',
+    screen: 'player-menu',
+    target: 'player_menu_connect_x',
+    hook: 'Connect X and get a bonus'
+  });
+});
+
+test('resolveActiveOnboarding still returns share_result_game_over on game-over for 3+ runs and disconnected X', () => {
+  const state = baseState();
+  const active = resolveActiveOnboarding({ state, raceCount: 3, xConnected: false, screen: 'game-over' });
+  assert.deepEqual(active, {
+    key: 'share_result_game_over',
+    screen: 'game-over',
+    target: 'connect_x_or_share_result',
+    hook: 'Share your result and get a bonus'
+  });
+});
