@@ -665,15 +665,6 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     }
 
 
-<<<<<<< codex/fix-onboarding-bonus-validation-crash
-    let onboardingReward = { silverBonus: 0, goldBonus: 0, granted: [], unlocked: [] };
-    try {
-      const onboardingState = await getOrCreateOnboardingState(walletLower);
-      onboardingReward = applyRunProgress(onboardingState, responsePayload.gamesPlayed);
-      await onboardingState.save();
-
-      for (const rewardType of onboardingReward.granted || []) {
-=======
     const onboardingReward = { silverBonus: 0, goldBonus: 0, granted: [], unlocked: [] };
     const safeSideEffect = async (name, fn) => {
       try {
@@ -700,7 +691,6 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       await onboardingState.save();
 
       for (const rewardType of onboardingReward.granted) {
->>>>>>> dev
         await trackOnboardingEvent('onboarding_reward_granted', {
           primaryId: walletLower,
           rewardType,
@@ -708,11 +698,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
           flowVersion: onboardingState.flowVersion || 'v2'
         });
       }
-<<<<<<< codex/fix-onboarding-bonus-validation-crash
-      for (const unlockedReward of onboardingReward.unlocked || []) {
-=======
       for (const unlockedReward of onboardingReward.unlocked) {
->>>>>>> dev
         await trackOnboardingEvent('radar_gift_unlocked', {
           primaryId: walletLower,
           rewardType: unlockedReward,
@@ -733,7 +719,6 @@ router.post('/save', saveResultLimiter, async (req, res) => {
         );
         responsePayload.totalSilverCoins += onboardingReward.silverBonus;
         responsePayload.totalGoldCoins += onboardingReward.goldBonus;
-<<<<<<< codex/fix-onboarding-bonus-validation-crash
 
         const onboardingReason = onboardingState.authRunsCount === 2
           ? 'second_race_bonus'
@@ -747,17 +732,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
           reason: onboardingReason
         });
       }
-    } catch (onboardingErr) {
-      logger.error({ err: onboardingErr, wallet: walletLower, requestId: req.requestId }, 'Onboarding reward side effects failed after leaderboard result persisted');
-    }
-=======
-        await recordCoinReward(walletLower, 'onboarding_bonus', { gold: onboardingReward.goldBonus, silver: onboardingReward.silverBonus }, {
-          requestId: req.requestId,
-          contextKey: `onboarding_bonus_${walletLower}_${onboardingState.authRunsCount}`
-        });
-      }
     });
->>>>>>> dev
 
     logger.info({
       wallet: walletLower,
