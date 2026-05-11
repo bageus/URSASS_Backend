@@ -13,7 +13,7 @@ const ONBOARDING_KEYS = [
   'third_race_game_over',
   'third_race_menu',
   'share_result_game_over',
-  'share_result_menu',
+  'share_result_player_menu',
   'store_start',
   'store_in',
   'gift_radar_obstacles_menu',
@@ -140,6 +140,7 @@ function applyRunProgress(state, raceCount) {
 function resolveActiveOnboarding({ state, raceCount, xConnected, screen }) {
   const isMenu = screen === 'menu';
   const isGameOver = screen === 'game-over';
+  const isPlayerMenu = screen === 'player-menu';
   const isStore = screen === 'store';
 
   if (raceCount === 0 && getStatus(state, 'first_race') === 'none' && isMenu) return { key: 'first_race', screen: 'menu', target: 'start_game', hook: 'Start your first race' };
@@ -148,7 +149,7 @@ function resolveActiveOnboarding({ state, raceCount, xConnected, screen }) {
   if (raceCount === 2 && isGameOver && getStatus(state, 'third_race_game_over') === 'none') return { key: 'third_race_game_over', screen: 'game-over', target: 'play_again', hook: 'Play again and get +100 gold' };
   if (raceCount === 2 && isMenu && getStatus(state, 'third_race_menu') === 'none') return { key: 'third_race_menu', screen: 'menu', target: 'start_game', hook: 'Play again and get +100 gold' };
   if (raceCount >= 3 && !xConnected && isGameOver && getStatus(state, 'share_result_game_over') === 'none') return { key: 'share_result_game_over', screen: 'game-over', target: 'connect_x_or_share_result', hook: 'Share your result and get a bonus' };
-  if (raceCount >= 3 && !xConnected && isMenu && getStatus(state, 'share_result_menu') === 'none') return { key: 'share_result_menu', screen: 'menu', target: 'connect_x_or_share_result', hook: 'Connect X and get a bonus' };
+  if (raceCount >= 3 && !xConnected && isPlayerMenu && getStatus(state, 'share_result_player_menu') === 'none') return { key: 'share_result_player_menu', screen: 'player-menu', target: 'player_menu_connect_x', hook: 'Connect X and get a bonus' };
   if (raceCount >= 3 && isMenu && getStatus(state, 'store_start') === 'none') return { key: 'store_start', screen: 'menu', target: 'store_button', hook: 'Open Store to upgrade your runs' };
   if (raceCount >= 3 && isStore && getStatus(state, 'store_in') === 'none') return { key: 'store_in', screen: 'store', target: 'ride_pack_plus3', hook: 'Upgrade with +3 rides pack' };
   if (raceCount >= 6 && !state.gifts.radarObstacles.claimed && isMenu && getStatus(state, 'gift_radar_obstacles_menu') === 'none') return { key: 'gift_radar_obstacles_menu', screen: 'menu', target: 'gift_icon', hook: 'Free radar obstacles 24h gift' };

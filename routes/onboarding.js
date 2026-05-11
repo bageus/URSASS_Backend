@@ -24,6 +24,10 @@ function explainNoActiveOnboarding({ screen, raceCount, xConnected, onboarding }
     if (raceCount === 1 && onboarding.second_race_menu !== 'none') return `second_race_menu_status_${onboarding.second_race_menu}`;
     if (raceCount === 2 && onboarding.third_race_menu !== 'none') return `third_race_menu_status_${onboarding.third_race_menu}`;
   }
+  if (screen === 'player-menu') {
+    if (raceCount >= 3 && xConnected) return 'x_connected';
+    if (raceCount >= 3 && onboarding.share_result_player_menu !== 'none') return `share_result_player_menu_status_${onboarding.share_result_player_menu}`;
+  }
   if (screen === 'game-over') {
     if (raceCount === 1 && onboarding.second_race_game_over !== 'none') return `second_race_game_over_status_${onboarding.second_race_game_over}`;
     if (raceCount === 2 && onboarding.third_race_game_over !== 'none') return `third_race_game_over_status_${onboarding.third_race_game_over}`;
