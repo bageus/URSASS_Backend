@@ -89,6 +89,7 @@ router.get('/state', readLimiter, async (req, res) => {
     screen,
     raceCount: gameplayHistory.raceCount,
     xConnected: gameplayHistory.xConnected,
+    onboardingStatuses: response.onboarding,
     activeOnboardingKey: response.activeOnboarding?.key || null,
     reason
   }, 'Onboarding state resolved');
