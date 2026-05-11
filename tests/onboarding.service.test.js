@@ -36,3 +36,43 @@ test('resolveActiveOnboarding returns first_race on menu for zero runs', () => {
   const active = resolveActiveOnboarding({ state, raceCount: 0, xConnected: false, screen: 'menu' });
   assert.equal(active?.key, 'first_race');
 });
+
+test('resolveActiveOnboarding returns second_race_game_over for one run on game-over screen', () => {
+  const state = baseState();
+  const active = resolveActiveOnboarding({ state, raceCount: 1, xConnected: false, screen: 'game-over' });
+  assert.deepEqual(active, {
+    key: 'second_race_game_over',
+    screen: 'game-over',
+    target: 'play_again',
+    hook: 'Play again and get +100 silver'
+  });
+});
+
+test('resolveActiveOnboarding returns second_race_menu for one run on menu screen', () => {
+  const state = baseState();
+  const active = resolveActiveOnboarding({ state, raceCount: 1, xConnected: false, screen: 'menu' });
+  assert.deepEqual(active, {
+    key: 'second_race_menu',
+    screen: 'menu',
+    target: 'start_game',
+    hook: 'Play again and get +100 silver'
+  });
+});
+
+test('resolveActiveOnboarding does not return second-race keys when status is skip or complete', () => {
+  const skipped = baseState();
+  skipped.onboarding.set('second_race_menu', {
+    ...skipped.onboarding.get('second_race_menu'),
+    status: 'skip'
+  });
+  const activeMenu = resolveActiveOnboarding({ state: skipped, raceCount: 1, xConnected: false, screen: 'menu' });
+  assert.equal(activeMenu, null);
+
+  const completed = baseState();
+  completed.onboarding.set('second_race_game_over', {
+    ...completed.onboarding.get('second_race_game_over'),
+    status: 'complete'
+  });
+  const activeGameOver = resolveActiveOnboarding({ state: completed, raceCount: 1, xConnected: false, screen: 'game-over' });
+  assert.equal(activeGameOver, null);
+});
