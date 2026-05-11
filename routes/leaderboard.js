@@ -630,7 +630,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
 
 
     const onboardingState = await getOrCreateOnboardingState(walletLower);
-    const onboardingReward = applyRunProgress(onboardingState);
+    const onboardingReward = applyRunProgress(onboardingState, responsePayload.gamesPlayed);
     await onboardingState.save();
 
 
@@ -663,6 +663,10 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       );
       responsePayload.totalSilverCoins += onboardingReward.silverBonus;
       responsePayload.totalGoldCoins += onboardingReward.goldBonus;
+      await recordCoinReward(walletLower, 'onboarding_bonus', { gold: onboardingReward.goldBonus, silver: onboardingReward.silverBonus }, {
+        requestId: req.requestId,
+        contextKey: `onboarding_bonus_${walletLower}_${onboardingState.authRunsCount}`
+      });
     }
 
     logger.info({
