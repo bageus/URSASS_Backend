@@ -1,6 +1,8 @@
 const express = require('express');
 const { readLimiter } = require('../middleware/rateLimiter');
 const PlayerUpgrades = require('../models/PlayerUpgrades');
+const AccountLink = require('../models/AccountLink');
+const logger = require('../utils/logger');
 const {
   ONBOARDING_KEYS,
   resolvePrimaryIdFromRequest,
@@ -15,6 +17,20 @@ const {
 const { trackOnboardingEvent } = require('../services/onboardingAnalytics');
 
 const router = express.Router();
+
+function explainNoActiveOnboarding({ screen, raceCount, xConnected, onboarding }) {
+  if (screen === 'menu') {
+    if (raceCount === 1 && onboarding.second_race_menu !== 'none') return `second_race_menu_status_${onboarding.second_race_menu}`;
+    if (raceCount === 2 && onboarding.third_race_menu !== 'none') return `third_race_menu_status_${onboarding.third_race_menu}`;
+  }
+  if (screen === 'game-over') {
+    if (raceCount === 1 && onboarding.second_race_game_over !== 'none') return `second_race_game_over_status_${onboarding.second_race_game_over}`;
+    if (raceCount === 2 && onboarding.third_race_game_over !== 'none') return `third_race_game_over_status_${onboarding.third_race_game_over}`;
+    if (raceCount >= 3 && xConnected) return 'x_connected';
+    if (raceCount >= 3 && onboarding.share_result_game_over !== 'none') return `share_result_game_over_status_${onboarding.share_result_game_over}`;
+  }
+  return 'no_matching_condition';
+}
 
 function buildStateResponse(state, upgrades, gameplayHistory, screen) {
   const onboarding = Object.fromEntries(ONBOARDING_KEYS.map((key) => [key, state.onboarding.get(key)?.status || 'none']));
@@ -49,6 +65,7 @@ router.get('/state', readLimiter, async (req, res) => {
   const primaryId = resolvePrimaryIdFromRequest(req);
   if (!primaryId) return res.status(400).json({ error: 'primaryId_required' });
 
+  const account = await AccountLink.findOne({ $or: [{ primaryId }, { wallet: primaryId }] }).select('wallet telegramId').lean();
   const canUseAuthOnboarding = await shouldCountAuthenticatedRun(primaryId);
   const gameplayHistory = canUseAuthOnboarding ? await getGameplayHistorySnapshot(primaryId) : { raceCount: 0, xConnected: false };
 
@@ -58,7 +75,24 @@ router.get('/state', readLimiter, async (req, res) => {
 
   const upgrades = await PlayerUpgrades.findOne({ wallet: primaryId });
   const screen = String(req.query?.screen || 'menu').trim();
-  return res.json(buildStateResponse(state, upgrades, gameplayHistory, screen));
+  const response = buildStateResponse(state, upgrades, gameplayHistory, screen);
+  const reason = response.activeOnboarding ? null : explainNoActiveOnboarding({
+    screen,
+    raceCount: gameplayHistory.raceCount,
+    xConnected: gameplayHistory.xConnected,
+    onboarding: response.onboarding
+  });
+  logger.info({
+    userId: primaryId,
+    wallet: account?.wallet || primaryId,
+    telegramId: account?.telegramId || null,
+    screen,
+    raceCount: gameplayHistory.raceCount,
+    xConnected: gameplayHistory.xConnected,
+    activeOnboardingKey: response.activeOnboarding?.key || null,
+    reason
+  }, 'Onboarding state resolved');
+  return res.json(response);
 });
 
 router.post('/event', async (req, res) => {
