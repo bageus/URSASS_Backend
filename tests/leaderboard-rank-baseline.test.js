@@ -53,7 +53,7 @@ test('POST /api/leaderboard/save updates lastSeenRank to fresh rank after game',
   const timestamp = Date.now();
   const score = 9500;
   const distance = 200;
-  const message = `Save game result\nWallet: ${wallet.address}\nScore: ${score}\nDistance: ${distance}\nTimestamp: ${timestamp}`;
+  const message = `Save game result\nWallet: ${wallet.address}\nScore: ${score}\nDistance: ${distance}\nGoldCoins: 0\nSilverCoins: 0\nTimestamp: ${timestamp}`;
   const signature = await wallet.signMessage(message);
 
   const seenSignatures = new Set();

@@ -29,8 +29,8 @@ function verifySignature(message, signature, wallet) {
  * @param {number} timestamp - Timestamp
  * @returns {string} - Сообщение для верификации
  */
-function createMessageToVerify(wallet, score, distance, timestamp) {
-  return `Save game result\nWallet: ${wallet}\nScore: ${Math.floor(score)}\nDistance: ${Math.floor(distance)}\nTimestamp: ${timestamp}`;
+function createMessageToVerify(wallet, score, distance, goldCoins, silverCoins, timestamp) {
+  return `Save game result\nWallet: ${wallet}\nScore: ${Math.floor(score)}\nDistance: ${Math.floor(distance)}\nGoldCoins: ${Math.floor(goldCoins ?? 0)}\nSilverCoins: ${Math.floor(silverCoins ?? 0)}\nTimestamp: ${timestamp}`;
 }
 
 module.exports = {
