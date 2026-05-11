@@ -3,6 +3,7 @@ const PlayerUpgrades = require('../models/PlayerUpgrades');
 const AccountLink = require('../models/AccountLink');
 const Player = require('../models/Player');
 const GameResult = require('../models/GameResult');
+const PlayerRun = require('../models/PlayerRun');
 const CLAIMABLE_REWARDS = new Set(['radar_obstacles_24h', 'radar_gold_24h']);
 
 const ONBOARDING_KEYS = [
@@ -71,8 +72,10 @@ async function getOrCreateOnboardingState(primaryId) {
 async function getGameplayHistorySnapshot(primaryId) {
   const identity = await resolveIdentity(primaryId);
   const wallet = identity.wallet;
-  const [player, leaderboardCompletedCount] = await Promise.all([
+  const [player, leaderboardCompletedCount, gameResultCountAll, gameResultCountVerified] = await Promise.all([
     wallet ? Player.findOne({ wallet }).select('gamesPlayed xConnected').lean() : null,
+    wallet ? PlayerRun.countDocuments({ wallet, verified: true, isValid: true }) : 0,
+    wallet ? GameResult.countDocuments({ wallet }) : 0,
     wallet ? GameResult.countDocuments({ wallet, verified: true }) : 0
   ]);
 
@@ -84,7 +87,9 @@ async function getGameplayHistorySnapshot(primaryId) {
     xConnected: Boolean(player?.xConnected),
     identity,
     playerGamesPlayed,
-    leaderboardCompletedCount
+    leaderboardCompletedCount,
+    gameResultCountAll,
+    gameResultCountVerified
   };
 }
 
