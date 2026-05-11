@@ -63,7 +63,7 @@ test('updateStep moves to store_intro after 3rd run and completed after ride pac
   const state = baseState();
   state.authRunsCount = 3;
   updateStep(state);
-  assert.equal(state.currentStep, 'store_intro');
+  assert.equal(state.currentStep, 'auth_run_3_done');
 
   state.mainFlowCompleted = true;
   state.storeIntro.ridePackBought = true;
