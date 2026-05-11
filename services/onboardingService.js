@@ -2,6 +2,7 @@ const OnboardingState = require('../models/OnboardingState');
 const PlayerUpgrades = require('../models/PlayerUpgrades');
 const AccountLink = require('../models/AccountLink');
 const Player = require('../models/Player');
+const GameResult = require('../models/GameResult');
 const CLAIMABLE_REWARDS = new Set(['radar_obstacles_24h', 'radar_gold_24h']);
 
 const ONBOARDING_KEYS = [
@@ -28,8 +29,27 @@ function resolvePrimaryIdFromRequest(req) {
 
 async function shouldCountAuthenticatedRun(primaryId) {
   if (!primaryId) return false;
-  const link = await AccountLink.findOne({ $or: [{ primaryId }, { wallet: primaryId }] }).select('_id');
-  return Boolean(link);
+  const [link, player] = await Promise.all([
+    AccountLink.findOne({ $or: [{ primaryId }, { wallet: primaryId }, { telegramId: primaryId }] }).select('_id').lean(),
+    Player.findOne({ wallet: primaryId }).select('_id').lean()
+  ]);
+  return Boolean(link || player);
+}
+
+async function resolveIdentity(primaryId) {
+  const normalizedId = String(primaryId || '').trim().toLowerCase();
+  if (!normalizedId) return { primaryId: normalizedId, wallet: null, telegramId: null };
+
+  const link = await AccountLink.findOne({
+    $or: [{ primaryId: normalizedId }, { wallet: normalizedId }, { telegramId: normalizedId }]
+  }).select('wallet telegramId').lean();
+
+  const looksLikeWallet = normalizedId.startsWith('0x');
+  return {
+    primaryId: normalizedId,
+    wallet: link?.wallet || (looksLikeWallet ? normalizedId : null),
+    telegramId: link?.telegramId || (normalizedId.startsWith('tg_') ? normalizedId.slice(3) : null)
+  };
 }
 
 function initOnboardingMap(state) {
@@ -49,10 +69,22 @@ async function getOrCreateOnboardingState(primaryId) {
 }
 
 async function getGameplayHistorySnapshot(primaryId) {
-  const player = await Player.findOne({ wallet: primaryId }).select('gamesPlayed xConnected').lean();
+  const identity = await resolveIdentity(primaryId);
+  const wallet = identity.wallet;
+  const [player, leaderboardCompletedCount] = await Promise.all([
+    wallet ? Player.findOne({ wallet }).select('gamesPlayed xConnected').lean() : null,
+    wallet ? GameResult.countDocuments({ wallet, verified: true }) : 0
+  ]);
+
+  const playerGamesPlayed = Number(player?.gamesPlayed || 0);
+  const raceCount = Math.max(leaderboardCompletedCount, playerGamesPlayed);
+
   return {
-    raceCount: Number(player?.gamesPlayed || 0),
-    xConnected: Boolean(player?.xConnected)
+    raceCount,
+    xConnected: Boolean(player?.xConnected),
+    identity,
+    playerGamesPlayed,
+    leaderboardCompletedCount
   };
 }
 
@@ -149,6 +181,7 @@ module.exports = {
   ONBOARDING_KEYS,
   resolvePrimaryIdFromRequest,
   shouldCountAuthenticatedRun,
+  resolveIdentity,
   getOrCreateOnboardingState,
   getGameplayHistorySnapshot,
   setOnboardingEvent,
