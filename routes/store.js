@@ -8,11 +8,12 @@ const { listDonationProducts, listDonationPayments, createDonationPayment, submi
 const { verifySignature } = require('../utils/verifySignature');
 const { writeLimiter, readLimiter } = require('../middleware/rateLimiter');
 const SecurityEvent = require('../models/SecurityEvent');
+const CoinTransaction = require('../models/CoinTransaction');
 const logger = require('../utils/logger');
 const { markSuspicious } = require('../middleware/requestMetrics');
 const { logSecurityEvent, normalizeWallet, parseWalletOrNull, buildInvalidWalletError, validateTimestampWindow } = require('../utils/security');
 const { hasAiModeAccess, hasAiModeAccessByTelegramUsername } = require('../utils/aiModeAccess');
-const { getOrCreateOnboardingState, updateStep } = require('../services/onboardingService');
+const { getOrCreateOnboardingState, setOnboardingEvent } = require('../services/onboardingService');
 
 const UPGRADE_KEY_ALIASES = {
   spin_alert: 'alert',
@@ -517,8 +518,13 @@ router.get('/donations/payment/:paymentId', readLimiter, async (req, res) => {
  * Buy an upgrade or ride pack
  */
 router.post('/buy', writeLimiter, async (req, res) => {
+  let purchaseApplied = false;
+  let responsePayload = null;
   try {
     const { wallet, upgradeKey, tier, signature, timestamp, authMode, telegramId } = req.body;
+    const idempotencyKey = String(
+      req.get('x-idempotency-key') || req.get('x-request-id') || req.body?.requestId || req.requestId || ''
+    ).trim();
     const requestedUpgradeKey = String(upgradeKey || '').trim();
     const resolvedUpgradeKey = resolveUpgradeKey(requestedUpgradeKey);
 
@@ -561,6 +567,36 @@ router.post('/buy', writeLimiter, async (req, res) => {
     });
 
     await logPurchaseAttempt();
+
+    if (idempotencyKey) {
+      const existingSuccess = await SecurityEvent.findOne({
+        wallet: walletLower,
+        eventType: 'purchase_result',
+        'details.status': 'success',
+        'details.requestId': idempotencyKey
+      })
+        .sort({ createdAt: -1 })
+        .lean();
+
+      if (existingSuccess) {
+        const upgrades = await getOrCreatePlayerUpgrades(walletLower);
+        await prepareUpgrades(upgrades, { persist: true });
+        const player = await Player.findOne({ wallet: walletLower });
+        return res.json({
+          success: true,
+          duplicate: true,
+          message: `Purchased ${resolvedUpgradeKey}`,
+          requestedUpgradeKey,
+          resolvedUpgradeKey,
+          balance: {
+            gold: player?.totalGoldCoins || 0,
+            silver: player?.totalSilverCoins || 0
+          },
+          rides: buildRidesData(upgrades),
+          activeEffects: calculateEffects(upgrades)
+        });
+      }
+    }
 
     
     const config = UPGRADES_CONFIG[resolvedUpgradeKey];
@@ -608,6 +644,13 @@ router.post('/buy', writeLimiter, async (req, res) => {
     const upgrades = await getOrCreatePlayerUpgrades(walletLower);
     await prepareUpgrades(upgrades);
 
+    const purchaseSnapshotBefore = {
+      gold: player.totalGoldCoins,
+      silver: player.totalSilverCoins,
+      paidRidesRemaining: upgrades.paidRidesRemaining,
+      upgradeLevel: upgrades[resolvedUpgradeKey] || 0
+    };
+
     // === PURCHASE LOGIC BY TYPE ===
 
     if (isLevelUpgradeType(config.type)) {
@@ -649,12 +692,6 @@ router.post('/buy', writeLimiter, async (req, res) => {
 
       logger.info({ wallet: walletLower, ridesBought: config.amount, price, currency: 'gold', paidRidesRemaining: upgrades.paidRidesRemaining }, 'Rides purchased');
 
-      const onboardingState = await getOrCreateOnboardingState(walletLower);
-      onboardingState.storeIntro.ridePackBought = true;
-      onboardingState.mainFlowCompleted = true;
-      updateStep(onboardingState);
-      await onboardingState.save();
-
     } else {
       return failPurchase(400, 'unknown_upgrade_type', 'Unknown upgrade type');
     }
@@ -665,15 +702,16 @@ router.post('/buy', writeLimiter, async (req, res) => {
 
     await upgrades.save();
     await player.save();
+    purchaseApplied = true;
 
     const effects = calculateEffects(upgrades);
 
-    await logPurchaseResult('success', 'completed');
+    await logPurchaseResult('success', 'completed', { requestId: idempotencyKey || null });
 
     logger.info({ wallet: walletLower, requestedUpgradeKey, resolvedUpgradeKey, tier: tier ?? 0 }, 'Purchase processed');
 
 
-    res.json({
+    responsePayload = {
       success: true,
       message: `Purchased ${resolvedUpgradeKey}`,
       requestedUpgradeKey,
@@ -684,7 +722,34 @@ router.post('/buy', writeLimiter, async (req, res) => {
       },
       rides: buildRidesData(upgrades),
       activeEffects: effects
-    });
+    };
+
+    try {
+      await CoinTransaction.create({
+        primaryId: walletLower,
+        type: 'buy',
+        contextKey: idempotencyKey ? `buy:${walletLower}:${idempotencyKey}` : null,
+        gold: currencyForPurchase(config) === 'gold' ? purchasePrice(config, tier, purchaseSnapshotBefore) : 0,
+        silver: currencyForPurchase(config) === 'silver' ? purchasePrice(config, tier, purchaseSnapshotBefore) : 0
+      });
+    } catch (err) {
+      logger.error({ err, wallet: walletLower, productKey: resolvedUpgradeKey, currency: currencyForPurchase(config), price: purchasePrice(config, tier, purchaseSnapshotBefore) }, 'CoinTransaction side effect failed');
+    }
+
+    if (config.type === 'rides') {
+      try {
+        const onboardingState = await getOrCreateOnboardingState(walletLower);
+        onboardingState.storeIntro = onboardingState.storeIntro || {};
+        onboardingState.storeIntro.ridePackBought = true;
+        onboardingState.mainFlowCompleted = true;
+        setOnboardingEvent(onboardingState, { key: 'store_in', action: 'complete', screen: 'store' });
+        await onboardingState.save();
+      } catch (err) {
+        logger.error({ err, wallet: walletLower, productKey: resolvedUpgradeKey }, 'Onboarding side effect failed');
+      }
+    }
+
+    res.json(responsePayload);
 
   } catch (error) {
     const walletLower = typeof req.body?.wallet === 'string' ? req.body.wallet.toLowerCase() : null;
@@ -700,10 +765,25 @@ router.post('/buy', writeLimiter, async (req, res) => {
       }
     });
     await purchaseAudit.logServerError(req.body, error);
-    logger.error({ err: error }, 'POST /buy error');
+    logger.error({ err: error, wallet: req.body?.wallet, productKey: req.body?.upgradeKey, currency: null, price: null }, 'POST /buy error');
+    if (purchaseApplied && responsePayload) {
+      return res.json(responsePayload);
+    }
     res.status(500).json({ error: 'Server error' });
   }
 });
+
+function currencyForPurchase(config) {
+  if (config.type === 'rides') return 'gold';
+  return config.currency;
+}
+
+function purchasePrice(config, tier, beforeSnapshot) {
+  if (config.type === 'rides') return config.price;
+  const beforeLevel = beforeSnapshot.upgradeLevel || 0;
+  const index = config.type === 'tiered' ? tier : beforeLevel;
+  return config.prices[index] || 0;
+}
 
 /**
  * POST /api/store/consume-ride
