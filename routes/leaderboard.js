@@ -43,6 +43,25 @@ const SHARE_COPY_TEMPLATE = 'I scored {score} in Ursass Tube 🐻\nCan you beat 
 const SHARE_HASHTAGS = '#UrsassTube #Ursas #Ursasplanet #GameChallenge #HighScore';
 const TOP_CACHE_TTL_MS = getTopLeaderboardCacheTtlMs();
 
+
+function isDuplicateSaveError(error) {
+  if (!error) return false;
+  if (error.alreadySaved || error.code === 409 || error.code === 11000) {
+    return true;
+  }
+
+  const keyPattern = error.keyPattern || {};
+  const keyValue = error.keyValue || {};
+  const duplicateKeys = new Set([
+    ...Object.keys(keyPattern),
+    ...Object.keys(keyValue)
+  ]);
+
+  return duplicateKeys.has('signature') || duplicateKeys.has('runId') ||
+    (duplicateKeys.has('wallet') && duplicateKeys.has('timestamp'));
+}
+
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -815,7 +834,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     });
 
   } catch (error) {
-    if (error?.alreadySaved || error?.code === 409 || error?.code === 11000) {
+    if (isDuplicateSaveError(error)) {
       return res.status(200).json({
         success: true,
         alreadySaved: true,
