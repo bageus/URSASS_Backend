@@ -283,6 +283,50 @@ test('POST /api/leaderboard/save accepts valid signature and treats replay as al
   await server.close();
 });
 
+test('POST /api/leaderboard/save returns alreadySaved on duplicate key conflict from persistence layer', async () => {
+  const wallet = Wallet.createRandom();
+
+  GameResult.findOne = () => queryResult(null);
+  let createCalls = 0;
+  GameResult.create = async () => {
+    createCalls += 1;
+    if (createCalls === 1) {
+      const err = new Error('E11000 duplicate key error collection: gameresults index: signature_1 dup key');
+      err.code = 11000;
+      err.keyPattern = { signature: 1 };
+      throw err;
+    }
+    return [];
+  };
+  Player.findOne = () => queryResult(null);
+
+  const { server, baseUrl } = await startServer();
+  const timestamp = Date.now();
+  const message = `Save game result
+Wallet: ${wallet.address}
+Score: 200
+Distance: 80
+GoldCoins: 0
+SilverCoins: 0
+Timestamp: ${timestamp}`;
+  const signature = await wallet.signMessage(message);
+
+  const res = await fetch(`${baseUrl}/api/leaderboard/save`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: 'https://ursasstube.fun' },
+    body: JSON.stringify({ wallet: wallet.address, score: 200, distance: 80, signature, timestamp })
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('access-control-allow-origin'), '*');
+  const body = await res.json();
+  assert.equal(body.success, true);
+  assert.equal(body.alreadySaved, true);
+
+  await server.close();
+});
+
+
 test('POST /api/store/buy returns insufficient funds', async () => {
   const wallet = Wallet.createRandom();
   const walletLower = wallet.address.toLowerCase();
