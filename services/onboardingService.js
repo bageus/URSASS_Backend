@@ -160,9 +160,14 @@ function resolveActiveOnboarding({ state, raceCount, xConnected, screen }) {
   return null;
 }
 
-async function claimReward({ state, primaryId, reward }) {
+async function claimReward({ state, primaryId, wallet, reward }) {
   if (!CLAIMABLE_REWARDS.has(reward)) throw Object.assign(new Error('unsupported_reward'), { statusCode: 400 });
-  const upgrades = await PlayerUpgrades.findOneAndUpdate({ wallet: primaryId }, { $setOnInsert: { wallet: primaryId } }, { upsert: true, new: true });
+  const normalizedWallet = String(wallet || primaryId || '').trim().toLowerCase();
+  const upgrades = await PlayerUpgrades.findOneAndUpdate(
+    { wallet: normalizedWallet },
+    { $setOnInsert: { wallet: normalizedWallet } },
+    { upsert: true, new: true }
+  );
   const until = new Date(Date.now() + 24 * 60 * 60 * 1000);
   if (reward === 'radar_obstacles_24h') {
     if (state.gifts.radarObstacles.claimed) return { alreadyClaimed: true, until: upgrades.temporaryBoosts?.radarObstaclesUntil || null };
