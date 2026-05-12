@@ -1,5 +1,32 @@
 const CoinTransaction = require('../models/CoinTransaction');
+const AccountLink = require('../models/AccountLink');
 const logger = require('./logger');
+
+
+function normalizeId(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function uniqueNormalizedIds(values = []) {
+  return [...new Set(values.map(normalizeId).filter(Boolean))];
+}
+
+async function resolveCoinHistoryIds({ primaryId, authLink } = {}) {
+  const fromAuth = uniqueNormalizedIds([
+    primaryId,
+    authLink?.primaryId,
+    authLink?.wallet
+  ]);
+
+  if (!authLink?.wallet && fromAuth.length > 0) {
+    const link = await AccountLink.findOne({ primaryId: fromAuth[0] });
+    if (link?.wallet) {
+      return uniqueNormalizedIds([...fromAuth, link.wallet]);
+    }
+  }
+
+  return fromAuth;
+}
 
 async function recordCoinReward(primaryId, type, amounts = {}, opts = {}) {
   const normalizedPrimaryId = String(primaryId || '').trim().toLowerCase();
@@ -43,4 +70,4 @@ async function recordCoinReward(primaryId, type, amounts = {}, opts = {}) {
   }
 }
 
-module.exports = { recordCoinReward };
+module.exports = { recordCoinReward, normalizeId, uniqueNormalizedIds, resolveCoinHistoryIds };
