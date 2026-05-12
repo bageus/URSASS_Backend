@@ -18,6 +18,7 @@ const {
 const { trackOnboardingEvent } = require('../services/onboardingAnalytics');
 
 const router = express.Router();
+const asyncHandler = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 
 function explainNoActiveOnboarding({ screen, raceCount, xConnected, onboarding }) {
   if (screen === 'menu') {
@@ -66,7 +67,7 @@ function buildStateResponse(state, upgrades, gameplayHistory, screen) {
   };
 }
 
-router.get('/state', readLimiter, async (req, res) => {
+router.get('/state', readLimiter, asyncHandler(async (req, res) => {
   const primaryId = resolvePrimaryIdFromRequest(req);
   if (!primaryId) return res.status(400).json({ error: 'primaryId_required' });
 
@@ -106,9 +107,9 @@ router.get('/state', readLimiter, async (req, res) => {
     reason
   }, 'Onboarding state resolved');
   return res.json(response);
-});
+}));
 
-router.post('/event', async (req, res) => {
+router.post('/event', asyncHandler(async (req, res) => {
   const primaryId = resolvePrimaryIdFromRequest(req);
   if (!primaryId) return res.status(400).json({ error: 'primaryId_required' });
   const key = String(req.body?.key || '').trim();
@@ -124,10 +125,9 @@ router.post('/event', async (req, res) => {
   const gameplayHistory = await getGameplayHistorySnapshot(primaryId);
   const upgrades = await PlayerUpgrades.findOne({ wallet: primaryId });
   return res.json({ success: true, state: buildStateResponse(state, upgrades, gameplayHistory, screen || 'menu') });
-});
+}));
 
-router.post('/claim', async (req, res) => {
-  try {
+router.post('/claim', asyncHandler(async (req, res) => {
     const primaryId = resolvePrimaryIdFromRequest(req);
     if (!primaryId) return res.status(400).json({ error: 'primaryId_required' });
     const reward = String(req.body?.reward || '').trim();
@@ -138,9 +138,6 @@ router.post('/claim', async (req, res) => {
       await trackOnboardingEvent('radar_gift_claimed', { primaryId, reward, flowVersion: state.flowVersion || 'v2' });
     }
     return res.json({ success: true, reward, ...claim });
-  } catch (error) {
-    return res.status(error.statusCode || 500).json({ error: error.message || 'claim_failed' });
-  }
-});
+}));
 
 module.exports = router;
