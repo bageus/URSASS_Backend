@@ -21,6 +21,7 @@ const { computeRank } = require('../services/leaderboardInsightsService');
 const { buildReferralUrl, buildCanonicalShareUrl, buildWebReferralUrl, buildTelegramReferralUrl } = require('../utils/referral');
 const { getUtcDayKey, getYesterdayUtcDayKey } = require('../utils/utcDay');
 const { findLink } = require('../middleware/requireAuth');
+const { resolveCoinHistoryIds } = require('../utils/coinHistory');
 
 const WALLET_TIMESTAMP_WINDOW_MS = Number(process.env.WALLET_AUTH_TIMESTAMP_WINDOW_MS || 10 * 60 * 1000);
 
@@ -420,8 +421,10 @@ router.get('/me/coin-history', readLimiter, requireAuth, async (req, res) => {
     const rawLimit = Number(req.query?.limit);
     const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.floor(rawLimit), 1), 200) : 50;
 
+    const historyIds = await resolveCoinHistoryIds({ primaryId, authLink: req.authLink });
+
     const rows = await CoinTransaction
-      .find({ primaryId })
+      .find({ primaryId: { $in: historyIds } })
       .sort({ createdAt: -1 })
       .limit(limit)
       .select('type gold silver createdAt');
