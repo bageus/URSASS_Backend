@@ -43,14 +43,18 @@ async function resolveIdentity(primaryId) {
 
   const link = await AccountLink.findOne({
     $or: [{ primaryId: normalizedId }, { wallet: normalizedId }, { telegramId: normalizedId }]
-  }).select('wallet telegramId').lean();
+  }).select('primaryId wallet telegramId').lean();
 
   const looksLikeWallet = normalizedId.startsWith('0x');
   return {
-    primaryId: normalizedId,
+    primaryId: link?.primaryId || normalizedId,
     wallet: link?.wallet || (looksLikeWallet ? normalizedId : null),
     telegramId: link?.telegramId || (normalizedId.startsWith('tg_') ? normalizedId.slice(3) : null)
   };
+}
+
+function isTerminalOnboardingStatus(status) {
+  return ['skip', 'complete', 'dismiss', 'dismissed'].includes(String(status || '').trim().toLowerCase());
 }
 
 function initOnboardingMap(state) {
@@ -95,6 +99,10 @@ async function getGameplayHistorySnapshot(primaryId) {
 
 function getStatus(state, key) {
   return state.onboarding.get(key)?.status || 'none';
+}
+
+function isOnboardingStepEligible(state, key) {
+  return !isTerminalOnboardingStatus(getStatus(state, key));
 }
 
 function setOnboardingEvent(state, { key, action, screen }) {
@@ -143,19 +151,19 @@ function resolveActiveOnboarding({ state, raceCount, xConnected, screen }) {
   const isPlayerMenu = screen === 'player-menu';
   const isStore = screen === 'store';
 
-  if (raceCount === 0 && getStatus(state, 'first_race') === 'none' && isMenu) return { key: 'first_race', screen: 'menu', target: 'start_game', hook: 'Start your first race' };
-  if (raceCount === 1 && isGameOver && getStatus(state, 'second_race_game_over') === 'none') return { key: 'second_race_game_over', screen: 'game-over', target: 'play_again', hook: 'Play again and get +100 silver' };
-  if (raceCount === 1 && isMenu && getStatus(state, 'second_race_menu') === 'none') return { key: 'second_race_menu', screen: 'menu', target: 'start_game', hook: 'Play again and get +100 silver' };
-  if (raceCount === 2 && isGameOver && getStatus(state, 'third_race_game_over') === 'none') return { key: 'third_race_game_over', screen: 'game-over', target: 'play_again', hook: 'Play again and get +100 gold' };
-  if (raceCount === 2 && isMenu && getStatus(state, 'third_race_menu') === 'none') return { key: 'third_race_menu', screen: 'menu', target: 'start_game', hook: 'Play again and get +100 gold' };
-  if (raceCount >= 3 && !xConnected && isGameOver && getStatus(state, 'share_result_game_over') === 'none') return { key: 'share_result_game_over', screen: 'game-over', target: 'connect_x_or_share_result', hook: 'Share your result and get a bonus' };
-  if (raceCount >= 3 && !xConnected && isPlayerMenu && getStatus(state, 'share_result_player_menu') === 'none') return { key: 'share_result_player_menu', screen: 'player-menu', target: 'player_menu_connect_x', hook: 'Connect X and get a bonus' };
-  if (raceCount >= 3 && isMenu && getStatus(state, 'store_start') === 'none') return { key: 'store_start', screen: 'menu', target: 'store_button', hook: 'Open Store to upgrade your runs' };
-  if (raceCount >= 3 && isStore && getStatus(state, 'store_in') === 'none') return { key: 'store_in', screen: 'store', target: 'ride_pack_plus3', hook: 'Upgrade with +3 rides pack' };
-  if (raceCount >= 6 && !state.gifts.radarObstacles.claimed && isMenu && getStatus(state, 'gift_radar_obstacles_menu') === 'none') return { key: 'gift_radar_obstacles_menu', screen: 'menu', target: 'gift_icon', hook: 'Free radar obstacles 24h gift' };
-  if (raceCount >= 6 && !state.gifts.radarObstacles.claimed && isStore && getStatus(state, 'gift_radar_obstacles_store') === 'none') return { key: 'gift_radar_obstacles_store', screen: 'store', target: 'radar_obstacles_24h_card', hook: 'Free 24h gift' };
-  if (raceCount >= 15 && !state.gifts.radarGold.claimed && isMenu && getStatus(state, 'gift_radar_gold_menu') === 'none') return { key: 'gift_radar_gold_menu', screen: 'menu', target: 'gift_icon', hook: 'Free radar gold 24h gift' };
-  if (raceCount >= 15 && !state.gifts.radarGold.claimed && isStore && getStatus(state, 'gift_radar_gold_store') === 'none') return { key: 'gift_radar_gold_store', screen: 'store', target: 'radar_gold_24h_card', hook: 'Free 24h gift' };
+  if (raceCount === 0 && isOnboardingStepEligible(state, 'first_race') && isMenu) return { key: 'first_race', screen: 'menu', target: 'start_game', hook: 'Start your first race' };
+  if (raceCount === 1 && isGameOver && isOnboardingStepEligible(state, 'second_race_game_over')) return { key: 'second_race_game_over', screen: 'game-over', target: 'play_again', hook: 'Play again and get +100 silver' };
+  if (raceCount === 1 && isMenu && isOnboardingStepEligible(state, 'second_race_menu')) return { key: 'second_race_menu', screen: 'menu', target: 'start_game', hook: 'Play again and get +100 silver' };
+  if (raceCount === 2 && isGameOver && isOnboardingStepEligible(state, 'third_race_game_over')) return { key: 'third_race_game_over', screen: 'game-over', target: 'play_again', hook: 'Play again and get +100 gold' };
+  if (raceCount === 2 && isMenu && isOnboardingStepEligible(state, 'third_race_menu')) return { key: 'third_race_menu', screen: 'menu', target: 'start_game', hook: 'Play again and get +100 gold' };
+  if (raceCount >= 3 && !xConnected && isGameOver && isOnboardingStepEligible(state, 'share_result_game_over')) return { key: 'share_result_game_over', screen: 'game-over', target: 'connect_x_or_share_result', hook: 'Share your result and get a bonus' };
+  if (raceCount >= 3 && !xConnected && isPlayerMenu && isOnboardingStepEligible(state, 'share_result_player_menu')) return { key: 'share_result_player_menu', screen: 'player-menu', target: 'player_menu_connect_x', hook: 'Connect X and get a bonus' };
+  if (raceCount >= 3 && isMenu && isOnboardingStepEligible(state, 'store_start')) return { key: 'store_start', screen: 'menu', target: 'store_button', hook: 'Open Store to upgrade your runs' };
+  if (raceCount >= 3 && isStore && isOnboardingStepEligible(state, 'store_in')) return { key: 'store_in', screen: 'store', target: 'ride_pack_plus3', hook: 'Upgrade with +3 rides pack' };
+  if (raceCount >= 6 && !state.gifts.radarObstacles.claimed && isMenu && isOnboardingStepEligible(state, 'gift_radar_obstacles_menu')) return { key: 'gift_radar_obstacles_menu', screen: 'menu', target: 'gift_icon', hook: 'Free radar obstacles 24h gift' };
+  if (raceCount >= 6 && !state.gifts.radarObstacles.claimed && isStore && isOnboardingStepEligible(state, 'gift_radar_obstacles_store')) return { key: 'gift_radar_obstacles_store', screen: 'store', target: 'radar_obstacles_24h_card', hook: 'Free 24h gift' };
+  if (raceCount >= 15 && !state.gifts.radarGold.claimed && isMenu && isOnboardingStepEligible(state, 'gift_radar_gold_menu')) return { key: 'gift_radar_gold_menu', screen: 'menu', target: 'gift_icon', hook: 'Free radar gold 24h gift' };
+  if (raceCount >= 15 && !state.gifts.radarGold.claimed && isStore && isOnboardingStepEligible(state, 'gift_radar_gold_store')) return { key: 'gift_radar_gold_store', screen: 'store', target: 'radar_gold_24h_card', hook: 'Free 24h gift' };
 
   return null;
 }
@@ -193,6 +201,7 @@ module.exports = {
   resolvePrimaryIdFromRequest,
   shouldCountAuthenticatedRun,
   resolveIdentity,
+  isTerminalOnboardingStatus,
   getOrCreateOnboardingState,
   getGameplayHistorySnapshot,
   setOnboardingEvent,
