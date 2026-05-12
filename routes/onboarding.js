@@ -18,6 +18,7 @@ const {
 const { trackOnboardingEvent } = require('../services/onboardingAnalytics');
 
 const router = express.Router();
+const asyncHandler = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 
 function explainNoActiveOnboarding({ screen, raceCount, xConnected, onboarding }) {
   if (screen === 'menu') {
@@ -45,6 +46,10 @@ function buildStateResponse(state, upgrades, gameplayHistory, screen) {
     xConnected: gameplayHistory.xConnected,
     screen
   });
+  const activeBoosts = {
+    radarObstaclesUntil: upgrades?.temporaryBoosts?.radarObstaclesUntil || null,
+    radarGoldUntil: upgrades?.temporaryBoosts?.radarGoldUntil || null
+  };
   return {
     completed: ONBOARDING_KEYS.every((key) => onboarding[key] !== 'none'),
     raceCount: gameplayHistory.raceCount,
@@ -59,14 +64,11 @@ function buildStateResponse(state, upgrades, gameplayHistory, screen) {
       radar_obstacles_24h: { available: gameplayHistory.raceCount >= 6, claimed: state.gifts.radarObstacles.claimed },
       radar_gold_24h: { available: gameplayHistory.raceCount >= 15, claimed: state.gifts.radarGold.claimed }
     },
-    activeBoosts: {
-      radarObstaclesUntil: upgrades?.temporaryBoosts?.radarObstaclesUntil || null,
-      radarGoldUntil: upgrades?.temporaryBoosts?.radarGoldUntil || null
-    }
+    activeBoosts
   };
 }
 
-router.get('/state', readLimiter, async (req, res) => {
+router.get('/state', readLimiter, asyncHandler(async (req, res) => {
   const primaryId = resolvePrimaryIdFromRequest(req);
   if (!primaryId) return res.status(400).json({ error: 'primaryId_required' });
 
@@ -79,7 +81,8 @@ router.get('/state', readLimiter, async (req, res) => {
   if (canUseAuthOnboarding) applyRunProgress(state, gameplayHistory.raceCount);
   await state.save();
 
-  const upgrades = await PlayerUpgrades.findOne({ wallet: primaryId });
+  const upgradesWallet = identity.wallet || primaryId;
+  const upgrades = await PlayerUpgrades.findOne({ wallet: upgradesWallet });
   const screen = String(req.query?.screen || 'menu').trim();
   const response = buildStateResponse(state, upgrades, gameplayHistory, screen);
   const reason = response.activeOnboarding ? null : explainNoActiveOnboarding({
@@ -103,12 +106,13 @@ router.get('/state', readLimiter, async (req, res) => {
     xConnected: gameplayHistory.xConnected,
     onboardingStatuses: response.onboarding,
     activeOnboardingKey: response.activeOnboarding?.key || null,
+    activeBoosts: response.activeBoosts,
     reason
   }, 'Onboarding state resolved');
   return res.json(response);
-});
+}));
 
-router.post('/event', async (req, res) => {
+router.post('/event', asyncHandler(async (req, res) => {
   const primaryId = resolvePrimaryIdFromRequest(req);
   if (!primaryId) return res.status(400).json({ error: 'primaryId_required' });
   const key = String(req.body?.key || '').trim();
@@ -124,23 +128,22 @@ router.post('/event', async (req, res) => {
   const gameplayHistory = await getGameplayHistorySnapshot(primaryId);
   const upgrades = await PlayerUpgrades.findOne({ wallet: primaryId });
   return res.json({ success: true, state: buildStateResponse(state, upgrades, gameplayHistory, screen || 'menu') });
-});
+}));
 
-router.post('/claim', async (req, res) => {
-  try {
+router.post('/claim', asyncHandler(async (req, res) => {
     const primaryId = resolvePrimaryIdFromRequest(req);
     if (!primaryId) return res.status(400).json({ error: 'primaryId_required' });
     const reward = String(req.body?.reward || '').trim();
+    const identity = await resolveIdentity(primaryId);
+    const wallet = identity.wallet || primaryId;
     const state = await getOrCreateOnboardingState(primaryId);
-    const claim = await claimReward({ state, primaryId, reward });
+    const claim = await claimReward({ state, primaryId, wallet, reward });
+    logger.info({ primaryId, wallet, reward, until: claim.until || null }, 'Onboarding reward claim processed');
     if (!claim.alreadyClaimed) {
       await trackOnboardingEvent('onboarding_reward_claimed', { primaryId, reward, flowVersion: state.flowVersion || 'v2' });
       await trackOnboardingEvent('radar_gift_claimed', { primaryId, reward, flowVersion: state.flowVersion || 'v2' });
     }
     return res.json({ success: true, reward, ...claim });
-  } catch (error) {
-    return res.status(error.statusCode || 500).json({ error: error.message || 'claim_failed' });
-  }
-});
+}));
 
 module.exports = router;
