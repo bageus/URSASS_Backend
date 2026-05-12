@@ -69,10 +69,10 @@ function buildStateResponse(state, upgrades, gameplayHistory, screen) {
 }
 
 router.get('/state', readLimiter, asyncHandler(async (req, res) => {
-  const primaryId = resolvePrimaryIdFromRequest(req);
-  if (!primaryId) return res.status(400).json({ error: 'primaryId_required' });
-
-  const identity = await resolveIdentity(primaryId);
+  const requestedPrimaryId = resolvePrimaryIdFromRequest(req);
+  if (!requestedPrimaryId) return res.status(400).json({ error: 'primaryId_required' });
+  const identity = await resolveIdentity(requestedPrimaryId);
+  const primaryId = identity.primaryId || requestedPrimaryId;
   const account = await AccountLink.findOne({ $or: [{ primaryId }, { wallet: primaryId }, { telegramId: primaryId }] }).select('wallet telegramId').lean();
   const canUseAuthOnboarding = await shouldCountAuthenticatedRun(primaryId);
   const gameplayHistory = await getGameplayHistorySnapshot(primaryId);
@@ -93,6 +93,7 @@ router.get('/state', readLimiter, asyncHandler(async (req, res) => {
   });
   logger.info({
     userId: primaryId,
+    requestedPrimaryId,
     resolvedWallet: identity.wallet || account?.wallet || null,
     telegramId: identity.telegramId || account?.telegramId || null,
     screen,
@@ -107,14 +108,22 @@ router.get('/state', readLimiter, asyncHandler(async (req, res) => {
     onboardingStatuses: response.onboarding,
     activeOnboardingKey: response.activeOnboarding?.key || null,
     activeBoosts: response.activeBoosts,
-    reason
+    reason,
+    eligibilityDetails: ONBOARDING_KEYS.map((key) => ({
+      key,
+      status: response.onboarding[key],
+      eligible: response.onboarding[key] === 'none',
+      reason: response.onboarding[key] === 'none' ? 'status_none_non_terminal' : `status_${response.onboarding[key]}_terminal_or_resolved`
+    }))
   }, 'Onboarding state resolved');
   return res.json(response);
 }));
 
 router.post('/event', asyncHandler(async (req, res) => {
-  const primaryId = resolvePrimaryIdFromRequest(req);
-  if (!primaryId) return res.status(400).json({ error: 'primaryId_required' });
+  const requestedPrimaryId = resolvePrimaryIdFromRequest(req);
+  if (!requestedPrimaryId) return res.status(400).json({ error: 'primaryId_required' });
+  const identity = await resolveIdentity(requestedPrimaryId);
+  const primaryId = identity.primaryId || requestedPrimaryId;
   const key = String(req.body?.key || '').trim();
   const action = String(req.body?.action || '').trim();
   const screen = String(req.body?.screen || '').trim();
