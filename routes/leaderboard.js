@@ -289,6 +289,9 @@ router.get('/top', readLimiter, async (req, res) => {
 
 // ✅ POST: Save game result with signature verification
 router.post('/save', saveResultLimiter, async (req, res) => {
+  let clientRunId = null;
+  let resultHash = null;
+  let walletLower = null;
   try {
     const { wallet, score, distance, goldCoins, silverCoins, signature, timestamp, authMode, telegramId, aiSettings } = req.body;
 
@@ -308,7 +311,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       }
     }
 
-    const walletLower = normalizeWallet(wallet);
+    walletLower = normalizeWallet(wallet);
     const aiValidation = validateAiSettings(aiSettings);
     if (!aiValidation.valid) {
       return res.status(400).json({ error: aiValidation.error });
@@ -451,8 +454,8 @@ router.post('/save', saveResultLimiter, async (req, res) => {
 
     const scoreValue = Math.floor(score);
     const distanceValue = Math.floor(distance);
-    const clientRunId = typeof req.body?.clientRunId === 'string' ? req.body.clientRunId.trim() : null;
-    const resultHash = crypto
+    clientRunId = typeof req.body?.clientRunId === 'string' ? req.body.clientRunId.trim() : null;
+    resultHash = crypto
       .createHash('sha256')
       .update(`${walletLower}:${scoreValue}:${distanceValue}:${coins.gold}:${coins.silver}:${timestamp}`)
       .digest('hex');
@@ -748,10 +751,9 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       });
     }
 
-    await invalidateLeaderboardCache([
-      LEADERBOARD_CACHE_KEYS.anonymousTop,
-      LEADERBOARD_CACHE_KEYS.personalizedTop(walletLower)
-    ]);
+    await safeSideEffect('invalidate_top_cache', async () => {
+      await invalidateTopLeaderboardCache('leaderboard_save_result');
+    });
 
     // Grant referral rewards on first valid run (non-blocking, errors logged internally)
     try {
@@ -794,8 +796,6 @@ router.post('/save', saveResultLimiter, async (req, res) => {
       prevRank: runContext?.prevRank ?? null,
       isFirstRunAfterAuth: runContext?.isFirstRunAfterAuth ?? false
     });
-
-    invalidateTopLeaderboardCache('leaderboard_save_result');
 
     res.json({
       success: true,
