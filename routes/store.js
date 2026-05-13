@@ -130,6 +130,33 @@ function normalizeAlertUpgrade(upgrades) {
   return false;
 }
 
+
+function normalizeTelegramUsername(username) {
+  return String(username || '').trim().toLowerCase().replace(/^@/, '');
+}
+
+function parseTelegramInitDataIdentity(initDataRaw) {
+  if (!initDataRaw || typeof initDataRaw !== 'string') {
+    return { telegramId: '', telegramUsername: '' };
+  }
+
+  try {
+    const params = new URLSearchParams(initDataRaw);
+    const userRaw = params.get('user');
+    if (!userRaw) {
+      return { telegramId: '', telegramUsername: '' };
+    }
+
+    const user = JSON.parse(userRaw);
+    return {
+      telegramId: String(user?.id || '').trim(),
+      telegramUsername: String(user?.username || '').trim()
+    };
+  } catch (error) {
+    return { telegramId: '', telegramUsername: '' };
+  }
+}
+
 async function getOrCreatePlayerUpgrades(wallet) {
   let upgrades = await PlayerUpgrades.findOne({ wallet });
   if (!upgrades) {
@@ -141,12 +168,19 @@ async function getOrCreatePlayerUpgrades(wallet) {
 
 async function resolvePrimaryIdFromIdentifier(identifier) {
   const normalized = String(identifier || '').trim().toLowerCase();
+  const normalizedTelegramUsername = normalizeTelegramUsername(normalized);
   if (!normalized) return null;
   if (parseWalletOrNull(normalized)) {
     return normalized;
   }
   const link = await AccountLink.findOne({
-    $or: [{ primaryId: normalized }, { wallet: normalized }]
+    $or: [
+      { primaryId: normalized },
+      { wallet: normalized },
+      { telegramId: normalized },
+      { telegramUsername: normalizedTelegramUsername },
+      { telegramUsername: `@${normalizedTelegramUsername}` }
+    ]
   });
   return link?.primaryId || null;
 }
@@ -321,10 +355,32 @@ function createPurchaseAudit({ wallet, req, res, purchaseDetails }) {
  */
 router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
   try {
-    const wallet = await resolvePrimaryIdFromIdentifier(req.params.wallet);
-    if (!wallet) {
+    const paramWallet = String(req.params.wallet || '').trim().toLowerCase();
+    const headerPrimaryId = String(req.get('X-Primary-Id') || '').trim().toLowerCase();
+    const reqPrimaryId = String(req.primaryId || '').trim().toLowerCase();
+    const telegramInitData = req.get('X-Telegram-Init-Data');
+    const { telegramId, telegramUsername } = parseTelegramInitDataIdentity(telegramInitData);
+    const normalizedTelegramUsername = normalizeTelegramUsername(telegramUsername);
+
+    const identifier = paramWallet || headerPrimaryId || reqPrimaryId || telegramId || normalizedTelegramUsername;
+    const resolvedWallet = await resolvePrimaryIdFromIdentifier(identifier);
+
+    if (!resolvedWallet) {
       return res.status(404).json({ error: 'Account not found' });
     }
+
+    const wallet = resolvedWallet;
+    const primaryId = headerPrimaryId || reqPrimaryId;
+    const accountLinkQuery = {
+      $or: [
+        { wallet: identifier },
+        { primaryId: identifier },
+        { telegramId: identifier },
+        { telegramUsername: normalizedTelegramUsername },
+        { telegramUsername: `@${normalizedTelegramUsername}` }
+      ]
+    };
+    const accountLink = await AccountLink.findOne(accountLinkQuery);
 
     const upgrades = await getOrCreatePlayerUpgrades(wallet);
     await prepareUpgrades(upgrades, { persist: true });
@@ -334,12 +390,23 @@ router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
     const silver = player ? player.totalSilverCoins : 0;
 
     const effects = calculateEffects(upgrades);
-    let aiModeAccess = hasAiModeAccess(wallet);
-    if (!aiModeAccess) {
-      const link = await AccountLink.findOne({ wallet });
-      aiModeAccess = hasAiModeAccessByTelegramUsername(link?.telegramUsername);
-    }
+    const aiByWallet = hasAiModeAccess(resolvedWallet);
+    const aiByTelegramUsername = hasAiModeAccessByTelegramUsername(accountLink?.telegramUsername)
+      || hasAiModeAccessByTelegramUsername(telegramUsername);
+    const aiModeAccess = aiByWallet || aiByTelegramUsername;
     effects.ai_mode_access = aiModeAccess;
+
+    logger.debug({
+      identifier,
+      resolvedWallet,
+      primaryId,
+      telegramId,
+      telegramUsername,
+      normalizedTelegramUsername,
+      aiByWallet,
+      aiByTelegramUsername,
+      aiModeAccess
+    }, 'AI mode access resolution');
 
     // Build upgrades data
     const upgradesData = {};
