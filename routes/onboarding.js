@@ -93,9 +93,11 @@ router.get('/state', readLimiter, asyncHandler(async (req, res) => {
   });
   logger.info({
     userId: primaryId,
+    primaryId,
     requestedPrimaryId,
-    resolvedWallet: identity.wallet || account?.wallet || null,
-    telegramId: identity.telegramId || account?.telegramId || null,
+    identity,
+    wallet: gameplayHistory.wallet || identity.wallet || account?.wallet || null,
+    telegramId: gameplayHistory.telegramId || identity.telegramId || account?.telegramId || null,
     screen,
     canUseAuthOnboarding,
     playerGamesPlayed: gameplayHistory.playerGamesPlayed,
