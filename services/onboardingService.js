@@ -75,12 +75,42 @@ async function getOrCreateOnboardingState(primaryId) {
 
 async function getGameplayHistorySnapshot(primaryId) {
   const identity = await resolveIdentity(primaryId);
-  const wallet = identity.wallet;
+  const resolvedPrimaryId = identity.primaryId || null;
+  const wallet = identity.wallet || null;
+  const telegramId = identity.telegramId ? String(identity.telegramId).trim().toLowerCase() : null;
+
+  const walletCandidates = [
+    wallet,
+    resolvedPrimaryId,
+    telegramId,
+    telegramId ? `tg_${telegramId}` : null
+  ].filter(Boolean);
+  const uniqueWalletCandidates = [...new Set(walletCandidates)];
+
+  const playerQuery = [
+    wallet ? { wallet } : null,
+    resolvedPrimaryId ? { wallet: resolvedPrimaryId } : null,
+    telegramId ? { wallet: telegramId } : null,
+    telegramId ? { wallet: `tg_${telegramId}` } : null
+  ].filter(Boolean);
+
+  const playerPromise = playerQuery.length
+    ? Player.findOne({ $or: playerQuery }).sort({ xConnectedAt: -1, updatedAt: -1, createdAt: -1 }).select('gamesPlayed xConnectedAt').lean()
+    : null;
+
+  const leaderboardQuery = uniqueWalletCandidates.length
+    ? { verified: true, isValid: true, wallet: { $in: uniqueWalletCandidates } }
+    : null;
+
+  const gameResultQuery = uniqueWalletCandidates.length
+    ? { wallet: { $in: uniqueWalletCandidates } }
+    : null;
+
   const [player, leaderboardCompletedCount, gameResultCountAll, gameResultCountVerified] = await Promise.all([
-    wallet ? Player.findOne({ wallet }).select('gamesPlayed xConnected').lean() : null,
-    wallet ? PlayerRun.countDocuments({ wallet, verified: true, isValid: true }) : 0,
-    wallet ? GameResult.countDocuments({ wallet }) : 0,
-    wallet ? GameResult.countDocuments({ wallet, verified: true }) : 0
+    playerPromise,
+    leaderboardQuery ? PlayerRun.countDocuments(leaderboardQuery) : 0,
+    gameResultQuery ? GameResult.countDocuments(gameResultQuery) : 0,
+    gameResultQuery ? GameResult.countDocuments({ ...gameResultQuery, verified: true }) : 0
   ]);
 
   const playerGamesPlayed = Number(player?.gamesPlayed || 0);
@@ -88,8 +118,10 @@ async function getGameplayHistorySnapshot(primaryId) {
 
   return {
     raceCount,
-    xConnected: Boolean(player?.xConnected),
+    xConnected: Boolean(player?.xConnectedAt),
     identity,
+    wallet,
+    telegramId,
     playerGamesPlayed,
     leaderboardCompletedCount,
     gameResultCountAll,
