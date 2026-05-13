@@ -6,6 +6,7 @@ const AccountLink = require('../models/AccountLink');
 const { UPGRADES_CONFIG, calculateEffects } = require('../utils/upgradesConfig');
 const { listDonationProducts, listDonationPayments, createDonationPayment, submitDonationTransaction, getDonationPayment, serializeDonationPayment } = require('../utils/donationService');
 const { verifySignature } = require('../utils/verifySignature');
+const { validateTelegramInitData } = require('../utils/telegramAuth');
 const { writeLimiter, readLimiter } = require('../middleware/rateLimiter');
 const SecurityEvent = require('../models/SecurityEvent');
 const CoinTransaction = require('../models/CoinTransaction');
@@ -129,6 +130,33 @@ function normalizeAlertUpgrade(upgrades) {
   return false;
 }
 
+
+function normalizeTelegramUsername(username) {
+  return String(username || '').trim().toLowerCase().replace(/^@/, '');
+}
+
+function parseTelegramInitDataIdentity(initDataRaw) {
+  if (!initDataRaw || typeof initDataRaw !== 'string') {
+    return { telegramId: '', telegramUsername: '' };
+  }
+
+  try {
+    const params = new URLSearchParams(initDataRaw);
+    const userRaw = params.get('user');
+    if (!userRaw) {
+      return { telegramId: '', telegramUsername: '' };
+    }
+
+    const user = JSON.parse(userRaw);
+    return {
+      telegramId: String(user?.id || '').trim(),
+      telegramUsername: String(user?.username || '').trim()
+    };
+  } catch (error) {
+    return { telegramId: '', telegramUsername: '' };
+  }
+}
+
 async function getOrCreatePlayerUpgrades(wallet) {
   let upgrades = await PlayerUpgrades.findOne({ wallet });
   if (!upgrades) {
@@ -140,12 +168,19 @@ async function getOrCreatePlayerUpgrades(wallet) {
 
 async function resolvePrimaryIdFromIdentifier(identifier) {
   const normalized = String(identifier || '').trim().toLowerCase();
+  const normalizedTelegramUsername = normalizeTelegramUsername(normalized);
   if (!normalized) return null;
   if (parseWalletOrNull(normalized)) {
     return normalized;
   }
   const link = await AccountLink.findOne({
-    $or: [{ primaryId: normalized }, { wallet: normalized }]
+    $or: [
+      { primaryId: normalized },
+      { wallet: normalized },
+      { telegramId: normalized },
+      { telegramUsername: normalizedTelegramUsername },
+      { telegramUsername: `@${normalizedTelegramUsername}` }
+    ]
   });
   return link?.primaryId || null;
 }
@@ -320,10 +355,32 @@ function createPurchaseAudit({ wallet, req, res, purchaseDetails }) {
  */
 router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
   try {
-    const wallet = await resolvePrimaryIdFromIdentifier(req.params.wallet);
-    if (!wallet) {
+    const paramWallet = String(req.params.wallet || '').trim().toLowerCase();
+    const headerPrimaryId = String(req.get('X-Primary-Id') || '').trim().toLowerCase();
+    const reqPrimaryId = String(req.primaryId || '').trim().toLowerCase();
+    const telegramInitData = req.get('X-Telegram-Init-Data');
+    const { telegramId, telegramUsername } = parseTelegramInitDataIdentity(telegramInitData);
+    const normalizedTelegramUsername = normalizeTelegramUsername(telegramUsername);
+
+    const identifier = paramWallet || headerPrimaryId || reqPrimaryId || telegramId || normalizedTelegramUsername;
+    const resolvedWallet = await resolvePrimaryIdFromIdentifier(identifier);
+
+    if (!resolvedWallet) {
       return res.status(404).json({ error: 'Account not found' });
     }
+
+    const wallet = resolvedWallet;
+    const primaryId = headerPrimaryId || reqPrimaryId;
+    const accountLinkQuery = {
+      $or: [
+        { wallet: identifier },
+        { primaryId: identifier },
+        { telegramId: identifier },
+        { telegramUsername: normalizedTelegramUsername },
+        { telegramUsername: `@${normalizedTelegramUsername}` }
+      ]
+    };
+    const accountLink = await AccountLink.findOne(accountLinkQuery);
 
     const upgrades = await getOrCreatePlayerUpgrades(wallet);
     await prepareUpgrades(upgrades, { persist: true });
@@ -333,12 +390,23 @@ router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
     const silver = player ? player.totalSilverCoins : 0;
 
     const effects = calculateEffects(upgrades);
-    let aiModeAccess = hasAiModeAccess(wallet);
-    if (!aiModeAccess) {
-      const link = await AccountLink.findOne({ wallet });
-      aiModeAccess = hasAiModeAccessByTelegramUsername(link?.telegramUsername);
-    }
+    const aiByWallet = hasAiModeAccess(resolvedWallet);
+    const aiByTelegramUsername = hasAiModeAccessByTelegramUsername(accountLink?.telegramUsername)
+      || hasAiModeAccessByTelegramUsername(telegramUsername);
+    const aiModeAccess = aiByWallet || aiByTelegramUsername;
     effects.ai_mode_access = aiModeAccess;
+
+    logger.debug({
+      identifier,
+      resolvedWallet,
+      primaryId,
+      telegramId,
+      telegramUsername,
+      normalizedTelegramUsername,
+      aiByWallet,
+      aiByTelegramUsername,
+      aiModeAccess
+    }, 'AI mode access resolution');
 
     // Build upgrades data
     const upgradesData = {};
@@ -521,7 +589,7 @@ router.post('/buy', writeLimiter, async (req, res) => {
   let purchaseApplied = false;
   let responsePayload = null;
   try {
-    const { wallet, upgradeKey, tier, signature, timestamp, authMode, telegramId } = req.body;
+    const { wallet, primaryId, upgradeKey, tier, signature, timestamp, authMode, telegramId, telegramInitData } = req.body;
     const idempotencyKey = String(
       req.get('x-idempotency-key') || req.get('x-request-id') || req.body?.requestId || req.requestId || ''
     ).trim();
@@ -531,9 +599,9 @@ router.post('/buy', writeLimiter, async (req, res) => {
     const isTelegramAuth = authMode === 'telegram';
 
     if (isTelegramAuth) {
-      if (!wallet || !requestedUpgradeKey || !telegramId || !timestamp) {
+      if ((!primaryId && !telegramId) || !requestedUpgradeKey || !timestamp) {
         return res.status(400).json({
-          error: 'Missing fields: wallet, upgradeKey, telegramId, timestamp'
+          error: 'Missing Telegram identity'
         });
       }
     } else {
@@ -544,9 +612,12 @@ router.post('/buy', writeLimiter, async (req, res) => {
       }
     }
 
-    const walletLower = parseWalletOrNull(wallet);
-    if (!walletLower) {
-      return res.status(400).json(buildInvalidWalletError('Invalid wallet address'));
+    let accountKey = null;
+    if (!isTelegramAuth) {
+      accountKey = parseWalletOrNull(wallet);
+      if (!accountKey) {
+        return res.status(400).json(buildInvalidWalletError('Invalid wallet address'));
+      }
     }
     const purchaseDetails = {
       requestedUpgradeKey,
@@ -560,7 +631,7 @@ router.post('/buy', writeLimiter, async (req, res) => {
       logPurchaseAttempt,
       logServerError
     } = createPurchaseAudit({
-      wallet: walletLower,
+      wallet: accountKey,
       req,
       res,
       purchaseDetails
@@ -570,7 +641,7 @@ router.post('/buy', writeLimiter, async (req, res) => {
 
     if (idempotencyKey) {
       const existingSuccess = await SecurityEvent.findOne({
-        wallet: walletLower,
+        wallet: accountKey,
         eventType: 'purchase_result',
         'details.status': 'success',
         'details.requestId': idempotencyKey
@@ -579,9 +650,9 @@ router.post('/buy', writeLimiter, async (req, res) => {
         .lean();
 
       if (existingSuccess) {
-        const upgrades = await getOrCreatePlayerUpgrades(walletLower);
+        const upgrades = await getOrCreatePlayerUpgrades(accountKey);
         await prepareUpgrades(upgrades, { persist: true });
-        const player = await Player.findOne({ wallet: walletLower });
+        const player = await Player.findOne({ wallet: accountKey });
         return res.json({
           success: true,
           duplicate: true,
@@ -620,15 +691,32 @@ router.post('/buy', writeLimiter, async (req, res) => {
     const { normalizedTs: ts } = timestampValidation;
 
     if (isTelegramAuth) {
-      // Verify that the telegramId matches the claimed primaryId (wallet) via AccountLink
-      const link = await AccountLink.findOne({ telegramId: String(telegramId) });
-      if (!link || link.primaryId !== walletLower) {
+      const tgId = String(telegramId || '').trim();
+      const providedPrimaryId = String(primaryId || '').trim().toLowerCase();
+
+      const validation = validateTelegramInitData(telegramInitData, process.env.TELEGRAM_BOT_TOKEN);
+      if (!validation.valid || !validation.user?.id) {
         return failPurchase(401, 'telegram_verification_failed', 'Telegram identity verification failed');
       }
+
+      const verifiedTelegramId = String(validation.user.id);
+      if (tgId && tgId !== verifiedTelegramId) {
+        return failPurchase(401, 'telegram_verification_failed', 'Telegram identity verification failed');
+      }
+
+      const link = await AccountLink.findOne({ telegramId: verifiedTelegramId });
+      if (!link) {
+        return failPurchase(401, 'telegram_verification_failed', 'Telegram identity verification failed');
+      }
+      if (providedPrimaryId && link.primaryId !== providedPrimaryId) {
+        return failPurchase(401, 'telegram_verification_failed', 'Telegram identity verification failed');
+      }
+
+      accountKey = link.wallet || link.primaryId || `tg_${verifiedTelegramId}`;
     } else {
       // Signature verification
-      const message = `Buy upgrade\nWallet: ${walletLower}\nUpgrade: ${requestedUpgradeKey}\nTier: ${tier !== undefined ? tier : 0}\nTimestamp: ${ts}`;
-      const isValid = verifySignature(message, signature, walletLower);
+      const message = `Buy upgrade\nWallet: ${accountKey}\nUpgrade: ${requestedUpgradeKey}\nTier: ${tier !== undefined ? tier : 0}\nTimestamp: ${ts}`;
+      const isValid = verifySignature(message, signature, accountKey);
 
       if (!isValid) {
         return failPurchase(401, 'invalid_signature', 'Invalid signature');
@@ -636,12 +724,12 @@ router.post('/buy', writeLimiter, async (req, res) => {
     }
 
     // Player data
-    const player = await Player.findOne({ wallet: walletLower });
+    const player = await Player.findOne({ wallet: accountKey });
     if (!player) {
-      return failPurchase(404, 'player_not_found', 'Player not found. Play at least one game first.');
+      return failPurchase(404, 'player_not_found', 'Player not found');
     }
 
-    const upgrades = await getOrCreatePlayerUpgrades(walletLower);
+    const upgrades = await getOrCreatePlayerUpgrades(accountKey);
     await prepareUpgrades(upgrades);
 
     const purchaseSnapshotBefore = {
@@ -674,7 +762,7 @@ router.post('/buy', writeLimiter, async (req, res) => {
         maxLevel: config.maxLevel,
         price,
         currency: config.currency,
-        wallet: walletLower,
+        wallet: accountKey,
         player,
         failPurchase
       });
@@ -690,7 +778,7 @@ router.post('/buy', writeLimiter, async (req, res) => {
       }
       upgrades.paidRidesRemaining += config.amount;
 
-      logger.info({ wallet: walletLower, ridesBought: config.amount, price, currency: 'gold', paidRidesRemaining: upgrades.paidRidesRemaining }, 'Rides purchased');
+      logger.info({ wallet: accountKey, ridesBought: config.amount, price, currency: 'gold', paidRidesRemaining: upgrades.paidRidesRemaining }, 'Rides purchased');
 
     } else {
       return failPurchase(400, 'unknown_upgrade_type', 'Unknown upgrade type');
@@ -708,7 +796,7 @@ router.post('/buy', writeLimiter, async (req, res) => {
 
     await logPurchaseResult('success', 'completed', { requestId: idempotencyKey || null });
 
-    logger.info({ wallet: walletLower, requestedUpgradeKey, resolvedUpgradeKey, tier: tier ?? 0 }, 'Purchase processed');
+    logger.info({ wallet: accountKey, requestedUpgradeKey, resolvedUpgradeKey, tier: tier ?? 0 }, 'Purchase processed');
 
 
     responsePayload = {
@@ -726,26 +814,26 @@ router.post('/buy', writeLimiter, async (req, res) => {
 
     try {
       await CoinTransaction.create({
-        primaryId: walletLower,
+        primaryId: accountKey,
         type: 'buy',
-        contextKey: idempotencyKey ? `buy:${walletLower}:${idempotencyKey}` : null,
+        contextKey: idempotencyKey ? `buy:${accountKey}:${idempotencyKey}` : null,
         gold: currencyForPurchase(config) === 'gold' ? purchasePrice(config, tier, purchaseSnapshotBefore) : 0,
         silver: currencyForPurchase(config) === 'silver' ? purchasePrice(config, tier, purchaseSnapshotBefore) : 0
       });
     } catch (err) {
-      logger.error({ err, wallet: walletLower, productKey: resolvedUpgradeKey, currency: currencyForPurchase(config), price: purchasePrice(config, tier, purchaseSnapshotBefore) }, 'CoinTransaction side effect failed');
+      logger.error({ err, wallet: accountKey, productKey: resolvedUpgradeKey, currency: currencyForPurchase(config), price: purchasePrice(config, tier, purchaseSnapshotBefore) }, 'CoinTransaction side effect failed');
     }
 
     if (config.type === 'rides') {
       try {
-        const onboardingState = await getOrCreateOnboardingState(walletLower);
+        const onboardingState = await getOrCreateOnboardingState(accountKey);
         onboardingState.storeIntro = onboardingState.storeIntro || {};
         onboardingState.storeIntro.ridePackBought = true;
         onboardingState.mainFlowCompleted = true;
         setOnboardingEvent(onboardingState, { key: 'store_in', action: 'complete', screen: 'store' });
         await onboardingState.save();
       } catch (err) {
-        logger.error({ err, wallet: walletLower, productKey: resolvedUpgradeKey }, 'Onboarding side effect failed');
+        logger.error({ err, wallet: accountKey, productKey: resolvedUpgradeKey }, 'Onboarding side effect failed');
       }
     }
 
