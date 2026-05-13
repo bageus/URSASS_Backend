@@ -190,8 +190,8 @@ function hasCoinBalance(player) {
   return Number(player.totalGoldCoins || 0) > 0 || Number(player.totalSilverCoins || 0) > 0;
 }
 
-async function resolveStoreAccountIdentity(req, identifier) {
-  const routeIdentifier = String(identifier || req.params.wallet || '').trim().toLowerCase();
+async function resolveStoreIdentity(req) {
+  const routeIdentifier = String(req.params.wallet || '').trim().toLowerCase();
   const headerPrimaryId = String(req.get('X-Primary-Id') || '').trim().toLowerCase();
   const bodyPrimaryId = String(req.body?.primaryId || '').trim().toLowerCase();
   const bodyTelegramId = String(req.body?.telegramId || '').trim().toLowerCase();
@@ -199,17 +199,15 @@ async function resolveStoreAccountIdentity(req, identifier) {
   const initDataIdentity = parseTelegramInitDataIdentity(telegramInitData);
   const initTelegramId = String(initDataIdentity.telegramId || '').trim().toLowerCase();
   const initTelegramUsername = String(initDataIdentity.telegramUsername || '').trim();
-  const xWallet = String(req.get('X-Wallet') || '').trim().toLowerCase();
-
-  const rawCandidates = [routeIdentifier, headerPrimaryId, bodyPrimaryId, bodyTelegramId, initTelegramId, xWallet].filter(Boolean);
+  const rawCandidates = [routeIdentifier, headerPrimaryId, bodyPrimaryId, bodyTelegramId].filter(Boolean);
   const candidates = [...new Set(rawCandidates)];
   const linkOrConditions = [];
   for (const candidate of candidates) {
-    const normalizedTgUsername = normalizeTelegramUsername(candidate);
-    linkOrConditions.push({ primaryId: candidate }, { wallet: candidate }, { telegramId: candidate });
-    if (normalizedTgUsername) {
-      linkOrConditions.push({ telegramUsername: normalizedTgUsername }, { telegramUsername: `@${normalizedTgUsername}` });
-    }
+    linkOrConditions.push({ wallet: candidate }, { primaryId: candidate }, { telegramId: candidate });
+  }
+
+  if (initTelegramId) {
+    linkOrConditions.push({ telegramId: initTelegramId });
   }
 
   const matchedLinks = linkOrConditions.length
@@ -262,10 +260,10 @@ async function resolveStoreAccountIdentity(req, identifier) {
   const primaryId = headerPrimaryId || bodyPrimaryId || firstLink?.primaryId || '';
   const telegramId = bodyTelegramId || initTelegramId || String(firstLink?.telegramId || '').trim();
   const telegramUsername = initTelegramUsername || String(firstLink?.telegramUsername || '').trim();
-  const wallet = xWallet || String(firstLink?.wallet || '').trim().toLowerCase();
+  const wallet = String(firstLink?.wallet || '').trim().toLowerCase();
 
   if (!accountKey) {
-    accountKey = primaryId || wallet || routeIdentifier || telegramId;
+    accountKey = primaryId || wallet || routeIdentifier || telegramId || '';
   }
 
   const authMode = telegramId || telegramUsername ? 'telegram' : 'wallet';
@@ -478,7 +476,7 @@ function createPurchaseAudit({ wallet, req, res, purchaseDetails }) {
 router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
   try {
     const identifier = String(req.params.wallet || '').trim().toLowerCase();
-    const identity = await resolveStoreAccountIdentity(req, identifier);
+    const identity = await resolveStoreIdentity(req);
     if (!identity?.accountKey) {
       return res.status(404).json({ error: 'Account not found' });
     }
@@ -551,7 +549,7 @@ router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
     }
 
     res.json({
-      wallet,
+      wallet: accountKey,
       balance: { gold, silver },
       upgrades: upgradesData,
       rides: buildRidesData(upgrades),
