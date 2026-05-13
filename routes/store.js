@@ -233,6 +233,32 @@ async function resolveStorePrimaryId(req) {
   return null;
 }
 
+
+async function resolveTelegramStoreAccountKey({ primaryId, telegramId }) {
+  const normalizedPrimaryId = String(primaryId || '').trim().toLowerCase();
+  const normalizedTelegramId = String(telegramId || '').trim();
+
+  const identifiers = [normalizedPrimaryId, normalizedTelegramId].filter(Boolean);
+  for (const identifier of identifiers) {
+    const resolvedPrimaryId = await resolvePrimaryIdFromIdentifier(identifier);
+    if (!resolvedPrimaryId) continue;
+
+    const player = await Player.findOne({ wallet: resolvedPrimaryId }).select({ wallet: 1 }).lean();
+    if (player?.wallet) {
+      return player.wallet;
+    }
+  }
+
+  if (normalizedTelegramId) {
+    const tgLink = await AccountLink.findOne({ telegramId: normalizedTelegramId }).lean();
+    if (tgLink?.primaryId) {
+      return String(tgLink.primaryId).trim().toLowerCase();
+    }
+  }
+
+  return null;
+}
+
 async function prepareUpgrades(upgrades, { persist = false } = {}) {
   const ridesChanged = upgrades.refreshFreeRides();
   const shieldChanged = normalizeShieldUpgrades(upgrades);
@@ -635,7 +661,12 @@ router.post('/buy', writeLimiter, async (req, res) => {
     if (isTelegramAuth) {
       if ((!primaryId && !telegramId) || !requestedUpgradeKey || !timestamp) {
         return res.status(400).json({
-          error: 'Missing Telegram identity'
+          error: 'telegram_identity_missing'
+        });
+      }
+      if (!telegramInitData) {
+        return res.status(400).json({
+          error: 'telegram_identity_missing'
         });
       }
     } else {
@@ -738,15 +769,14 @@ router.post('/buy', writeLimiter, async (req, res) => {
         return failPurchase(401, 'telegram_verification_failed', 'Telegram identity verification failed');
       }
 
-      const link = await AccountLink.findOne({ telegramId: verifiedTelegramId });
-      if (!link) {
-        return failPurchase(401, 'telegram_verification_failed', 'Telegram identity verification failed');
-      }
-      if (providedPrimaryId && link.primaryId !== providedPrimaryId) {
-        return failPurchase(401, 'telegram_verification_failed', 'Telegram identity verification failed');
-      }
+      accountKey = await resolveTelegramStoreAccountKey({
+        primaryId: providedPrimaryId,
+        telegramId: verifiedTelegramId
+      });
 
-      accountKey = link.wallet || link.primaryId || `tg_${verifiedTelegramId}`;
+      if (!accountKey) {
+        return failPurchase(404, 'player_not_found', 'Player not found');
+      }
     } else {
       // Signature verification
       const message = `Buy upgrade\nWallet: ${accountKey}\nUpgrade: ${requestedUpgradeKey}\nTier: ${tier !== undefined ? tier : 0}\nTimestamp: ${ts}`;
