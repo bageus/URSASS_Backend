@@ -28,6 +28,7 @@ logger.info(`Analytics enabled: ${telegramAnalyticsConfig.enabled}`);
 logger.info(`Analytics appName: ${telegramAnalyticsConfig.appName}`);
 
 const runBotInProcess = process.env.BOT_MODE !== 'worker' && process.env.START_BOT_IN_PROCESS !== 'false';
+const isTelegramBotEnabled = String(process.env.ENABLE_TELEGRAM_BOT || '').toLowerCase() === 'true';
 
 // Connect DB then optionally start bot in the same process
 connectDB()
@@ -37,6 +38,11 @@ connectDB()
 
     if (!runBotInProcess) {
       logger.info('BOT_MODE=worker (or START_BOT_IN_PROCESS=false): skipping bot in API process');
+      return;
+    }
+
+    if (!isTelegramBotEnabled) {
+      logger.info('Telegram bot polling skipped because ENABLE_TELEGRAM_BOT is not true');
       return;
     }
 
