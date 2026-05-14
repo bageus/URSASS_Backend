@@ -127,10 +127,19 @@ function getPublicBaseUrl(req) {
 }
 
 
-const STATIC_SHARE_IMAGE_PATH = path.join(__dirname, '..', 'img', 'score_result.png');
+const PRIMARY_STATIC_SHARE_IMAGE_PATH = path.join(__dirname, '..', 'img', 'score_result1600x800.png');
+const FALLBACK_STATIC_SHARE_IMAGE_PATH = path.join(__dirname, '..', 'img', 'score_result.png');
 
 async function loadStaticShareImagePng() {
-  return fs.readFile(STATIC_SHARE_IMAGE_PATH);
+  try {
+    return await fs.readFile(PRIMARY_STATIC_SHARE_IMAGE_PATH);
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      logger.warn({ missingPath: PRIMARY_STATIC_SHARE_IMAGE_PATH }, 'Primary share image missing, using fallback image');
+      return fs.readFile(FALLBACK_STATIC_SHARE_IMAGE_PATH);
+    }
+    throw error;
+  }
 }
 function buildSharePostText(score, referralUrl) {
   const normalizedScore = Math.max(0, Math.floor(Number(score || 0)));
