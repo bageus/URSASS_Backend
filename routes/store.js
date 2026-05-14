@@ -190,7 +190,7 @@ function hasCoinBalance(player) {
   return Number(player.totalGoldCoins || 0) > 0 || Number(player.totalSilverCoins || 0) > 0;
 }
 
-async function resolveStoreIdentity(req) {
+async function resolveStoreAccountIdentity(req) {
   const routeIdentifier = String(req.params.wallet || '').trim().toLowerCase();
   const headerPrimaryId = String(req.get('X-Primary-Id') || '').trim().toLowerCase();
   const bodyPrimaryId = String(req.body?.primaryId || '').trim().toLowerCase();
@@ -330,7 +330,7 @@ function buildRidesData(upgrades, options = {}) {
     totalRides: options.totalRides ?? upgrades.getTotalRides(),
     maxFreeRides: 3,
     resetInMs,
-    resetInFormatted: options.resetInFormatted ?? formatTimeLeft(resetInMs)
+    resetInFormatted: options.resetInFormatted ?? (formatTimeLeft(resetInMs) || 'Ready')
   };
 }
 
@@ -476,17 +476,17 @@ function createPurchaseAudit({ wallet, req, res, purchaseDetails }) {
 router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
   try {
     const identifier = String(req.params.wallet || '').trim().toLowerCase();
-    const identity = await resolveStoreIdentity(req);
+    const identity = await resolveStoreAccountIdentity(req);
     if (!identity?.accountKey) {
       return res.status(404).json({ error: 'Account not found' });
     }
 
     const { accountKey, telegramUsername } = identity;
 
-    const upgrades = await getOrCreatePlayerUpgrades(purchaseAccountKey);
+    const upgrades = await getOrCreatePlayerUpgrades(accountKey);
     await prepareUpgrades(upgrades, { persist: true });
 
-    const player = await Player.findOne({ wallet: purchaseAccountKey });
+    const player = await Player.findOne({ wallet: accountKey });
     const gold = player ? player.totalGoldCoins : 0;
     const silver = player ? player.totalSilverCoins : 0;
 
@@ -550,6 +550,7 @@ router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
 
     res.json({
       wallet: accountKey,
+      accountKey,
       balance: { gold, silver },
       upgrades: upgradesData,
       rides: buildRidesData(upgrades),
@@ -1014,7 +1015,14 @@ const consumeRideHandler = async (req, res) => {
     const { wallet, rideSessionId } = req.body;
     if (!wallet) return res.status(400).json({ error: 'Missing wallet' });
 
-    const walletLower = normalizeWallet(wallet);
+    const resolverReq = {
+      params: { wallet },
+      body: req.body,
+      get: (headerName) => req.get(headerName)
+    };
+    const identity = await resolveStoreAccountIdentity(resolverReq);
+    const accountKey = identity?.accountKey;
+    if (!accountKey) return res.status(404).json({ error: 'Account not found' });
     const isLegacyUseRideRoute = req.path === '/use-ride';
 
     let sessionId = null;
@@ -1026,7 +1034,7 @@ const consumeRideHandler = async (req, res) => {
         details: 'Pass a unique rideSessionId for every game start to enable anti-cheat duplicate protection.'
       });
     }
-    const upgrades = await getOrCreatePlayerUpgrades(walletLower);
+    const upgrades = await getOrCreatePlayerUpgrades(accountKey);
     await prepareUpgrades(upgrades);
     
     upgrades.recentRideSessionIds = upgrades.recentRideSessionIds || [];
@@ -1034,7 +1042,7 @@ const consumeRideHandler = async (req, res) => {
     if (upgrades.recentRideSessionIds.includes(sessionId)) {
       markSuspicious('duplicate_ride_session');
       await logSecurityEvent({
-        wallet: walletLower,
+        wallet: accountKey,
         eventType: 'duplicate_ride_session',
         route: req.path,
         ipAddress: req.ip,
@@ -1081,7 +1089,7 @@ const consumeRideHandler = async (req, res) => {
     upgrades.updatedAt = new Date();
     await upgrades.save();
 
-    logger.info({ wallet: walletLower, freeRidesRemaining: upgrades.freeRidesRemaining, paidRidesRemaining: upgrades.paidRidesRemaining }, 'Ride consumed');
+    logger.info({ wallet: accountKey, freeRidesRemaining: upgrades.freeRidesRemaining, paidRidesRemaining: upgrades.paidRidesRemaining }, 'Ride consumed');
     
 
     const antiCheat = sessionId
@@ -1109,15 +1117,24 @@ router.post('/use-ride', writeLimiter, consumeRideHandler);
  */
 router.get('/rides/:wallet', readLimiter, async (req, res) => {
   try {
-    const wallet = normalizeWallet(req.params.wallet);
+    const identity = await resolveStoreAccountIdentity(req);
+    if (!identity?.accountKey) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
 
-    const upgrades = await getOrCreatePlayerUpgrades(wallet);
+    const upgrades = await getOrCreatePlayerUpgrades(identity.accountKey);
     await prepareUpgrades(upgrades, { persist: true });
 
+    const ridesData = buildRidesData(upgrades);
     res.json({
-      ...buildRidesData(upgrades)
+      freeRides: Number.isFinite(ridesData.freeRides) ? ridesData.freeRides : 0,
+      paidRides: Number.isFinite(ridesData.paidRides) ? ridesData.paidRides : 0,
+      totalRides: Number.isFinite(ridesData.totalRides) ? ridesData.totalRides : 0,
+      maxFreeRides: ridesData.maxFreeRides,
+      resetInMs: Number.isFinite(ridesData.resetInMs) ? ridesData.resetInMs : 0,
+      resetInFormatted: ridesData.resetInFormatted || 'Ready'
     });
-    
+
 } catch (error) {
     logger.error({ err: error }, 'GET /rides/:wallet error');
     res.status(500).json({ error: 'Server error' });
