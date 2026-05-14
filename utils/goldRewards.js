@@ -18,53 +18,76 @@ async function grantGoldReward(primaryId, amount, type, contextKey, opts = {}) {
     const existing = await CoinTransaction.findOne({ contextKey: useContextKey });
     if (existing) {
       const player = await Player.findOne({ wallet: normalizedPrimaryId });
-      return { balance: player ? player.gold : null, history: existing, created: false };
+      return { balance: player ? player.totalGoldCoins : null, history: existing, created: false };
     }
   }
 
   let session = null;
+  const isTxnUnsupportedError = (error) => {
+    const message = String(error?.message || '');
+    return (
+      error?.code === 20 ||
+      error?.name === 'IllegalOperation' ||
+      message.includes('Transaction numbers are only allowed on a replica set member or mongos')
+    );
+  };
+
+  const executeRewardWork = async (session = null) => {
+    const playerQuery = Player.findOneAndUpdate(
+      { wallet: normalizedPrimaryId },
+      { $inc: { totalGoldCoins: normalizedAmount } },
+      { new: true }
+    );
+    if (session) playerQuery.session(session);
+    const updatedPlayer = await playerQuery;
+    if (!updatedPlayer) throw new Error('player_not_found');
+
+    const historyDoc = {
+      primaryId: normalizedPrimaryId,
+      type,
+      contextKey: useContextKey,
+      gold: normalizedAmount,
+      silver: 0,
+      createdAt: opts.createdAt || new Date()
+    };
+    const created = await CoinTransaction.create([historyDoc], session ? { session } : undefined);
+    const createdHistory = Array.isArray(created) ? created[0] : created;
+    return { updatedPlayer, createdHistory };
+  };
+
   try {
     if (typeof mongoose.startSession === 'function') {
       session = await mongoose.startSession();
     }
 
-    let createdHistory = null;
-    let updatedPlayer = null;
-
-    const work = async () => {
-      const playerQuery = Player.findOneAndUpdate(
-        { wallet: normalizedPrimaryId },
-        { $inc: { gold: normalizedAmount } },
-        { new: true }
-      );
-      if (session) playerQuery.session(session);
-      updatedPlayer = await playerQuery;
-      if (!updatedPlayer) throw new Error('player_not_found');
-
-      const historyDoc = {
-        primaryId: normalizedPrimaryId,
-        type,
-        contextKey: useContextKey,
-        gold: normalizedAmount,
-        silver: 0,
-        createdAt: opts.createdAt || new Date()
-      };
-      const created = await CoinTransaction.create([historyDoc], session ? { session } : undefined);
-      createdHistory = Array.isArray(created) ? created[0] : created;
-    };
+    let rewardResult = null;
 
     if (session) {
-      await session.withTransaction(work);
+      try {
+        await session.withTransaction(async () => {
+          rewardResult = await executeRewardWork(session);
+        });
+      } catch (error) {
+        if (isTxnUnsupportedError(error)) {
+          logger.warn(
+            { primaryId: normalizedPrimaryId, contextKey: useContextKey, requestId: opts.requestId, errorMessage: error?.message, errorCode: error?.code },
+            'grantGoldReward transaction unsupported; using non-transactional fallback'
+          );
+          rewardResult = await executeRewardWork();
+        } else {
+          throw error;
+        }
+      }
     } else {
-      await work();
+      rewardResult = await executeRewardWork();
     }
 
-    return { balance: updatedPlayer.gold, history: createdHistory, created: true };
+    return { balance: rewardResult.updatedPlayer.totalGoldCoins, history: rewardResult.createdHistory, created: true };
   } catch (error) {
     if (useContextKey && error && error.code === 11000) {
       const existing = await CoinTransaction.findOne({ contextKey: useContextKey });
       const player = await Player.findOne({ wallet: normalizedPrimaryId });
-      return { balance: player ? player.gold : null, history: existing, created: false };
+      return { balance: player ? player.totalGoldCoins : null, history: existing, created: false };
     }
 
     logger.error({ err: error, primaryId: normalizedPrimaryId, amount: normalizedAmount, type, contextKey: useContextKey, requestId: opts.requestId }, 'grantGoldReward failed');
