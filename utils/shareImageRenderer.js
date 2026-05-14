@@ -1,31 +1,21 @@
 const fs = require('fs');
 const path = require('path');
+const logger = require('./logger');
 let sharp;
 try { sharp = require('sharp'); } catch (_) { sharp = null; }
 
 const BASE_TEMPLATE_PATH = path.join(__dirname, '..', 'img', 'score_result1600x800.png');
 const GENERATED_DIR = path.join(__dirname, '..', 'generated', 'share-images');
 
-const SCORE_LAYOUT = {
-  x: 610,
-  y: 404,
-  width: 510,
-  height: 155,
-  fontFamily: "'Arial Black', Impact, 'Anton', sans-serif",
-  fontSizeDefault: 170,
-  fontSizeMin: 110,
-  fontSizeMax: 190,
-  letterSpacing: 1.5,
-  skewX: -8,
-  gradientStart: '#ffffff',
-  gradientEnd: '#c59bff',
-  glowColor: '#7d3cff',
-  strokeColor: '#f7ecff'
-};
+const OUTPUT_WIDTH = 1600;
+const OUTPUT_HEIGHT = 800;
 
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
+const SCORE_BOX = {
+  x: 600,
+  y: 285,
+  width: 520,
+  height: 190
+};
 
 function escapeXml(value) {
   return String(value ?? '')
@@ -36,12 +26,38 @@ function escapeXml(value) {
     .replace(/'/g, '&#39;');
 }
 
-function estimateWidth(text, fontSize) {
-  return text.length * fontSize * 0.62;
+function getScoreFontSize(scoreText) {
+  const len = scoreText.length;
+  if (len <= 5) return 168;
+  if (len === 6) return 150;
+  if (len === 7) return 132;
+  return 116;
 }
 
-function buildSkewTransform(cx, cy, skewX) {
-  return `translate(${cx} ${cy}) skewX(${skewX}) translate(${-cx} ${-cy})`;
+function buildOverlaySvg({ scoreText, fontSize, debugBox }) {
+  const centerX = SCORE_BOX.x + (SCORE_BOX.width / 2);
+  const centerY = SCORE_BOX.y + (SCORE_BOX.height / 2);
+
+  return Buffer.from(
+    `<svg width="1600" height="800" viewBox="0 0 1600 800" xmlns="http://www.w3.org/2000/svg">` +
+      '<defs>' +
+        '<linearGradient id="scoreGradient" x1="0%" y1="0%" x2="100%" y2="100%">' +
+          '<stop offset="0%" stop-color="#ffffff"/>' +
+          '<stop offset="35%" stop-color="#d8c7ff"/>' +
+          '<stop offset="70%" stop-color="#a855f7"/>' +
+          '<stop offset="100%" stop-color="#22d3ee"/>' +
+        '</linearGradient>' +
+        '<filter id="scoreGlow" x="-30%" y="-30%" width="160%" height="160%">' +
+          '<feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="#8b5cf6" flood-opacity="0.65"/>' +
+          '<feDropShadow dx="0" dy="0" stdDeviation="14" flood-color="#22d3ee" flood-opacity="0.35"/>' +
+        '</filter>' +
+      '</defs>' +
+      (debugBox
+        ? `<rect x="${SCORE_BOX.x}" y="${SCORE_BOX.y}" width="${SCORE_BOX.width}" height="${SCORE_BOX.height}" fill="none" stroke="red" stroke-width="4"/>`
+        : '') +
+      `<text x="${centerX}" y="${centerY}" text-anchor="middle" dominant-baseline="middle" font-size="${fontSize}" font-weight="900" font-family="Arial Black, Impact, system-ui, sans-serif" letter-spacing="2" fill="url(#scoreGradient)" stroke="rgba(10, 6, 30, 0.75)" stroke-width="5" paint-order="stroke fill" filter="url(#scoreGlow)">${escapeXml(scoreText)}</text>` +
+    '</svg>'
+  );
 }
 
 async function renderShareScoreImage({ shareId, score }) {
@@ -57,46 +73,40 @@ async function renderShareScoreImage({ shareId, score }) {
     throw err;
   }
 
-  const normalizedScore = Math.max(0, Math.floor(Number(score || 0)));
-  const templateMeta = await sharp(BASE_TEMPLATE_PATH).metadata();
-  const width = templateMeta.width || 1600;
-  const height = templateMeta.height || 800;
+  const scoreText = String(Math.max(0, Math.floor(Number(score) || 0)));
+  const fontSize = getScoreFontSize(scoreText);
+  const debugBox = String(process.env.DEBUG_SHARE_IMAGE_BOX || '').toLowerCase() === 'true';
 
-  const scaleX = width / 1600;
-  const scaleY = height / 800;
-  const layout = {
-    x: Math.round(SCORE_LAYOUT.x * scaleX),
-    y: Math.round(SCORE_LAYOUT.y * scaleY),
-    width: Math.round(SCORE_LAYOUT.width * scaleX),
-    height: Math.round(SCORE_LAYOUT.height * scaleY)
-  };
-
-  const scoreText = String(normalizedScore);
-  const defaultSize = SCORE_LAYOUT.fontSizeDefault * scaleY;
-  const sizeFromWidth = defaultSize * (layout.width / Math.max(estimateWidth(scoreText, defaultSize), 1));
-  const fontSize = clamp(sizeFromWidth, SCORE_LAYOUT.fontSizeMin * scaleY, SCORE_LAYOUT.fontSizeMax * scaleY);
-  const centerX = Math.round(layout.x + (layout.width / 2));
-  const centerY = Math.round(layout.y + (layout.height / 2));
-
-  const svg = Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
-      '<defs>' +
-        '<linearGradient id="scoreGradient" x1="0%" y1="0%" x2="0%" y2="100%">' +
-          `<stop offset="0%" stop-color="${SCORE_LAYOUT.gradientStart}"/>` +
-          `<stop offset="100%" stop-color="${SCORE_LAYOUT.gradientEnd}"/>` +
-        '</linearGradient>' +
-        '<filter id="scoreGlow" x="-40%" y="-40%" width="180%" height="180%">' +
-          `<feDropShadow dx="0" dy="2" stdDeviation="5" flood-color="${SCORE_LAYOUT.glowColor}" flood-opacity="0.95"/>` +
-          `<feDropShadow dx="0" dy="9" stdDeviation="8" flood-color="${SCORE_LAYOUT.glowColor}" flood-opacity="0.72"/>` +
-        '</filter>' +
-      '</defs>' +
-      `<text x="${centerX}" y="${centerY}" font-family="${SCORE_LAYOUT.fontFamily}" font-size="${Math.round(fontSize)}" font-weight="900" letter-spacing="${SCORE_LAYOUT.letterSpacing}" fill="url(#scoreGradient)" stroke="${SCORE_LAYOUT.strokeColor}" stroke-width="2" paint-order="stroke fill" dominant-baseline="middle" text-anchor="middle" filter="url(#scoreGlow)" transform="${buildSkewTransform(centerX, centerY, SCORE_LAYOUT.skewX)}">${escapeXml(scoreText)}</text>` +
-    '</svg>'
-  );
+  const baseMeta = await sharp(BASE_TEMPLATE_PATH).metadata();
+  const overlaySvg = buildOverlaySvg({ scoreText, fontSize, debugBox });
 
   fs.mkdirSync(GENERATED_DIR, { recursive: true });
   const outputPath = path.join(GENERATED_DIR, `${shareId}.png`);
-  await sharp(BASE_TEMPLATE_PATH).composite([{ input: svg, blend: 'over' }]).png({ compressionLevel: 8 }).toFile(outputPath);
+
+  await sharp(BASE_TEMPLATE_PATH)
+    .resize(OUTPUT_WIDTH, OUTPUT_HEIGHT, { fit: 'fill' })
+    .composite([{ input: overlaySvg, blend: 'over', top: 0, left: 0 }])
+    .png({ compressionLevel: 8 })
+    .toFile(outputPath);
+
+  const outputMeta = await sharp(outputPath).metadata();
+  if (outputMeta.width !== OUTPUT_WIDTH || outputMeta.height !== OUTPUT_HEIGHT) {
+    const err = new Error('Unexpected output image dimensions');
+    err.code = 'invalid_output_size';
+    throw err;
+  }
+
+  logger.info({
+    shareId,
+    scoreText,
+    scoreBox: SCORE_BOX,
+    fontSize,
+    outputPath,
+    templateWidth: baseMeta.width,
+    templateHeight: baseMeta.height,
+    outputWidth: outputMeta.width,
+    outputHeight: outputMeta.height
+  }, 'Share score image rendered');
 
   return {
     outputPath,
@@ -105,5 +115,6 @@ async function renderShareScoreImage({ shareId, score }) {
 }
 
 module.exports = {
-  renderShareScoreImage
+  renderShareScoreImage,
+  getScoreFontSize
 };
