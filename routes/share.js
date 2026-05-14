@@ -217,7 +217,7 @@ router.post('/confirm', shareConfirmLimiter, async (req, res) => {
         awarded: shareEvent.goldAwarded > 0,
         goldAwarded: shareEvent.goldAwarded,
         shareStreak: player ? player.shareStreak : 0,
-        totalGold: player ? player.gold : 0
+        totalGold: player ? player.totalGoldCoins : 0
       });
     }
 
@@ -247,7 +247,7 @@ router.post('/confirm', shareConfirmLimiter, async (req, res) => {
         awarded: false,
         reason: 'already_rewarded_today',
         shareStreak: player ? player.shareStreak : 0,
-        totalGold: player ? player.gold : 0
+        totalGold: player ? player.totalGoldCoins : 0
       });
     }
 
@@ -274,7 +274,7 @@ router.post('/confirm', shareConfirmLimiter, async (req, res) => {
         awarded: (shareEventRefreshed?.goldAwarded || 0) > 0,
         goldAwarded: shareEventRefreshed?.goldAwarded || 0,
         shareStreak: player ? player.shareStreak : 0,
-        totalGold: player ? player.gold : 0
+        totalGold: player ? player.totalGoldCoins : 0
       });
     }
 
@@ -320,8 +320,23 @@ router.post('/confirm', shareConfirmLimiter, async (req, res) => {
     });
 
   } catch (error) {
-    logger.error({ err: error }, 'POST /share/confirm error');
-    return res.status(500).json({ error: 'Server error' });
+    logger.error({
+      route: 'POST /api/share/confirm',
+      requestId: req.requestId,
+      errorName: error?.name,
+      errorMessage: error?.message,
+      errorCode: error?.code,
+      errorStack: error?.stack,
+      errorRaw: String(error),
+      body: {
+        shareId: req.body?.shareId,
+        primaryId: req.body?.primaryId
+      }
+    }, 'POST /share/confirm error');
+    return res.status(500).json({
+      error: 'Server error',
+      requestId: req.requestId
+    });
   }
 });
 
