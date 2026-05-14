@@ -222,6 +222,12 @@ function scheduleBotRestart(delayMs = 5000) {
   }, delayMs);
 }
   function initBot() {
+  const isTelegramBotEnabled = String(process.env.ENABLE_TELEGRAM_BOT || '').toLowerCase() === 'true';
+  if (!isTelegramBotEnabled) {
+    console.log('Telegram bot polling skipped because ENABLE_TELEGRAM_BOT is not true');
+    return null;
+  }
+
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
     console.warn('⚠️ TELEGRAM_BOT_TOKEN not set — bot disabled');
