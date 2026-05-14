@@ -546,7 +546,7 @@ router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
     const aiModeAccess = aiByWallet || aiByTelegramUsername;
     effects.ai_mode_access = aiModeAccess;
 
-    logger.debug({
+    logger.info({
       route: "GET /api/store/upgrades",
       identifier,
       authMode: identity.authMode,
