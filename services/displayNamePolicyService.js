@@ -3,18 +3,47 @@ function shortenWallet(wallet) {
   return `${wallet.slice(0, 6)}…${wallet.slice(-4)}`;
 }
 
+function normalizeTelegramUsername(username) {
+  return String(username || '').trim().replace(/^@/, '');
+}
+
+function resolveLeaderboardDisplayName({ nickname, wallet, telegramUsername }) {
+  const cleanNickname = String(nickname || '').trim();
+  if (cleanNickname) return cleanNickname;
+
+  const shortWallet = shortenWallet(wallet);
+  if (shortWallet) return shortWallet;
+
+  const cleanTelegram = normalizeTelegramUsername(telegramUsername);
+  if (cleanTelegram) return `@${cleanTelegram}`;
+
+  return 'Player';
+}
+
 function resolveDisplayNameFromPreferences({ leaderboardDisplay, nickname, telegramUsername, wallet }) {
-  switch (leaderboardDisplay || 'wallet') {
+  const cleanNickname = String(nickname || '').trim();
+  const shortWallet = shortenWallet(wallet);
+  const cleanTelegram = normalizeTelegramUsername(telegramUsername);
+
+  switch (leaderboardDisplay) {
     case 'nickname':
-      return nickname || shortenWallet(wallet) || (telegramUsername ? `@${telegramUsername}` : null) || 'Player';
-    case 'telegram':
-      return telegramUsername
-        ? `@${telegramUsername}`
-        : (nickname || shortenWallet(wallet) || 'Player');
+      if (cleanNickname) return cleanNickname;
+      break;
     case 'wallet':
+      if (shortWallet) return shortWallet;
+      break;
+    case 'telegram':
+      if (cleanTelegram) return `@${cleanTelegram}`;
+      break;
     default:
-      return shortenWallet(wallet) || (telegramUsername ? `@${telegramUsername}` : (nickname || 'Player'));
+      break;
   }
+
+  return resolveLeaderboardDisplayName({
+    nickname: cleanNickname,
+    wallet,
+    telegramUsername: cleanTelegram
+  });
 }
 
 function resolveDisplayNameFromLink(link, primaryId) {
@@ -45,6 +74,8 @@ function resolveDisplayNameFromLink(link, primaryId) {
 
 module.exports = {
   shortenWallet,
+  normalizeTelegramUsername,
+  resolveLeaderboardDisplayName,
   resolveDisplayNameFromPreferences,
   resolveDisplayNameFromLink
 };

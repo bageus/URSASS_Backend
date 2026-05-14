@@ -1,7 +1,7 @@
 const logger = require('./logger');
 
 const DEFAULT_TTL_MS = Math.max(1_000, Number(process.env.LEADERBOARD_TOP_CACHE_TTL_MS || 30_000));
-const CACHE_KEY = process.env.LEADERBOARD_TOP_CACHE_KEY || 'leaderboard:top:public:v1';
+const CACHE_KEY = process.env.LEADERBOARD_TOP_CACHE_KEY || 'leaderboard:top:public:v2';
 
 const memoryState = {
   value: null,
