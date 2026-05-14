@@ -9,13 +9,13 @@ const GENERATED_DIR = path.join(__dirname, '..', 'generated', 'share-images');
 
 const OUTPUT_WIDTH = 1600;
 const OUTPUT_HEIGHT = 800;
-const RENDER_VERSION = 'score-v5-vector-digits';
+const RENDER_VERSION = 'score-v6-polished';
 
 const SCORE_BOX = {
-  x: 575,
+  x: 515,
   y: 292,
-  width: 545,
-  height: 170
+  width: 560,
+  height: 165
 };
 
 const DIGIT_WIDTH = 78;
@@ -95,7 +95,7 @@ function buildVectorDigits(scoreText) {
     svg += `<g transform="translate(${xOffset} 0)">`;
     for (const segmentId of activeSegments) {
       const points = getSegmentPolygon(segmentId);
-      svg += `<polygon points="${points}" fill="url(#scoreGradient)" stroke="#10051f" stroke-width="3" stroke-linejoin="round"/>`;
+      svg += `<polygon points="${points}" fill="url(#scoreGradient)" stroke="#10051f" stroke-width="2.5" stroke-linejoin="round"/>`;
     }
     svg += '</g>';
     xOffset += DIGIT_WIDTH + DIGIT_GAP;
@@ -113,18 +113,18 @@ function buildOverlaySvg({ scoreText, debugBox, startX, startY, scale, totalWidt
       '<defs>' +
         '<linearGradient id="scoreGradient" x1="0%" y1="0%" x2="100%" y2="100%">' +
           '<stop offset="0%" stop-color="#ffffff"/>' +
-          '<stop offset="35%" stop-color="#d8c7ff"/>' +
-          '<stop offset="70%" stop-color="#a855f7"/>' +
-          '<stop offset="100%" stop-color="#22d3ee"/>' +
+          '<stop offset="30%" stop-color="#e7d7ff"/>' +
+          '<stop offset="60%" stop-color="#b779ff"/>' +
+          '<stop offset="100%" stop-color="#38e8ff"/>' +
         '</linearGradient>' +
         '<filter id="scoreGlow" x="-40%" y="-40%" width="180%" height="180%">' +
-          '<feDropShadow dx="0" dy="0" stdDeviation="7" flood-color="#8b5cf6" flood-opacity="0.75"/>' +
-          '<feDropShadow dx="0" dy="0" stdDeviation="12" flood-color="#22d3ee" flood-opacity="0.45"/>' +
+          '<feDropShadow dx="0" dy="0" stdDeviation="5" flood-color="#8b5cf6" flood-opacity="0.65"/>' +
+          '<feDropShadow dx="0" dy="0" stdDeviation="10" flood-color="#22d3ee" flood-opacity="0.35"/>' +
         '</filter>' +
       '</defs>' +
       (debugBox
         ? `<rect x="${SCORE_BOX.x}" y="${SCORE_BOX.y}" width="${SCORE_BOX.width}" height="${SCORE_BOX.height}" fill="none" stroke="red" stroke-width="4"/>` +
-          `<rect x="${startX}" y="${startY}" width="${digitsBoundsWidth}" height="${digitsBoundsHeight}" fill="none" stroke="lime" stroke-width="3"/>`
+          `<rect x="${startX}" y="${startY}" width="${digitsBoundsWidth}" height="${digitsBoundsHeight}" fill="none" stroke="lime" stroke-width="2.5"/>`
         : '') +
       `<g transform="translate(${startX} ${startY}) scale(${scale})" filter="url(#scoreGlow)">` +
         buildVectorDigits(scoreText) +
@@ -158,7 +158,7 @@ async function renderShareScoreImage({ shareId, score }) {
   const scale = Math.min(
     SCORE_BOX.width / totalWidth,
     SCORE_BOX.height / DIGIT_HEIGHT,
-    1.15
+    1.0
   );
 
   const startX = SCORE_BOX.x + ((SCORE_BOX.width - (totalWidth * scale)) / 2);
