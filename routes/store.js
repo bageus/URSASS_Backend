@@ -576,8 +576,22 @@ router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
     });
 
   } catch (error) {
-    logger.error({ err: error }, 'GET /upgrades error');
-    res.status(500).json({ error: 'Server error' });
+    logger.error({
+      route: 'GET /api/store/upgrades/:wallet',
+      requestId: req.requestId,
+      identifier: req.params.wallet,
+      errorName: error?.name,
+      errorMessage: error?.message,
+      errorCode: error?.code,
+      errorStack: error?.stack,
+      errorRaw: String(error)
+    }, 'GET /upgrades error');
+
+    res.status(error.statusCode || 500).json({
+      error: error?.message || 'Server error',
+      code: error?.code || null,
+      requestId: req.requestId || null
+    });
   }
 });
 
