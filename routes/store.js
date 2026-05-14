@@ -318,19 +318,37 @@ async function prepareUpgrades(upgrades, { persist = false } = {}) {
   return upgrades;
 }
 
+function formatTimeLeft(ms) {
+  const totalMs = Math.max(0, Number(ms) || 0);
+  if (totalMs <= 0) return 'Ready';
+
+  const totalSeconds = Math.ceil(totalMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m`;
+  return '<1m';
+}
+
 function buildRidesData(upgrades, options = {}) {
   const now = new Date();
-  const resetAt = upgrades.freeRidesResetAt || now;
+  const resetAt = upgrades?.freeRidesResetAt || now;
   const msUntilReset = Math.max(0, (8 * 60 * 60 * 1000) - (now - resetAt));
-  const resetInMs = options.resetInMs ?? (upgrades.freeRidesRemaining < 3 ? msUntilReset : 0);
+  const resetInMs = Number(options.resetInMs ?? ((Number(upgrades?.freeRidesRemaining) || 0) < 3 ? msUntilReset : 0));
+  const freeRides = Number(options.freeRides ?? upgrades?.freeRidesRemaining);
+  const paidRides = Number(options.paidRides ?? upgrades?.paidRidesRemaining);
+  const totalRides = Number(options.totalRides ?? upgrades?.getTotalRides?.());
+  const safeResetInMs = Number.isFinite(resetInMs) ? Math.max(0, resetInMs) : 0;
+  const resetInFormatted = String(options.resetInFormatted || formatTimeLeft(safeResetInMs) || 'Ready').trim() || 'Ready';
 
   return {
-    freeRides: options.freeRides ?? upgrades.freeRidesRemaining,
-    paidRides: options.paidRides ?? upgrades.paidRidesRemaining,
-    totalRides: options.totalRides ?? upgrades.getTotalRides(),
+    freeRides: Number.isFinite(freeRides) ? freeRides : 0,
+    paidRides: Number.isFinite(paidRides) ? paidRides : 0,
+    totalRides: Number.isFinite(totalRides) ? totalRides : 0,
     maxFreeRides: 3,
-    resetInMs,
-    resetInFormatted: options.resetInFormatted ?? (formatTimeLeft(resetInMs) || 'Ready')
+    resetInMs: safeResetInMs,
+    resetInFormatted
   };
 }
 
@@ -1140,24 +1158,5 @@ router.get('/rides/:wallet', readLimiter, async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
-
-function formatTimeLeft(ms) {
-  if (ms <= 0) return 'Ready now';
-
-  const totalSeconds = Math.ceil(ms / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  if (hours > 0) {
-    return `${hours}h ${minutes}m`;
-  }
-
-  if (minutes > 0) {
-    return `${minutes}m ${seconds}s`;
-  }
-
-  return `${seconds}s`;
-}
 
 module.exports = router;
