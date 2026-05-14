@@ -165,6 +165,13 @@ function createApp() {
     }
   }));
 
+  app.use('/generated', express.static(path.join(__dirname, 'generated'), {
+    fallthrough: false,
+    setHeaders: (res) => {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    }
+  }));
+
 
   const enableSharePreviewPublic = String(process.env.ENABLE_SHARE_PREVIEW_PUBLIC || '').toLowerCase() === 'true';
   if (enableSharePreviewPublic) {
@@ -256,7 +263,7 @@ function createApp() {
       const frontendBaseUrl = (process.env.FRONTEND_BASE_URL || 'https://ursasstube.fun').trim().replace(/\/+$/, '');
       const isCrawler = isShareCrawler(req.get('user-agent'));
       const share = shareId ? await ShareEvent.findOne({ shareId }) : null;
-      const imageUrl = `${baseUrl}/img/score_result1600x800.png`;
+      const imageUrl = share?.previewImageUrl || `${baseUrl}/img/score_result1600x800.png`;
       const absoluteShareUrl = `${baseUrl}/share/${encodeURIComponent(shareId || 'unknown')}`;
       const html = `<!doctype html><html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>URSASS TUBE</title><meta property="og:type" content="website" /><meta property="og:title" content="URSASS TUBE" /><meta property="og:description" content="Can you beat my score in Ursass Tube?" /><meta property="og:image" content="${escapeHtml(imageUrl)}" /><meta property="og:image:width" content="1600" /><meta property="og:image:height" content="800" /><meta property="og:url" content="${escapeHtml(absoluteShareUrl)}" /><meta name="twitter:card" content="summary_large_image" /><meta name="twitter:title" content="URSASS TUBE" /><meta name="twitter:description" content="Can you beat my score in Ursass Tube?" /><meta name="twitter:image" content="${escapeHtml(imageUrl)}" /></head><body><p>Play Ursass Tube</p><a href="${escapeHtml(frontendBaseUrl)}/">Open game</a></body></html>`;
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
