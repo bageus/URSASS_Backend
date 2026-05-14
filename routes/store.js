@@ -158,12 +158,44 @@ function parseTelegramInitDataIdentity(initDataRaw) {
 }
 
 async function getOrCreatePlayerUpgrades(wallet) {
-  let upgrades = await PlayerUpgrades.findOne({ wallet });
-  if (!upgrades) {
-    upgrades = new PlayerUpgrades({ wallet, ...NEW_PLAYER_GOLD_UPGRADE_DEFAULTS });
-    await upgrades.save();
+  const normalizedWallet = String(wallet || '').trim().toLowerCase();
+
+  if (!normalizedWallet) {
+    const err = new Error('missing_upgrade_account_key');
+    err.statusCode = 400;
+    throw err;
   }
-  return upgrades;
+
+  try {
+    return await PlayerUpgrades.findOneAndUpdate(
+      { wallet: normalizedWallet },
+      {
+        $setOnInsert: {
+          wallet: normalizedWallet,
+          ...NEW_PLAYER_GOLD_UPGRADE_DEFAULTS,
+          freeRidesRemaining: 3,
+          paidRidesRemaining: 0,
+          freeRidesResetAt: new Date(),
+          recentRideSessionIds: [],
+          temporaryBoosts: {
+            radarObstaclesUntil: null,
+            radarGoldUntil: null
+          }
+        }
+      },
+      {
+        new: true,
+        upsert: true,
+        setDefaultsOnInsert: true
+      }
+    );
+  } catch (error) {
+    if (error?.code === 11000) {
+      const existing = await PlayerUpgrades.findOne({ wallet: normalizedWallet });
+      if (existing) return existing;
+    }
+    throw error;
+  }
 }
 
 async function resolvePrimaryIdFromIdentifier(identifier) {
@@ -576,8 +608,22 @@ router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
     });
 
   } catch (error) {
-    logger.error({ err: error }, 'GET /upgrades error');
-    res.status(500).json({ error: 'Server error' });
+    logger.error({
+      route: 'GET /api/store/upgrades/:wallet',
+      requestId: req.requestId,
+      identifier: req.params.wallet,
+      errorName: error?.name,
+      errorMessage: error?.message,
+      errorCode: error?.code,
+      errorStack: error?.stack,
+      errorRaw: String(error)
+    }, 'GET /upgrades error');
+
+    res.status(error.statusCode || 500).json({
+      error: error?.message || 'Server error',
+      code: error?.code || null,
+      requestId: req.requestId || null
+    });
   }
 });
 
