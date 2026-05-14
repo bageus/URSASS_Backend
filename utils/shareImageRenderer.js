@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const logger = require('./logger');
+const { spawnSync } = require('child_process');
 let sharp;
 try { sharp = require('sharp'); } catch (_) { sharp = null; }
 
@@ -9,6 +10,7 @@ const GENERATED_DIR = path.join(__dirname, '..', 'generated', 'share-images');
 
 const OUTPUT_WIDTH = 1600;
 const OUTPUT_HEIGHT = 800;
+const RENDER_VERSION = 'score-v4-fontfix';
 
 const SCORE_BOX = {
   x: 600,
@@ -55,9 +57,50 @@ function buildOverlaySvg({ scoreText, fontSize, debugBox }) {
       (debugBox
         ? `<rect x="${SCORE_BOX.x}" y="${SCORE_BOX.y}" width="${SCORE_BOX.width}" height="${SCORE_BOX.height}" fill="none" stroke="red" stroke-width="4"/>`
         : '') +
-      `<text x="${centerX}" y="${centerY}" text-anchor="middle" dominant-baseline="middle" font-size="${fontSize}" font-weight="900" font-family="Arial Black, Impact, system-ui, sans-serif" letter-spacing="2" fill="url(#scoreGradient)" stroke="rgba(10, 6, 30, 0.75)" stroke-width="5" paint-order="stroke fill" filter="url(#scoreGlow)">${escapeXml(scoreText)}</text>` +
+      `<text x="${centerX}" y="${centerY}" text-anchor="middle" dominant-baseline="middle" font-size="${fontSize}" font-weight="900" font-family="DejaVu Sans Condensed, DejaVu Sans, Liberation Sans, Arial, sans-serif" letter-spacing="2" fill="url(#scoreGradient)" stroke="rgba(10, 6, 30, 0.75)" stroke-width="5" paint-order="stroke fill" filter="url(#scoreGlow)">${escapeXml(scoreText)}</text>` +
     '</svg>'
   );
+}
+
+
+let fontDiagnosticsLogged = false;
+
+function runFontCommand(cmd, args) {
+  const res = spawnSync(cmd, args, { encoding: 'utf8' });
+  if (res.error) {
+    logger.warn({ cmd, args, error: res.error.message }, 'Font diagnostics command unavailable');
+    return { ok: false, unavailable: true };
+  }
+  if (res.status !== 0) {
+    logger.warn({ cmd, args, status: res.status, stderr: res.stderr?.trim() }, 'Font diagnostics command failed');
+    return { ok: false, unavailable: false };
+  }
+  logger.info({ cmd, args, output: (res.stdout || '').trim() }, 'Font diagnostics command output');
+  return { ok: true, unavailable: false };
+}
+
+function logFontDiagnostics() {
+  if (fontDiagnosticsLogged) return;
+  fontDiagnosticsLogged = true;
+
+  logger.info({
+    fontconfigPath: process.env.FONTCONFIG_PATH,
+    fontconfigFile: process.env.FONTCONFIG_FILE,
+    sharpVersions: sharp?.versions,
+    baseTemplatePath: BASE_TEMPLATE_PATH,
+    baseTemplateExists: fs.existsSync(BASE_TEMPLATE_PATH)
+  }, 'Share image font runtime diagnostics');
+
+  const debugFonts = String(process.env.DEBUG_SHARE_IMAGE_FONTS || '').toLowerCase() === 'true';
+  if (!debugFonts) return;
+
+  const dejavu = runFontCommand('fc-match', ['DejaVu Sans Condensed']);
+  const liberation = runFontCommand('fc-match', ['Liberation Sans']);
+  runFontCommand('sh', ['-c', 'fc-list | head']);
+
+  if (!dejavu.ok || !liberation.ok) {
+    logger.warn('fontconfig unavailable, SVG text may render incorrectly');
+  }
 }
 
 async function renderShareScoreImage({ shareId, score }) {
@@ -73,6 +116,8 @@ async function renderShareScoreImage({ shareId, score }) {
     throw err;
   }
 
+  logFontDiagnostics();
+
   const scoreText = String(Math.max(0, Math.floor(Number(score) || 0)));
   const fontSize = getScoreFontSize(scoreText);
   const debugBox = String(process.env.DEBUG_SHARE_IMAGE_BOX || '').toLowerCase() === 'true';
@@ -81,7 +126,7 @@ async function renderShareScoreImage({ shareId, score }) {
   const overlaySvg = buildOverlaySvg({ scoreText, fontSize, debugBox });
 
   fs.mkdirSync(GENERATED_DIR, { recursive: true });
-  const outputPath = path.join(GENERATED_DIR, `${shareId}.png`);
+  const outputPath = path.join(GENERATED_DIR, `${shareId}-${RENDER_VERSION}.png`);
 
   await sharp(BASE_TEMPLATE_PATH)
     .resize(OUTPUT_WIDTH, OUTPUT_HEIGHT, { fit: 'fill' })
@@ -110,7 +155,7 @@ async function renderShareScoreImage({ shareId, score }) {
 
   return {
     outputPath,
-    relativeUrl: `/generated/share-images/${encodeURIComponent(shareId)}.png`
+    relativeUrl: `/generated/share-images/${encodeURIComponent(shareId)}-${RENDER_VERSION}.png`
   };
 }
 
