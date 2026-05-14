@@ -71,17 +71,13 @@ function getPublicBaseUrl(req) {
   return `${req.protocol}://${req.get('host')}`;
 }
 
-function buildSharePostText(score, referralCode, webShareUrl, telegramShareUrl) {
+function buildSharePostText(score, referralCode, webShareUrl) {
   const normalizedScore = Math.max(0, Math.floor(Number(score || 0)));
   const parts = [
     `I scored ${normalizedScore} in Ursass Tube 🐻`,
     'Can you beat me?',
     '',
-    'Play Web:',
     webShareUrl,
-    '',
-    'Play Telegram:',
-    telegramShareUrl,
     '',
     `Get bonus — use my ref code: ${referralCode}`,
     '',
@@ -114,13 +110,11 @@ router.post('/start', shareStartLimiter, async (req, res) => {
     const baseUrl = getPublicBaseUrl(req);
     const walletAddress = link.wallet || null;
     const referralCode = player.referralCode || '';
-    const previewImageUrl = walletAddress
-      ? `${baseUrl}/api/leaderboard/share/image/${walletAddress}.png`
-      : `${baseUrl}/img/score_result.png`;
+    const previewImageUrl = `${baseUrl}/img/score_result1600x800.png`;
     const shareId = crypto.randomUUID();
     const webShareUrl = `${baseUrl}/share/${shareId}`;
     const telegramShareUrl = buildTelegramReferralUrl();
-    const postText = buildSharePostText(scoreAtShare, referralCode, webShareUrl, telegramShareUrl);
+    const postText = buildSharePostText(scoreAtShare, referralCode, webShareUrl);
     const hasConnectedXAccount = Boolean(player.xUserId);
     const shouldUsePaidXApi = shouldUseXApiShare() && hasConnectedXAccount;
     const intentUrl = shouldUsePaidXApi ? null : `https://twitter.com/intent/tweet?text=${encodeURIComponent(postText)}`;
