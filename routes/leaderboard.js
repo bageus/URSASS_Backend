@@ -44,6 +44,11 @@ const SHARE_HASHTAGS = '#UrsassTube #Ursas #Ursasplanet #GameChallenge #HighScor
 const TOP_CACHE_TTL_MS = getTopLeaderboardCacheTtlMs();
 
 
+function isValidEvmWallet(value) {
+  return /^0x[0-9a-fA-F]{40}$/.test(String(value || '').trim());
+}
+
+
 function isDuplicateSaveError(error) {
   if (!error) return false;
   if (error.alreadySaved || error.code === 409 || error.code === 11000) {
@@ -186,7 +191,7 @@ router.get('/top', readLimiter, async (req, res) => {
     const isPrimaryIdQuery = walletQuery.startsWith('tg_');
     if (walletQuery && !wallet && isPrimaryIdQuery) {
       const link = await AccountLink.findOne({
-        $or: [{ primaryId: walletQuery }, { wallet: walletQuery }]
+        $or: [{ primaryId: walletQuery }, { wallet: walletQuery }, { telegramId: walletQuery.replace(/^tg_/, '') }]
       });
       wallet = link?.primaryId || null;
     }
@@ -215,16 +220,31 @@ router.get('/top', readLimiter, async (req, res) => {
     // AccountLink.primaryId = tg_<id> (when they first logged in via TG).
     // So we search by both primaryId and wallet fields.
     const wallets = topPlayers.map(p => p.wallet).filter(Boolean);
+    const telegramIdsFromPlayers = wallets
+      .map((value) => {
+        const raw = String(value || '').trim();
+        if (!raw) return null;
+        if (raw.startsWith('tg_')) return raw.slice(3);
+        if (/^\d+$/.test(raw)) return raw;
+        return null;
+      })
+      .filter(Boolean);
+
     const links = await AccountLink.find({
       $or: [
         { primaryId: { $in: wallets } },
-        { wallet: { $in: wallets } }
+        { wallet: { $in: wallets } },
+        { telegramId: { $in: telegramIdsFromPlayers } }
       ]
     });
     const linkMap = {};
     for (const link of links) {
       if (link.primaryId) linkMap[link.primaryId] = link;
       if (link.wallet) linkMap[link.wallet] = link;
+      if (link.telegramId) {
+        linkMap[`tg_${link.telegramId}`] = link;
+        linkMap[String(link.telegramId)] = link;
+      }
     }
 
     let playerPosition = null;
@@ -234,7 +254,7 @@ router.get('/top', readLimiter, async (req, res) => {
         .select('wallet bestScore bestDistance averageScore scoreToAverageRatio totalGoldCoins totalSilverCoins gamesPlayed nickname leaderboardDisplay');
       if (playerData) {
         playerRecord = playerData;
-        const playerLink = await AccountLink.findOne({ $or: [{ primaryId: wallet }, { wallet }] });
+        const playerLink = await AccountLink.findOne({ $or: [{ primaryId: wallet }, { wallet }, { telegramId: String(wallet || '').replace(/^tg_/, '') }] });
 
         if (playerData.bestScore > 0) {
           const position = await Player.countDocuments({
@@ -247,7 +267,7 @@ router.get('/top', readLimiter, async (req, res) => {
               leaderboardDisplay: playerData.leaderboardDisplay,
               nickname: playerData.nickname,
               telegramUsername: playerLink ? playerLink.telegramUsername : null,
-              wallet: playerLink ? playerLink.wallet : null
+              wallet: playerLink?.wallet || (isValidEvmWallet(playerData.wallet) ? playerData.wallet : null)
             }),
             position + 1
           );
@@ -258,7 +278,7 @@ router.get('/top', readLimiter, async (req, res) => {
               leaderboardDisplay: playerData.leaderboardDisplay,
               nickname: playerData.nickname,
               telegramUsername: playerLink ? playerLink.telegramUsername : null,
-              wallet: playerLink ? playerLink.wallet : null
+              wallet: playerLink?.wallet || (isValidEvmWallet(playerData.wallet) ? playerData.wallet : null)
             }),
             null
           );
@@ -283,7 +303,7 @@ router.get('/top', readLimiter, async (req, res) => {
             leaderboardDisplay: player.leaderboardDisplay,
             nickname: player.nickname,
             telegramUsername: linkMap[player.wallet] ? linkMap[player.wallet].telegramUsername : null,
-            wallet: linkMap[player.wallet] ? linkMap[player.wallet].wallet : null
+            wallet: linkMap[player.wallet]?.wallet || (isValidEvmWallet(player.wallet) ? player.wallet : null)
           }),
           index + 1
         )
