@@ -13,7 +13,7 @@ const RENDER_VERSION = 'score-v8-lower-left-tilt';
 
 const SCORE_BOX = {
   x: 485,
-  y: 325,
+  y: 335,
   width: 560,
   height: 165
 };
@@ -24,7 +24,7 @@ const SEGMENT_THICKNESS = 14;
 const SLANT = 4;
 const DIGIT_GAP = 10;
 const SCORE_SKEW_X = -18;
-const SCORE_ROTATE_DEG = -9;
+const SCORE_ROTATE_DEG = -13;
 
 const DIGIT_SEGMENTS = {
   '0': ['a', 'b', 'c', 'd', 'e', 'f'],
