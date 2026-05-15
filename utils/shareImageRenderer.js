@@ -9,20 +9,22 @@ const GENERATED_DIR = path.join(__dirname, '..', 'generated', 'share-images');
 
 const OUTPUT_WIDTH = 1600;
 const OUTPUT_HEIGHT = 800;
-const RENDER_VERSION = 'score-v6-polished';
+const RENDER_VERSION = 'score-v7-tilted-calculator';
 
 const SCORE_BOX = {
-  x: 515,
+  x: 485,
   y: 292,
   width: 560,
   height: 165
 };
 
-const DIGIT_WIDTH = 78;
-const DIGIT_HEIGHT = 128;
-const SEGMENT_THICKNESS = 18;
-const SLANT = 8;
-const DIGIT_GAP = 12;
+const DIGIT_WIDTH = 72;
+const DIGIT_HEIGHT = 124;
+const SEGMENT_THICKNESS = 14;
+const SLANT = 4;
+const DIGIT_GAP = 10;
+const SCORE_SKEW_X = -10;
+const SCORE_ROTATE_DEG = -4;
 
 const DIGIT_SEGMENTS = {
   '0': ['a', 'b', 'c', 'd', 'e', 'f'],
@@ -86,6 +88,18 @@ function getSegmentPolygon(segmentId) {
   return segmentMap[segmentId] || '';
 }
 
+function getHighlightPolygon(points) {
+  const [p1, p2, p3, p4] = points.split(' ').map((pair) => pair.split(',').map(Number));
+  if (!p1 || !p2 || !p3 || !p4) return '';
+  const shrink = 3;
+  return polygon([
+    [p1[0] + shrink, p1[1] + shrink],
+    [p2[0] - shrink, p2[1] + shrink],
+    [p3[0] - shrink, p3[1]],
+    [p4[0] + shrink, p4[1]]
+  ]);
+}
+
 function buildVectorDigits(scoreText) {
   let xOffset = 0;
   let svg = '';
@@ -95,7 +109,11 @@ function buildVectorDigits(scoreText) {
     svg += `<g transform="translate(${xOffset} 0)">`;
     for (const segmentId of activeSegments) {
       const points = getSegmentPolygon(segmentId);
-      svg += `<polygon points="${points}" fill="url(#scoreGradient)" stroke="#10051f" stroke-width="2.5" stroke-linejoin="round"/>`;
+      const highlightPoints = getHighlightPolygon(points);
+      svg += `<polygon points="${points}" fill="url(#scoreGradient)" stroke="#14091f" stroke-width="2" stroke-linejoin="round"/>`;
+      if (highlightPoints) {
+        svg += `<polygon points="${highlightPoints}" fill="url(#scoreHighlight)" opacity="0.35"/>`;
+      }
     }
     svg += '</g>';
     xOffset += DIGIT_WIDTH + DIGIT_GAP;
@@ -104,9 +122,7 @@ function buildVectorDigits(scoreText) {
   return svg;
 }
 
-function buildOverlaySvg({ scoreText, debugBox, startX, startY, scale, totalWidth }) {
-  const digitsBoundsWidth = totalWidth * scale;
-  const digitsBoundsHeight = DIGIT_HEIGHT * scale;
+function buildOverlaySvg({ scoreText, debugBox, totalWidth, scoreTransform }) {
 
   return Buffer.from(
     `<svg width="1600" height="800" viewBox="0 0 1600 800" xmlns="http://www.w3.org/2000/svg">` +
@@ -117,16 +133,20 @@ function buildOverlaySvg({ scoreText, debugBox, startX, startY, scale, totalWidt
           '<stop offset="60%" stop-color="#b779ff"/>' +
           '<stop offset="100%" stop-color="#38e8ff"/>' +
         '</linearGradient>' +
+        '<linearGradient id="scoreHighlight" x1="0%" y1="0%" x2="0%" y2="100%">' +
+          '<stop offset="0%" stop-color="#ffffff" stop-opacity="0.9"/>' +
+          '<stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>' +
+        '</linearGradient>' +
         '<filter id="scoreGlow" x="-40%" y="-40%" width="180%" height="180%">' +
-          '<feDropShadow dx="0" dy="0" stdDeviation="5" flood-color="#8b5cf6" flood-opacity="0.65"/>' +
-          '<feDropShadow dx="0" dy="0" stdDeviation="10" flood-color="#22d3ee" flood-opacity="0.35"/>' +
+          '<feDropShadow dx="0" dy="0" stdDeviation="4.5" flood-color="#9b5cff" flood-opacity="0.6"/>' +
+          '<feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="#2fe7ff" flood-opacity="0.28"/>' +
         '</filter>' +
       '</defs>' +
       (debugBox
         ? `<rect x="${SCORE_BOX.x}" y="${SCORE_BOX.y}" width="${SCORE_BOX.width}" height="${SCORE_BOX.height}" fill="none" stroke="red" stroke-width="4"/>` +
-          `<rect x="${startX}" y="${startY}" width="${digitsBoundsWidth}" height="${digitsBoundsHeight}" fill="none" stroke="lime" stroke-width="2.5"/>`
+          `<g transform="${scoreTransform}"><rect x="0" y="0" width="${totalWidth}" height="${DIGIT_HEIGHT}" fill="none" stroke="lime" stroke-width="2.5"/></g>`
         : '') +
-      `<g transform="translate(${startX} ${startY}) scale(${scale})" filter="url(#scoreGlow)">` +
+      `<g transform="${scoreTransform}" filter="url(#scoreGlow)">` +
         buildVectorDigits(scoreText) +
       '</g>' +
     '</svg>'
@@ -163,9 +183,19 @@ async function renderShareScoreImage({ shareId, score }) {
 
   const startX = SCORE_BOX.x + ((SCORE_BOX.width - (totalWidth * scale)) / 2);
   const startY = SCORE_BOX.y + ((SCORE_BOX.height - (DIGIT_HEIGHT * scale)) / 2);
+  const centerX = SCORE_BOX.x + (SCORE_BOX.width / 2);
+  const centerY = SCORE_BOX.y + (SCORE_BOX.height / 2);
+  const scoreTransform = [
+    `translate(${startX} ${startY})`,
+    `scale(${scale})`,
+    `translate(${(centerX - startX) / scale} ${(centerY - startY) / scale})`,
+    `skewX(${SCORE_SKEW_X})`,
+    `rotate(${SCORE_ROTATE_DEG})`,
+    `translate(${-(centerX - startX) / scale} ${-(centerY - startY) / scale})`
+  ].join(' ');
 
   const baseMeta = await sharp(BASE_TEMPLATE_PATH).metadata();
-  const overlaySvg = buildOverlaySvg({ scoreText, debugBox, startX, startY, scale, totalWidth });
+  const overlaySvg = buildOverlaySvg({ scoreText, debugBox, totalWidth, scoreTransform });
 
   fs.mkdirSync(GENERATED_DIR, { recursive: true });
   const outputPath = path.join(GENERATED_DIR, `${shareId}-${RENDER_VERSION}.png`);
@@ -198,6 +228,9 @@ async function renderShareScoreImage({ shareId, score }) {
     scale,
     startX,
     startY,
+    scoreSkewX: SCORE_SKEW_X,
+    scoreRotateDeg: SCORE_ROTATE_DEG,
+    scoreTransform,
     outputPath,
     relativeUrl,
     templateWidth: baseMeta.width,
