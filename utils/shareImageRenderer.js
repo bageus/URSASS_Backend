@@ -9,11 +9,11 @@ const GENERATED_DIR = path.join(__dirname, '..', 'generated', 'share-images');
 
 const OUTPUT_WIDTH = 1600;
 const OUTPUT_HEIGHT = 800;
-const RENDER_VERSION = 'score-v7-tilted-calculator';
+const RENDER_VERSION = 'score-v8-lower-left-tilt';
 
 const SCORE_BOX = {
   x: 485,
-  y: 292,
+  y: 315,
   width: 560,
   height: 165
 };
@@ -23,8 +23,8 @@ const DIGIT_HEIGHT = 124;
 const SEGMENT_THICKNESS = 14;
 const SLANT = 4;
 const DIGIT_GAP = 10;
-const SCORE_SKEW_X = -10;
-const SCORE_ROTATE_DEG = -4;
+const SCORE_SKEW_X = -14;
+const SCORE_ROTATE_DEG = -5;
 
 const DIGIT_SEGMENTS = {
   '0': ['a', 'b', 'c', 'd', 'e', 'f'],
