@@ -24,7 +24,7 @@ const SEGMENT_THICKNESS = 14;
 const SLANT = 4;
 const DIGIT_GAP = 10;
 const SCORE_SKEW_X = -18;
-const SCORE_ROTATE_DEG = -13;
+const SCORE_ROTATE_DEG = -10;
 
 const DIGIT_SEGMENTS = {
   '0': ['a', 'b', 'c', 'd', 'e', 'f'],
