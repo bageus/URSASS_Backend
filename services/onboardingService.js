@@ -202,29 +202,80 @@ function resolveActiveOnboarding({ state, raceCount, xConnected, screen }) {
 
 async function claimReward({ state, primaryId, wallet, reward }) {
   if (!CLAIMABLE_REWARDS.has(reward)) throw Object.assign(new Error('unsupported_reward'), { statusCode: 400 });
+
   const normalizedWallet = String(wallet || primaryId || '').trim().toLowerCase();
   const upgrades = await PlayerUpgrades.findOneAndUpdate(
     { wallet: normalizedWallet },
     { $setOnInsert: { wallet: normalizedWallet } },
     { upsert: true, new: true }
   );
+
+  const rewardConfig = reward === 'radar_obstacles_24h'
+    ? {
+      stateGiftPath: 'radarObstacles',
+      boostPath: 'temporaryBoosts.radarObstaclesUntil',
+      currentBoostUntil: upgrades.temporaryBoosts?.radarObstaclesUntil
+    }
+    : {
+      stateGiftPath: 'radarGold',
+      boostPath: 'temporaryBoosts.radarGoldUntil',
+      currentBoostUntil: upgrades.temporaryBoosts?.radarGoldUntil
+    };
+
+  const giftState = state.gifts[rewardConfig.stateGiftPath];
+  const existingUntil = rewardConfig.currentBoostUntil;
+  const existingUntilMs = existingUntil ? new Date(existingUntil).getTime() : 0;
+
+  if (giftState.claimed || (existingUntilMs && existingUntilMs > Date.now())) {
+    giftState.claimed = true;
+    if (!giftState.activeUntil && existingUntil) {
+      giftState.activeUntil = existingUntil;
+      await state.save();
+    }
+    return { alreadyClaimed: true, until: existingUntil || giftState.activeUntil || null };
+  }
+
   const until = new Date(Date.now() + 24 * 60 * 60 * 1000);
-  if (reward === 'radar_obstacles_24h') {
-    if (state.gifts.radarObstacles.claimed) return { alreadyClaimed: true, until: upgrades.temporaryBoosts?.radarObstaclesUntil || null };
-    state.gifts.radarObstacles.claimed = true;
-    state.gifts.radarObstacles.activeUntil = until;
-    upgrades.temporaryBoosts = upgrades.temporaryBoosts || {};
-    upgrades.temporaryBoosts.radarObstaclesUntil = until;
+  const claimedPath = `gifts.${rewardConfig.stateGiftPath}.claimed`;
+  const activeUntilPath = `gifts.${rewardConfig.stateGiftPath}.activeUntil`;
+
+  const claimedState = await OnboardingState.findOneAndUpdate(
+    { primaryId: state.primaryId, [claimedPath]: { $ne: true } },
+    { $set: { [claimedPath]: true, [activeUntilPath]: until } },
+    { new: true }
+  );
+
+  if (!claimedState) {
+    const latestState = await OnboardingState.findOne({ primaryId: state.primaryId }).select(`gifts.${rewardConfig.stateGiftPath}`).lean();
+    const latestUntil = upgrades.temporaryBoosts?.[rewardConfig.stateGiftPath === 'radarObstacles' ? 'radarObstaclesUntil' : 'radarGoldUntil']
+      || latestState?.gifts?.[rewardConfig.stateGiftPath]?.activeUntil
+      || null;
+    return { alreadyClaimed: true, until: latestUntil };
   }
-  if (reward === 'radar_gold_24h') {
-    if (state.gifts.radarGold.claimed) return { alreadyClaimed: true, until: upgrades.temporaryBoosts?.radarGoldUntil || null };
-    state.gifts.radarGold.claimed = true;
-    state.gifts.radarGold.activeUntil = until;
-    upgrades.temporaryBoosts = upgrades.temporaryBoosts || {};
-    upgrades.temporaryBoosts.radarGoldUntil = until;
+
+  const updatedUpgrades = await PlayerUpgrades.findOneAndUpdate(
+    {
+      wallet: normalizedWallet,
+      $or: [
+        { [rewardConfig.boostPath]: { $exists: false } },
+        { [rewardConfig.boostPath]: null },
+        { [rewardConfig.boostPath]: { $lte: new Date() } }
+      ]
+    },
+    { $set: { [rewardConfig.boostPath]: until } },
+    { new: true }
+  );
+
+  if (!updatedUpgrades) {
+    const latestUpgrades = await PlayerUpgrades.findOne({ wallet: normalizedWallet }).select(rewardConfig.boostPath).lean();
+    const latestUntil = rewardConfig.stateGiftPath === 'radarObstacles'
+      ? latestUpgrades?.temporaryBoosts?.radarObstaclesUntil
+      : latestUpgrades?.temporaryBoosts?.radarGoldUntil;
+    return { alreadyClaimed: true, until: latestUntil || until };
   }
-  await upgrades.save();
-  await state.save();
+
+  state.gifts[rewardConfig.stateGiftPath].claimed = true;
+  state.gifts[rewardConfig.stateGiftPath].activeUntil = until;
   return { alreadyClaimed: false, until };
 }
 
