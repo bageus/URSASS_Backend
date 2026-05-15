@@ -149,12 +149,23 @@ router.post('/claim', asyncHandler(async (req, res) => {
     const wallet = identity.wallet || primaryId;
     const state = await getOrCreateOnboardingState(primaryId);
     const claim = await claimReward({ state, primaryId, wallet, reward });
-    logger.info({ primaryId, wallet, reward, until: claim.until || null }, 'Onboarding reward claim processed');
+    logger.info({
+      primaryId,
+      wallet,
+      reward,
+      alreadyClaimed: claim.alreadyClaimed,
+      until: claim.until || null
+    }, 'Onboarding reward claim processed');
     if (!claim.alreadyClaimed) {
       await trackOnboardingEvent('onboarding_reward_claimed', { primaryId, reward, flowVersion: state.flowVersion || 'v2' });
       await trackOnboardingEvent('radar_gift_claimed', { primaryId, reward, flowVersion: state.flowVersion || 'v2' });
     }
-    return res.json({ success: true, reward, ...claim });
+    return res.json({
+      success: true,
+      reward,
+      alreadyClaimed: claim.alreadyClaimed,
+      until: claim.until || null
+    });
 }));
 
 module.exports = router;

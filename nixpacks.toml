@@ -1,0 +1,12 @@
+[phases.setup]
+aptPkgs = [
+  "fontconfig",
+  "fonts-dejavu-core",
+  "fonts-liberation"
+]
+
+[phases.build]
+cmds = [
+  "fc-cache -f -v || true",
+  "npm run check:syntax"
+]

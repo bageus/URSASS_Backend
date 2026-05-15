@@ -9,6 +9,7 @@ const { getUtcDayKey, getYesterdayUtcDayKey } = require('../utils/utcDay');
 const { buildWebReferralUrl, buildTelegramReferralUrl } = require('../utils/referral');
 const { grantGoldReward } = require('../utils/goldRewards');
 const logger = require('../utils/logger');
+const { renderShareScoreImage } = require('../utils/shareImageRenderer');
 
 const SHARE_REWARD_DELAY_MS = Number(process.env.SHARE_REWARD_DELAY_MS || 30000);
 const SHARE_DAILY_REWARD_GOLD = Number(process.env.SHARE_DAILY_REWARD_GOLD || 20);
@@ -110,7 +111,7 @@ router.post('/start', shareStartLimiter, async (req, res) => {
     const baseUrl = getPublicBaseUrl(req);
     const walletAddress = link.wallet || null;
     const referralCode = player.referralCode || '';
-    const previewImageUrl = `${baseUrl}/img/score_result1600x800.png`;
+    let previewImageUrl = `${baseUrl}/img/score_result1600x800.png`;
     const shareId = crypto.randomUUID();
     const webShareUrl = `${baseUrl}/share/${shareId}`;
     const telegramShareUrl = buildTelegramReferralUrl();
@@ -118,6 +119,13 @@ router.post('/start', shareStartLimiter, async (req, res) => {
     const hasConnectedXAccount = Boolean(player.xUserId);
     const shouldUsePaidXApi = shouldUseXApiShare() && hasConnectedXAccount;
     const intentUrl = shouldUsePaidXApi ? null : `https://twitter.com/intent/tweet?text=${encodeURIComponent(postText)}`;
+
+    try {
+      const rendered = await renderShareScoreImage({ shareId, score: scoreAtShare });
+      previewImageUrl = `${baseUrl}${rendered.relativeUrl}`;
+    } catch (renderError) {
+      logger.warn({ err: renderError?.message, shareId, requestId: req.requestId }, 'Share image render fallback to base template');
+    }
 
     await ShareEvent.create({
       primaryId,
