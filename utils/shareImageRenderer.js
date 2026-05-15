@@ -13,9 +13,9 @@ const RENDER_VERSION = 'score-v8-lower-left-tilt';
 
 const SCORE_BOX = {
   x: 485,
-  y: 335,
+  y: 355,
   width: 560,
-  height: 165
+  height: 185
 };
 
 const DIGIT_WIDTH = 72;
