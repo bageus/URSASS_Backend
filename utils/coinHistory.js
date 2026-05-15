@@ -3,6 +3,20 @@ const AccountLink = require('../models/AccountLink');
 const logger = require('./logger');
 
 
+const PLAYER_MENU_INCOME_TYPES = [
+  'share',
+  'share_reward',
+  'referral',
+  'referral_bonus',
+  'refer',
+  'task',
+  'onboarding_bonus',
+  'onboarding',
+  'race_reward',
+  'game_reward'
+];
+
+
 function normalizeId(value) {
   return String(value || '').trim().toLowerCase();
 }
@@ -70,4 +84,10 @@ async function recordCoinReward(primaryId, type, amounts = {}, opts = {}) {
   }
 }
 
-module.exports = { recordCoinReward, normalizeId, uniqueNormalizedIds, resolveCoinHistoryIds };
+module.exports = {
+  recordCoinReward,
+  normalizeId,
+  uniqueNormalizedIds,
+  resolveCoinHistoryIds,
+  PLAYER_MENU_INCOME_TYPES
+};
