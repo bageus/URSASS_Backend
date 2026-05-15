@@ -42,14 +42,20 @@ test('GET /api/account/me/coin-history - returns wallet-saved rows for wallet au
     };
 
     CoinTransaction.find = (query) => {
-      assert.deepEqual(query, { primaryId: { $in: ['0xabc'] } });
+      assert.deepEqual(query, {
+        primaryId: { $in: ['0xabc'] },
+        type: { $in: [
+          'share', 'share_reward', 'referral', 'referral_bonus', 'refer', 'task', 'onboarding_bonus', 'onboarding', 'race_reward', 'game_reward'
+        ] },
+        $or: [{ gold: { $gt: 0 } }, { silver: { $gt: 0 } }]
+      });
       return {
         sort: () => ({
           limit: (value) => {
             assert.equal(value, 50);
             return {
               select: async () => ([
-                { type: 'ride', gold: 5, silver: 3, createdAt: new Date('2026-04-28T09:00:00Z') }
+                { type: 'share', gold: 5, silver: 3, createdAt: new Date('2026-04-28T09:00:00Z') }
               ])
             };
           }
@@ -60,7 +66,8 @@ test('GET /api/account/me/coin-history - returns wallet-saved rows for wallet au
     const r = await get(baseUrl, '/api/account/me/coin-history', { 'X-Wallet': '0xAbC' });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.items.length, 1);
-    assert.equal(r.body.items[0].type, 'ride');
+    assert.equal(r.body.items[0].type, 'share');
+    assert.equal(r.body.items[0].direction, 'income');
   } finally {
     AccountLink.findOne = originalFindOne;
     CoinTransaction.find = originalFind;
@@ -79,7 +86,13 @@ test('GET /api/account/me/coin-history - returns wallet-saved rows for linked Te
     };
 
     CoinTransaction.find = (query) => {
-      assert.deepEqual(query, { primaryId: { $in: ['tg_777', '0xabc'] } });
+      assert.deepEqual(query, {
+        primaryId: { $in: ['tg_777', '0xabc'] },
+        type: { $in: [
+          'share', 'share_reward', 'referral', 'referral_bonus', 'refer', 'task', 'onboarding_bonus', 'onboarding', 'race_reward', 'game_reward'
+        ] },
+        $or: [{ gold: { $gt: 0 } }, { silver: { $gt: 0 } }]
+      });
       return {
         sort: () => ({
           limit: () => ({
@@ -113,7 +126,13 @@ test('GET /api/account/me/coin-history - empty history returns items array', asy
     };
 
     CoinTransaction.find = (query) => {
-      assert.deepEqual(query, { primaryId: { $in: ['tg_empty'] } });
+      assert.deepEqual(query, {
+        primaryId: { $in: ['tg_empty'] },
+        type: { $in: [
+          'share', 'share_reward', 'referral', 'referral_bonus', 'refer', 'task', 'onboarding_bonus', 'onboarding', 'race_reward', 'game_reward'
+        ] },
+        $or: [{ gold: { $gt: 0 } }, { silver: { $gt: 0 } }]
+      });
       return {
         sort: () => ({
           limit: () => ({
@@ -126,6 +145,76 @@ test('GET /api/account/me/coin-history - empty history returns items array', asy
     const r = await get(baseUrl, '/api/account/me/coin-history', { 'X-Primary-Id': 'tg_empty' });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.deepEqual(r.body, { items: [] });
+  } finally {
+    AccountLink.findOne = originalFindOne;
+    CoinTransaction.find = originalFind;
+    server.close();
+  }
+});
+
+
+test('GET /api/account/me/coin-history - filters income only, keeps limit and createdAt desc', async () => {
+  const { server, baseUrl } = await startServer();
+  const originalFindOne = AccountLink.findOne;
+  const originalFind = CoinTransaction.find;
+  try {
+    AccountLink.findOne = async (q) => {
+      if (q.primaryId === 'tg_filter') return { primaryId: 'tg_filter', wallet: null, telegramId: '999' };
+      return null;
+    };
+
+    CoinTransaction.find = (query) => {
+      assert.deepEqual(query, {
+        primaryId: { $in: ['tg_filter'] },
+        type: { $in: ['share','share_reward','referral','referral_bonus','refer','task','onboarding_bonus','onboarding','race_reward','game_reward'] },
+        $or: [{ gold: { $gt: 0 } }, { silver: { $gt: 0 } }]
+      });
+      return {
+        sort: (sortArg) => {
+          assert.deepEqual(sortArg, { createdAt: -1 });
+          return {
+            limit: (v) => {
+              assert.equal(v, 3);
+              return {
+                select: async () => ([
+                  { type: 'task', gold: 10, silver: 0, createdAt: new Date('2026-05-01T10:00:00Z') },
+                  { type: 'referral', gold: 100, silver: 0, createdAt: new Date('2026-05-01T09:00:00Z') },
+                  { type: 'onboarding_bonus', gold: 0, silver: 100, createdAt: new Date('2026-05-01T08:00:00Z') }
+                ])
+              };
+            }
+          };
+        }
+      };
+    };
+
+    const r = await get(baseUrl, '/api/account/me/coin-history?limit=3', { 'X-Primary-Id': 'tg_filter' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.items.length, 3);
+    assert.deepEqual(r.body.items.map((i) => i.type), ['task', 'referral', 'onboarding_bonus']);
+    assert.ok(r.body.items.every((i) => i.direction === 'income'));
+  } finally {
+    AccountLink.findOne = originalFindOne;
+    CoinTransaction.find = originalFind;
+    server.close();
+  }
+});
+
+
+test('GET /api/account/me/coin-history?mode=all - includes unfiltered rows', async () => {
+  const { server, baseUrl } = await startServer();
+  const originalFindOne = AccountLink.findOne;
+  const originalFind = CoinTransaction.find;
+  try {
+    AccountLink.findOne = async (q) => (q.primaryId === 'tg_all' ? { primaryId: 'tg_all', wallet: null, telegramId: '111' } : null);
+    CoinTransaction.find = (query) => {
+      assert.deepEqual(query, { primaryId: { $in: ['tg_all'] } });
+      return { sort: () => ({ limit: () => ({ select: async () => ([{ type: 'buy', gold: 400, silver: 0, createdAt: new Date('2026-05-02T00:00:00Z') }]) }) }) };
+    };
+
+    const r = await get(baseUrl, '/api/account/me/coin-history?mode=all', { 'X-Primary-Id': 'tg_all' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.items[0].type, 'buy');
   } finally {
     AccountLink.findOne = originalFindOne;
     CoinTransaction.find = originalFind;

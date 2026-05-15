@@ -21,7 +21,7 @@ const { computeRank } = require('../services/leaderboardInsightsService');
 const { buildReferralUrl, buildCanonicalShareUrl, buildWebReferralUrl, buildTelegramReferralUrl } = require('../utils/referral');
 const { getUtcDayKey, getYesterdayUtcDayKey } = require('../utils/utcDay');
 const { findLink } = require('../middleware/requireAuth');
-const { resolveCoinHistoryIds } = require('../utils/coinHistory');
+const { resolveCoinHistoryIds, PLAYER_MENU_INCOME_TYPES } = require('../utils/coinHistory');
 
 const WALLET_TIMESTAMP_WINDOW_MS = Number(process.env.WALLET_AUTH_TIMESTAMP_WINDOW_MS || 10 * 60 * 1000);
 
@@ -422,9 +422,22 @@ router.get('/me/coin-history', readLimiter, requireAuth, async (req, res) => {
     const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.floor(rawLimit), 1), 200) : 50;
 
     const historyIds = await resolveCoinHistoryIds({ primaryId, authLink: req.authLink });
+    const mode = String(req.query?.mode || 'income').trim().toLowerCase();
+    const includeAll = mode === 'all';
+
+    const query = includeAll
+      ? { primaryId: { $in: historyIds } }
+      : {
+        primaryId: { $in: historyIds },
+        type: { $in: PLAYER_MENU_INCOME_TYPES },
+        $or: [
+          { gold: { $gt: 0 } },
+          { silver: { $gt: 0 } }
+        ]
+      };
 
     const rows = await CoinTransaction
-      .find({ primaryId: { $in: historyIds } })
+      .find(query)
       .sort({ createdAt: -1 })
       .limit(limit)
       .select('type gold silver createdAt');
@@ -434,6 +447,7 @@ router.get('/me/coin-history', readLimiter, requireAuth, async (req, res) => {
         type: row.type,
         gold: row.gold || 0,
         silver: row.silver || 0,
+        direction: includeAll ? ((row.gold || 0) > 0 || (row.silver || 0) > 0 ? 'income' : 'spending') : 'income',
         createdAt: row.createdAt
       }))
     });
