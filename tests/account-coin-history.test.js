@@ -44,10 +44,9 @@ test('GET /api/account/me/coin-history - returns wallet-saved rows for wallet au
     CoinTransaction.find = (query) => {
       assert.deepEqual(query, {
         primaryId: { $in: ['0xabc'] },
-        type: { $in: [
-          'share', 'share_reward', 'referral', 'referral_bonus', 'refer', 'task', 'onboarding_bonus', 'onboarding', 'race_reward', 'game_reward'
-        ] },
-        $or: [{ gold: { $gt: 0 } }, { silver: { $gt: 0 } }]
+        $or: [{ gold: { $gt: 0 } }, { silver: { $gt: 0 } }],
+        direction: { $ne: 'spending' },
+        type: { $nin: ['store_purchase', 'upgrade_purchase', 'purchase_spend', 'spend', 'cost'] }
       });
       return {
         sort: () => ({
@@ -88,10 +87,9 @@ test('GET /api/account/me/coin-history - returns wallet-saved rows for linked Te
     CoinTransaction.find = (query) => {
       assert.deepEqual(query, {
         primaryId: { $in: ['tg_777', '0xabc'] },
-        type: { $in: [
-          'share', 'share_reward', 'referral', 'referral_bonus', 'refer', 'task', 'onboarding_bonus', 'onboarding', 'race_reward', 'game_reward'
-        ] },
-        $or: [{ gold: { $gt: 0 } }, { silver: { $gt: 0 } }]
+        $or: [{ gold: { $gt: 0 } }, { silver: { $gt: 0 } }],
+        direction: { $ne: 'spending' },
+        type: { $nin: ['store_purchase', 'upgrade_purchase', 'purchase_spend', 'spend', 'cost'] }
       });
       return {
         sort: () => ({
@@ -128,10 +126,9 @@ test('GET /api/account/me/coin-history - empty history returns items array', asy
     CoinTransaction.find = (query) => {
       assert.deepEqual(query, {
         primaryId: { $in: ['tg_empty'] },
-        type: { $in: [
-          'share', 'share_reward', 'referral', 'referral_bonus', 'refer', 'task', 'onboarding_bonus', 'onboarding', 'race_reward', 'game_reward'
-        ] },
-        $or: [{ gold: { $gt: 0 } }, { silver: { $gt: 0 } }]
+        $or: [{ gold: { $gt: 0 } }, { silver: { $gt: 0 } }],
+        direction: { $ne: 'spending' },
+        type: { $nin: ['store_purchase', 'upgrade_purchase', 'purchase_spend', 'spend', 'cost'] }
       });
       return {
         sort: () => ({
@@ -166,8 +163,9 @@ test('GET /api/account/me/coin-history - filters income only, keeps limit and cr
     CoinTransaction.find = (query) => {
       assert.deepEqual(query, {
         primaryId: { $in: ['tg_filter'] },
-        type: { $in: ['share','share_reward','referral','referral_bonus','refer','task','onboarding_bonus','onboarding','race_reward','game_reward'] },
-        $or: [{ gold: { $gt: 0 } }, { silver: { $gt: 0 } }]
+        $or: [{ gold: { $gt: 0 } }, { silver: { $gt: 0 } }],
+        direction: { $ne: 'spending' },
+        type: { $nin: ['store_purchase', 'upgrade_purchase', 'purchase_spend', 'spend', 'cost'] }
       });
       return {
         sort: (sortArg) => {
