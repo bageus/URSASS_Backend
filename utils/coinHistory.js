@@ -3,18 +3,7 @@ const AccountLink = require('../models/AccountLink');
 const logger = require('./logger');
 
 
-const PLAYER_MENU_INCOME_TYPES = [
-  'share',
-  'share_reward',
-  'referral',
-  'referral_bonus',
-  'refer',
-  'task',
-  'onboarding_bonus',
-  'onboarding',
-  'race_reward',
-  'game_reward'
-];
+const SPENDING_HISTORY_TYPES = ['store_purchase', 'upgrade_purchase', 'purchase_spend', 'spend', 'cost'];
 
 
 function normalizeId(value) {
@@ -74,6 +63,7 @@ async function recordCoinReward(primaryId, type, amounts = {}, opts = {}) {
       reason: opts.reason || null,
       gold,
       silver,
+      direction: opts.direction === 'spending' ? 'spending' : 'income',
       createdAt: opts.createdAt || new Date()
     });
 
@@ -89,5 +79,5 @@ module.exports = {
   normalizeId,
   uniqueNormalizedIds,
   resolveCoinHistoryIds,
-  PLAYER_MENU_INCOME_TYPES
+  SPENDING_HISTORY_TYPES
 };

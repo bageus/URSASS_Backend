@@ -786,7 +786,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
 
     if (coins.gold > 0 || coins.silver > 0) {
       await safeSideEffect('coin_history_ride', async () => {
-        await recordCoinReward(walletLower, 'ride', { gold: coins.gold, silver: coins.silver }, { requestId: req.requestId });
+        await recordCoinReward(walletLower, 'race_reward', { gold: coins.gold, silver: coins.silver }, { requestId: req.requestId, direction: 'income' });
       });
     }
 
