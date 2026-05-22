@@ -4,11 +4,11 @@ const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const Player = require('../models/Player');
 const ShareEvent = require('../models/ShareEvent');
-const AccountLink = require('../models/AccountLink');
 const { getUtcDayKey, getYesterdayUtcDayKey } = require('../utils/utcDay');
 const { buildWebReferralUrl, buildTelegramReferralUrl } = require('../utils/referral');
 const { grantGoldReward } = require('../utils/goldRewards');
 const logger = require('../utils/logger');
+const { requireAuth } = require('../middleware/requireAuth');
 const { renderShareScoreImage } = require('../utils/shareImageRenderer');
 
 const SHARE_REWARD_DELAY_MS = Number(process.env.SHARE_REWARD_DELAY_MS || 30000);
@@ -46,26 +46,6 @@ const shareConfirmLimiter = rateLimit({
   keyGenerator: getClientIp
 });
 
-/**
- * Resolve authenticated primaryId from request headers or body.
- * Returns AccountLink if valid, null otherwise.
- */
-async function resolveAuth(req) {
-  const primaryId = (
-    req.get('x-primary-id') ||
-    req.get('X-Primary-Id') ||
-    req.body?.primaryId ||
-    ''
-  ).trim().toLowerCase();
-
-  if (!primaryId) return null;
-
-  const link = await AccountLink.findOne({ primaryId });
-  if (!link) return null;
-
-  return link;
-}
-
 function getPublicBaseUrl(req) {
   const configured = (process.env.PUBLIC_BASE_URL || process.env.APP_BASE_URL || '').trim();
   if (configured) return configured.replace(/\/+$/, '');
@@ -91,14 +71,10 @@ function buildSharePostText(score, referralCode, webShareUrl) {
  * POST /api/share/start
  * Begin a share flow. Creates a ShareEvent and returns share metadata.
  */
-router.post('/start', shareStartLimiter, async (req, res) => {
+router.post('/start', shareStartLimiter, requireAuth, async (req, res) => {
   try {
-    const link = await resolveAuth(req);
-    if (!link) {
-      return res.status(401).json({ error: 'Authentication required' });
-    }
-
-    const primaryId = link.primaryId;
+    const link = req.authLink;
+    const primaryId = req.primaryId;
 
     const player = await Player.findOne({ wallet: primaryId });
     if (!player) {
@@ -192,14 +168,10 @@ router.post('/start', shareStartLimiter, async (req, res) => {
  * Confirm a share and award gold if eligible.
  * Uses atomic findOneAndUpdate to prevent double-awarding in race conditions.
  */
-router.post('/confirm', shareConfirmLimiter, async (req, res) => {
+router.post('/confirm', shareConfirmLimiter, requireAuth, async (req, res) => {
   try {
-    const link = await resolveAuth(req);
-    if (!link) {
-      return res.status(401).json({ error: 'Authentication required' });
-    }
-
-    const primaryId = link.primaryId;
+    const link = req.authLink;
+    const primaryId = req.primaryId;
     const shareId = String(req.body?.shareId || '').trim();
 
     if (!shareId) {
