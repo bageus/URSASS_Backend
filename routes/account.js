@@ -20,8 +20,8 @@ const { validateTelegramInitData } = require('../utils/telegramAuth');
 const { computeRank } = require('../services/leaderboardInsightsService');
 const { buildReferralUrl, buildCanonicalShareUrl, buildWebReferralUrl, buildTelegramReferralUrl } = require('../utils/referral');
 const { getUtcDayKey, getYesterdayUtcDayKey } = require('../utils/utcDay');
-const { findLink } = require('../middleware/requireAuth');
-const { resolveCoinHistoryIds, PLAYER_MENU_INCOME_TYPES } = require('../utils/coinHistory');
+const { resolveCoinHistoryIds, SPENDING_HISTORY_TYPES } = require('../utils/coinHistory');
+const { signSessionToken, SESSION_TTL_SECONDS } = require('../utils/sessionToken');
 
 const WALLET_TIMESTAMP_WINDOW_MS = Number(process.env.WALLET_AUTH_TIMESTAMP_WINDOW_MS || 10 * 60 * 1000);
 
@@ -30,7 +30,8 @@ function buildAccountAuthResponse({
   account,
   telegramId = null,
   telegramUsername = null,
-  displayName = null
+  displayName = null,
+  sessionToken = null
 }) {
   return {
     success: true,
@@ -39,7 +40,9 @@ function buildAccountAuthResponse({
     telegramUsername: telegramUsername || null,
     wallet: account.wallet || null,
     isLinked: Boolean(account.isLinked),
-    displayName: displayName || null
+    displayName: displayName || null,
+    sessionToken,
+    expiresInSeconds: sessionToken ? SESSION_TTL_SECONDS : undefined
   };
 }
 
@@ -82,11 +85,19 @@ router.post('/auth/telegram', readLimiter, async (req, res) => {
 
     logger.info({ telegramId, displayName: firstName || username || 'anon', primaryId: account.primaryId }, 'Telegram auth');
 
+    const sessionToken = signSessionToken({
+      primaryId: account.primaryId,
+      wallet: account.wallet || null,
+      telegramId,
+      authMode: 'telegram'
+    });
+
     res.json(buildAccountAuthResponse({
       account,
       telegramId,
       telegramUsername: username,
-      displayName: firstName || username || `TG#${telegramId}`
+      displayName: firstName || username || `TG#${telegramId}`,
+      sessionToken
     }));
 
   } catch (error) {
@@ -131,10 +142,18 @@ router.post('/auth/wallet', readLimiter, async (req, res) => {
 
     logger.info({ wallet: walletLower, primaryId: account.primaryId }, 'Wallet auth');
 
+    const sessionToken = signSessionToken({
+      primaryId: account.primaryId,
+      wallet: account.wallet || null,
+      telegramId: account.telegramId || null,
+      authMode: 'wallet'
+    });
+
     res.json(buildAccountAuthResponse({
       account,
       telegramUsername: link ? link.telegramUsername : null,
-      displayName: (link && link.telegramUsername) ? `@${link.telegramUsername}` : account.wallet
+      displayName: (link && link.telegramUsername) ? `@${link.telegramUsername}` : account.wallet,
+      sessionToken
     }));
 
   } catch (error) {
@@ -429,26 +448,28 @@ router.get('/me/coin-history', readLimiter, requireAuth, async (req, res) => {
       ? { primaryId: { $in: historyIds } }
       : {
         primaryId: { $in: historyIds },
-        type: { $in: PLAYER_MENU_INCOME_TYPES },
         $or: [
           { gold: { $gt: 0 } },
           { silver: { $gt: 0 } }
-        ]
+        ],
+        direction: { $ne: 'spending' },
+        type: { $nin: SPENDING_HISTORY_TYPES }
       };
 
     const rows = await CoinTransaction
       .find(query)
       .sort({ createdAt: -1 })
       .limit(limit)
-      .select('type gold silver createdAt');
+      .select('type direction gold silver createdAt reason');
 
     return res.json({
       items: rows.map((row) => ({
         type: row.type,
         gold: row.gold || 0,
         silver: row.silver || 0,
-        direction: includeAll ? ((row.gold || 0) > 0 || (row.silver || 0) > 0 ? 'income' : 'spending') : 'income',
-        createdAt: row.createdAt
+        direction: row.direction || (includeAll ? (((row.gold || 0) > 0 || (row.silver || 0) > 0) ? 'income' : 'spending') : 'income'),
+        createdAt: row.createdAt,
+        reason: row.reason || null
       }))
     });
   } catch (error) {

@@ -364,7 +364,7 @@ async function creditDonationPayment(payment, options = {}) {
   player.totalSilverCoins += silver;
   player.updatedAt = rewardGrantedAt;
   await player.save();
-  await recordCoinReward(payment.wallet, 'buy', { gold, silver }, { requestId: options.requestId, createdAt: rewardGrantedAt });
+  await recordCoinReward(payment.wallet, 'buy', { gold, silver }, { requestId: options.requestId, createdAt: rewardGrantedAt, direction: 'spending' });
 
   return rewardUpdate;
 }

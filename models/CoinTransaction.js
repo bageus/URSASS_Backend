@@ -1,6 +1,25 @@
 const mongoose = require('mongoose');
 
-const COIN_TRANSACTION_TYPES = ['share', 'ride', 'buy', 'referral', 'refer', 'task', 'onboarding_bonus'];
+const COIN_TRANSACTION_TYPES = [
+  'share',
+  'ride',
+  'race_reward',
+  'bonus_reward',
+  'buy',
+  'referral',
+  'refer',
+  'task',
+  'onboarding_bonus',
+  'share_reward',
+  'referral_bonus',
+  'onboarding',
+  'game_reward',
+  'store_purchase',
+  'upgrade_purchase',
+  'purchase_spend',
+  'spend',
+  'cost'
+];
 const ONBOARDING_BONUS_REASONS = ['second_race_bonus', 'third_race_bonus'];
 
 const coinTransactionSchema = new mongoose.Schema({
@@ -10,6 +29,7 @@ const coinTransactionSchema = new mongoose.Schema({
   reason: { type: String, default: null, enum: [...ONBOARDING_BONUS_REASONS, null] },
   gold: { type: Number, required: true, min: 0, default: 0 },
   silver: { type: Number, required: true, min: 0, default: 0 },
+  direction: { type: String, enum: ['income', 'spending'], default: 'income', index: true },
   createdAt: { type: Date, default: Date.now, index: true }
 }, { versionKey: false });
 
