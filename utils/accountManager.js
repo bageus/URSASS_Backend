@@ -125,21 +125,45 @@ function buildAccountSummary({ primaryId, telegramId = null, wallet = null, isLi
 }
 
 async function ensurePlayerExists(primaryId) {
-  let player = await Player.findOne({ wallet: primaryId });
-  if (!player) {
-    player = buildNewPlayer(primaryId);
-    await player.save();
+  if (typeof Player.findOneAndUpdate !== 'function') {
+    let player = await Player.findOne({ wallet: primaryId });
+    if (!player) {
+      player = buildNewPlayer(primaryId);
+      await player.save();
+    }
+    return player;
   }
-  return player;
+  return Player.findOneAndUpdate(
+    { wallet: primaryId },
+    {
+      $setOnInsert: {
+        wallet: primaryId,
+        bestScore: 0,
+        bestDistance: 0,
+        totalGoldCoins: 0,
+        totalSilverCoins: 0,
+        gamesPlayed: 0,
+        gameHistory: []
+      }
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
 }
 
 async function ensureUpgradesExist(primaryId) {
-  let upgrades = await PlayerUpgrades.findOne({ wallet: primaryId });
-  if (!upgrades) {
-    upgrades = new PlayerUpgrades({ wallet: primaryId });
-    await upgrades.save();
+  if (typeof PlayerUpgrades.findOneAndUpdate !== 'function') {
+    let upgrades = await PlayerUpgrades.findOne({ wallet: primaryId });
+    if (!upgrades) {
+      upgrades = new PlayerUpgrades({ wallet: primaryId });
+      await upgrades.save();
+    }
+    return upgrades;
   }
-  return upgrades;
+  return PlayerUpgrades.findOneAndUpdate(
+    { wallet: primaryId },
+    { $setOnInsert: { wallet: primaryId } },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
 }
 
 async function ensureAccountResources(primaryId) {
@@ -229,8 +253,24 @@ async function getOrCreateTelegramAccount(telegramId) {
 
   // Создаём новую
   const primaryId = `tg_${tgIdStr}`;
-  link = buildAccountLink({ primaryId, telegramId: tgIdStr });
-  await link.save();
+  if (typeof AccountLink.findOneAndUpdate === 'function') {
+    link = await AccountLink.findOneAndUpdate(
+    { telegramId: tgIdStr },
+    {
+      $setOnInsert: {
+        telegramId: tgIdStr,
+        wallet: null,
+        primaryId,
+        masterSource: null,
+        linkedAt: null
+      }
+    },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+  } else {
+    link = buildAccountLink({ primaryId, telegramId: tgIdStr });
+    await link.save();
+  }
 
   await ensureAccountResources(primaryId);
 
@@ -256,8 +296,24 @@ async function getOrCreateWalletAccount(walletAddress) {
 
   // Создаём новую связку — primaryId = адрес кошелька
   const primaryId = wallet;
-  link = buildAccountLink({ primaryId, wallet });
-  await link.save();
+  if (typeof AccountLink.findOneAndUpdate === 'function') {
+    link = await AccountLink.findOneAndUpdate(
+    { wallet },
+    {
+      $setOnInsert: {
+        telegramId: null,
+        wallet,
+        primaryId,
+        masterSource: null,
+        linkedAt: null
+      }
+    },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+  } else {
+    link = buildAccountLink({ primaryId, wallet });
+    await link.save();
+  }
 
   await ensureAccountResources(primaryId);
 
