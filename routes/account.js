@@ -382,15 +382,16 @@ router.get('/me/profile', readLimiter, requireAuth, async (req, res) => {
     const totalGoldCoins = player.totalGoldCoins || 0;
     const totalSilverCoins = player.totalSilverCoins || 0;
     const rewardGold = player.gold || 0;
-    const visibleGold = totalGoldCoins + rewardGold;
 
     return res.json({
       primaryId,
       rank: rank || null,
       totalRankedPlayers: totalRankedPlayers || 0,
       bestScore: player.bestScore || 0,
-      gold: visibleGold,
+      gold: totalGoldCoins,
       silver: totalSilverCoins,
+      spendableGold: totalGoldCoins,
+      spendableSilver: totalSilverCoins,
       rewardGold,
       totalGoldCoins,
       totalSilverCoins,
