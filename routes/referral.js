@@ -1,46 +1,20 @@
 const express = require('express');
 const router = express.Router();
 const Player = require('../models/Player');
-const AccountLink = require('../models/AccountLink');
 const ReferralReward = require('../models/ReferralReward');
 const { grantGoldReward } = require('../utils/goldRewards');
 const { readLimiter, writeLimiter } = require('../middleware/rateLimiter');
 const logger = require('../utils/logger');
-
-/**
- * Resolve the authenticated primaryId from the request.
- * Accepts X-Primary-Id header or body.primaryId.
- * Returns the AccountLink if valid, null otherwise.
- */
-async function resolveAuth(req) {
-  const primaryId = (
-    req.get('x-primary-id') ||
-    req.get('X-Primary-Id') ||
-    req.body?.primaryId ||
-    ''
-  ).trim().toLowerCase();
-
-  if (!primaryId) return null;
-
-  const link = await AccountLink.findOne({ primaryId });
-  if (!link) return null;
-
-  return link;
-}
+const { requireAuth } = require('../middleware/requireAuth');
 
 /**
  * POST /api/referral/track
  * Attach a referralCode (referredBy) to the current player.
  * Rewards are NOT granted here — they happen after the first valid run.
  */
-router.post('/track', writeLimiter, async (req, res) => {
+router.post('/track', writeLimiter, requireAuth, async (req, res) => {
   try {
-    const link = await resolveAuth(req);
-    if (!link) {
-      return res.status(401).json({ error: 'Authentication required' });
-    }
-
-    const currentPrimaryId = link.primaryId;
+    const currentPrimaryId = req.primaryId;
     const ref = String(req.body?.ref || '').trim().toUpperCase();
 
     if (!ref) {
@@ -90,12 +64,9 @@ router.post('/track', writeLimiter, async (req, res) => {
   }
 });
 
-router.post('/apply', writeLimiter, async (req, res) => {
+router.post('/apply', writeLimiter, requireAuth, async (req, res) => {
   try {
-    const link = await resolveAuth(req);
-    if (!link) return res.status(401).json({ error: 'authentication_required' });
-
-    const currentPrimaryId = String(link.primaryId || '').trim().toLowerCase();
+    const currentPrimaryId = String(req.primaryId || '').trim().toLowerCase();
     const referralCode = String(req.body?.referralCode || '').trim().toUpperCase();
     if (!/^[A-Z0-9_-]{1,64}$/.test(referralCode)) {
       return res.status(400).json({ error: 'invalid_referral_code' });

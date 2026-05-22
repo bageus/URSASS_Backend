@@ -20,6 +20,16 @@ function validateStartupConfig(env = process.env) {
     errors.push('Missing required env var in production: MONGO_URL');
   }
 
+  const sessionSecret = String(env.SESSION_SECRET || env.JWT_SECRET || '').trim();
+  if (isProduction && !sessionSecret) {
+    errors.push('Missing required env var in production: SESSION_SECRET or JWT_SECRET');
+  }
+
+  const legacyHeaderAuthAllowed = isTrue(env.ALLOW_LEGACY_HEADER_AUTH);
+  if (isProduction && legacyHeaderAuthAllowed) {
+    errors.push('ALLOW_LEGACY_HEADER_AUTH=true is forbidden in production');
+  }
+
   const telegramRequired = isTrue(env.REQUIRE_TELEGRAM_CONFIG);
   const telegramVars = [
     'TELEGRAM_BOT_TOKEN',
