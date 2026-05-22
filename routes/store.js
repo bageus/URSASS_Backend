@@ -8,6 +8,7 @@ const { listDonationProducts, listDonationPayments, createDonationPayment, submi
 const { verifySignature } = require('../utils/verifySignature');
 const { validateTelegramInitData } = require('../utils/telegramAuth');
 const { writeLimiter, readLimiter } = require('../middleware/rateLimiter');
+const { requireAuth } = require('../middleware/requireAuth');
 const SecurityEvent = require('../models/SecurityEvent');
 const CoinTransaction = require('../models/CoinTransaction');
 const logger = require('../utils/logger');
@@ -523,15 +524,18 @@ function createPurchaseAudit({ wallet, req, res, purchaseDetails }) {
  * GET /api/store/upgrades/:wallet
  * Get all upgrades + rides + effects
  */
-router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
+router.get('/upgrades/:wallet', readLimiter, requireAuth, async (req, res) => {
   try {
     const identifier = String(req.params.wallet || '').trim().toLowerCase();
-    const identity = await resolveStoreAccountIdentity(req);
-    if (!identity?.accountKey) {
-      return res.status(404).json({ error: 'Account not found' });
+    const accountKey = String(req.primaryId || '').trim().toLowerCase();
+    const linkedWallet = String(req.authLink?.wallet || '').trim().toLowerCase();
+    if (!accountKey) {
+      return res.status(401).json({ error: 'authentication_required' });
     }
-
-    const { accountKey, telegramUsername } = identity;
+    if (identifier && identifier !== accountKey && identifier !== linkedWallet) {
+      return res.status(403).json({ error: 'account_mismatch' });
+    }
+    const telegramUsername = String(req.authLink?.telegramUsername || '').trim();
 
     const upgrades = await getOrCreatePlayerUpgrades(accountKey);
     await prepareUpgrades(upgrades, { persist: true });
@@ -549,10 +553,10 @@ router.get('/upgrades/:wallet', readLimiter, async (req, res) => {
     logger.info({
       route: "GET /api/store/upgrades",
       identifier,
-      authMode: identity.authMode,
-      primaryId: identity.primaryId,
-      telegramId: identity.telegramId,
-      wallet: identity.wallet,
+      authMode: req.auth?.authMode || 'session',
+      primaryId: accountKey,
+      telegramId: req.authLink?.telegramId || '',
+      wallet: linkedWallet,
       accountKey,
       foundPlayer: Boolean(player),
       balance: { gold, silver },
@@ -1077,27 +1081,17 @@ function purchasePrice(config, tier, beforeSnapshot) {
 const consumeRideHandler = async (req, res) => {
   try {
     const { wallet, rideSessionId } = req.body;
-    if (!wallet) return res.status(400).json({ error: 'Missing wallet' });
+    const accountKey = String(req.primaryId || '').trim().toLowerCase();
+    if (!accountKey) return res.status(401).json({ error: 'authentication_required' });
 
-    const resolverReq = {
-      params: { wallet },
-      body: req.body,
-      get: (headerName) => req.get(headerName)
-    };
-    const identity = await resolveStoreAccountIdentity(resolverReq);
-    const accountKey = identity?.accountKey;
-    if (!accountKey) return res.status(404).json({ error: 'Account not found' });
-    const isLegacyUseRideRoute = req.path === '/use-ride';
-
-    let sessionId = null;
-    if (rideSessionId && typeof rideSessionId === 'string' && rideSessionId.trim().length >= 8) {
-      sessionId = rideSessionId.trim();
-    } else if (!isLegacyUseRideRoute) {
-      return res.status(400).json({
-        error: 'Missing or invalid rideSessionId',
-        details: 'Pass a unique rideSessionId for every game start to enable anti-cheat duplicate protection.'
-      });
+    const linkedWallet = String(req.authLink?.wallet || '').trim().toLowerCase();
+    const normalizedBodyWallet = String(wallet || '').trim().toLowerCase();
+    if (normalizedBodyWallet && normalizedBodyWallet !== accountKey && normalizedBodyWallet !== linkedWallet) {
+      return res.status(403).json({ error: 'account_mismatch' });
     }
+    if (typeof rideSessionId !== 'string') return res.status(400).json({ error: 'invalid_ride_session_id' });
+    const sessionId = rideSessionId.trim();
+    if (sessionId.length < 8 || sessionId.length > 128) return res.status(400).json({ error: 'invalid_ride_session_id' });
     const upgrades = await getOrCreatePlayerUpgrades(accountKey);
     await prepareUpgrades(upgrades);
     
@@ -1144,11 +1138,9 @@ const consumeRideHandler = async (req, res) => {
       return res.status(403).json({ error: 'Failed to consume ride' });
     }
     
-   if (sessionId) {
-      upgrades.recentRideSessionIds.push(sessionId);
-      if (upgrades.recentRideSessionIds.length > 30) {
-        upgrades.recentRideSessionIds = upgrades.recentRideSessionIds.slice(-30);
-      }
+    upgrades.recentRideSessionIds.push(sessionId);
+    if (upgrades.recentRideSessionIds.length > 30) {
+      upgrades.recentRideSessionIds = upgrades.recentRideSessionIds.slice(-30);
     }
     upgrades.updatedAt = new Date();
     await upgrades.save();
@@ -1156,13 +1148,9 @@ const consumeRideHandler = async (req, res) => {
     logger.info({ wallet: accountKey, freeRidesRemaining: upgrades.freeRidesRemaining, paidRidesRemaining: upgrades.paidRidesRemaining }, 'Ride consumed');
     
 
-    const antiCheat = sessionId
-      ? { duplicateSessionCheck: true, rideSessionId: sessionId }
-      : { duplicateSessionCheck: false, warning: 'Legacy /use-ride call without rideSessionId. Please migrate to /consume-ride with rideSessionId.' };
-
     res.json({
       success: true,
-      antiCheat,
+      antiCheat: { duplicateSessionCheck: true, rideSessionId: sessionId },
       rides: buildRidesData(upgrades)
     });
 
@@ -1172,21 +1160,30 @@ const consumeRideHandler = async (req, res) => {
   }
 };
 
-router.post('/consume-ride', writeLimiter, consumeRideHandler);
-router.post('/use-ride', writeLimiter, consumeRideHandler);
+router.post('/consume-ride', writeLimiter, requireAuth, consumeRideHandler);
+router.post('/use-ride', writeLimiter, requireAuth, (req, res, next) => {
+  const allowLegacyUseRide = String(process.env.ALLOW_LEGACY_USE_RIDE || 'false').trim().toLowerCase() === 'true';
+  if (!allowLegacyUseRide) {
+    return res.status(410).json({ error: 'legacy_use_ride_disabled' });
+  }
+  return consumeRideHandler(req, res, next);
+});
 
 /**
  * GET /api/store/rides/:wallet
  * Get rides info
  */
-router.get('/rides/:wallet', readLimiter, async (req, res) => {
+router.get('/rides/:wallet', readLimiter, requireAuth, async (req, res) => {
   try {
-    const identity = await resolveStoreAccountIdentity(req);
-    if (!identity?.accountKey) {
-      return res.status(404).json({ error: 'Account not found' });
+    const accountKey = String(req.primaryId || '').trim().toLowerCase();
+    if (!accountKey) return res.status(401).json({ error: 'authentication_required' });
+    const requestedWallet = String(req.params.wallet || '').trim().toLowerCase();
+    const linkedWallet = String(req.authLink?.wallet || '').trim().toLowerCase();
+    if (requestedWallet && requestedWallet !== accountKey && requestedWallet !== linkedWallet) {
+      return res.status(403).json({ error: 'account_mismatch' });
     }
 
-    const upgrades = await getOrCreatePlayerUpgrades(identity.accountKey);
+    const upgrades = await getOrCreatePlayerUpgrades(accountKey);
     await prepareUpgrades(upgrades, { persist: true });
 
     const ridesData = buildRidesData(upgrades);
