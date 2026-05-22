@@ -16,6 +16,7 @@ const { setDonationVerifierForTests, resetDonationVerifier } = require('../utils
 const { setTelegramStarsClientForTests } = require('../utils/telegramStarsService');
 const { resetTelegramWebhookReplayStore } = require('../utils/telegramWebhookReplay');
 const crypto = require('crypto');
+const { signSessionToken } = require('../utils/sessionToken');
 
 const { createApp } = require('../app');
 
@@ -28,6 +29,24 @@ function queryResult(result) {
   };
 }
 
+
+
+function makeTelegramInitData({ telegramId, botToken, authDate = Math.floor(Date.now() / 1000) }) {
+  const user = JSON.stringify({ id: Number(telegramId), first_name: 'Test' });
+  const params = new URLSearchParams();
+  params.set('auth_date', String(authDate));
+  params.set('query_id', 'AAEAAAE');
+  params.set('user', user);
+
+  const dataCheckString = [...params.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}=${value}`)
+    .join('\n');
+  const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
+  const hash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
+  params.set('hash', hash);
+  return params.toString();
+}
 async function startServer() {
   const app = createApp();
   return new Promise((resolve) => {
@@ -44,6 +63,8 @@ let donationPayments;
 test.before(() => {
   process.env.TELEGRAM_BOT_SECRET = 'test-secret';
   process.env.TELEGRAM_WEBHOOK_SECRET = 'webhook-secret';
+  process.env.TELEGRAM_BOT_TOKEN = 'test-bot-token';
+  process.env.SESSION_SECRET = 'test-session-secret';
   originalStartSession = mongoose.startSession;
   mongoose.startSession = async () => {
     const err = new Error('Transactions unsupported in tests');
@@ -326,6 +347,88 @@ Timestamp: ${timestamp}`;
   await server.close();
 });
 
+
+
+
+test('POST /api/leaderboard/save telegram auth requires proof and rejects raw telegramId+wallet', async () => {
+  GameResult.findOne = () => queryResult(null);
+  Player.findOne = () => queryResult(null);
+
+  const { server, baseUrl } = await startServer();
+  const res = await fetch(`${baseUrl}/api/leaderboard/save`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ wallet: '0x5555555555555555555555555555555555555555', score: 10, distance: 5, telegramId: '555', authMode: 'telegram', timestamp: Date.now() })
+  });
+  assert.equal(res.status, 401);
+  const body = await res.json();
+  assert.equal(body.error, 'Telegram auth proof required');
+  await server.close();
+});
+
+test('POST /api/leaderboard/save telegram auth rejects sessionToken primaryId mismatch', async () => {
+  AccountLink.findOne = async (q = {}) => (q.primaryId === '0x5555555555555555555555555555555555555555' && q.telegramId === '555' ? { primaryId: '0x5555555555555555555555555555555555555555', telegramId: '555', telegramUsername: 'validuser' } : null);
+  GameResult.findOne = () => queryResult(null);
+  Player.findOne = () => queryResult(null);
+
+  const token = signSessionToken({ primaryId: '0x4444444444444444444444444444444444444444', telegramId: '555', authMode: 'telegram' });
+  const { server, baseUrl } = await startServer();
+  const res = await fetch(`${baseUrl}/api/leaderboard/save`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ wallet: '0x5555555555555555555555555555555555555555', score: 10, distance: 5, telegramId: '555', authMode: 'telegram', timestamp: Date.now() })
+  });
+  assert.equal(res.status, 401);
+  await server.close();
+});
+
+test('POST /api/leaderboard/save telegram auth accepts valid initData with matching link', async () => {
+  AccountLink.findOne = async (q = {}) => (q.primaryId === '0x5555555555555555555555555555555555555555' && q.telegramId === '555' ? { primaryId: '0x5555555555555555555555555555555555555555', telegramId: '555', telegramUsername: 'validuser' } : null);
+  GameResult.findOne = () => queryResult(null);
+  Player.findOne = () => queryResult(null);
+
+  const initData = makeTelegramInitData({ telegramId: '555', botToken: process.env.TELEGRAM_BOT_TOKEN });
+  const { server, baseUrl } = await startServer();
+  const res = await fetch(`${baseUrl}/api/leaderboard/save`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-telegram-init-data': initData },
+    body: JSON.stringify({ wallet: '0x5555555555555555555555555555555555555555', score: 10, distance: 5, telegramId: '555', authMode: 'telegram', timestamp: Date.now() })
+  });
+  assert.equal(res.status, 200);
+  await server.close();
+});
+
+test('POST /api/leaderboard/save telegram auth rejects initData telegramId mismatch with body', async () => {
+  AccountLink.findOne = async () => ({ primaryId: '0x5555555555555555555555555555555555555555', telegramId: '555', telegramUsername: 'validuser' });
+  GameResult.findOne = () => queryResult(null);
+  Player.findOne = () => queryResult(null);
+
+  const initData = makeTelegramInitData({ telegramId: '555', botToken: process.env.TELEGRAM_BOT_TOKEN });
+  const { server, baseUrl } = await startServer();
+  const res = await fetch(`${baseUrl}/api/leaderboard/save`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-telegram-init-data': initData },
+    body: JSON.stringify({ wallet: '0x5555555555555555555555555555555555555555', score: 10, distance: 5, telegramId: '999', authMode: 'telegram', timestamp: Date.now() })
+  });
+  assert.equal(res.status, 401);
+  await server.close();
+});
+
+test('POST /api/leaderboard/save telegram auth accepts valid session token with matching link', async () => {
+  AccountLink.findOne = async (q = {}) => (q.primaryId === '0x5555555555555555555555555555555555555555' && q.telegramId === '555' ? { primaryId: '0x5555555555555555555555555555555555555555', telegramId: '555', telegramUsername: 'validuser' } : null);
+  GameResult.findOne = () => queryResult(null);
+  Player.findOne = () => queryResult(null);
+
+  const token = signSessionToken({ primaryId: '0x5555555555555555555555555555555555555555', telegramId: '555', authMode: 'telegram' });
+  const { server, baseUrl } = await startServer();
+  const res = await fetch(`${baseUrl}/api/leaderboard/save`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ wallet: '0x5555555555555555555555555555555555555555', score: 10, distance: 5, telegramId: '555', authMode: 'telegram', timestamp: Date.now() })
+  });
+  assert.equal(res.status, 200);
+  await server.close();
+});
 
 test('POST /api/store/buy returns insufficient funds', async () => {
   const wallet = Wallet.createRandom();
@@ -1584,6 +1687,8 @@ test('POST /api/telegram/webhook rejects requests with missing or invalid secret
   assert.equal(validSecret.status, 200);
 
   process.env.TELEGRAM_WEBHOOK_SECRET = 'webhook-secret';
+  process.env.TELEGRAM_BOT_TOKEN = 'test-bot-token';
+  process.env.SESSION_SECRET = 'test-session-secret';
   await server.close();
 });
 
