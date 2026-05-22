@@ -18,6 +18,7 @@ const Player = require('./models/Player');
 const ShareEvent = require('./models/ShareEvent');
 const { sanitizeReferralCode, buildReferralLandingUrl, isSocialPreviewCrawler } = require('./utils/referral');
 const { metricsMiddleware, renderMetricsText } = require('./middleware/requestMetrics');
+const { requireMongoReady } = require('./middleware/requireMongoReady');
 const { renderScoreSharePng } = require('./utils/shareCard');
 const { getPublicTelegramAnalyticsConfig } = require('./src/config/analytics');
 
@@ -57,22 +58,27 @@ function getPublicBaseUrl(req) {
 
 function getRouteRegistry() {
   return [
-    { path: '/leaderboard', router: leaderboardRoutes },
-    { path: '/store', router: storeRoutes },
-    { path: '/account', router: accountRoutes },
-    { path: '/game', router: gameRoutes },
+    { path: '/leaderboard', router: leaderboardRoutes, requireMongo: true },
+    { path: '/store', router: storeRoutes, requireMongo: true },
+    { path: '/account', router: accountRoutes, requireMongo: true },
+    { path: '/game', router: gameRoutes, requireMongo: true },
     { path: '', router: donationsRoutes },
-    { path: '/referral', router: referralRoutes },
-    { path: '/referrals', router: referralRoutes },
-    { path: '/share', router: shareRoutes },
-    { path: '/x', router: xRoutes },
-    { path: '/onboarding', router: onboardingRoutes }
+    { path: '/referral', router: referralRoutes, requireMongo: true },
+    { path: '/referrals', router: referralRoutes, requireMongo: true },
+    { path: '/share', router: shareRoutes, requireMongo: true },
+    { path: '/x', router: xRoutes, requireMongo: true },
+    { path: '/onboarding', router: onboardingRoutes, requireMongo: true }
   ];
 }
 
 function mountApiRoutes(app, basePrefix) {
-  for (const { path, router } of getRouteRegistry()) {
-    app.use(`${basePrefix}${path}`, router);
+  for (const { path, router, requireMongo } of getRouteRegistry()) {
+    const fullPath = `${basePrefix}${path}`;
+    if (requireMongo) {
+      app.use(fullPath, requireMongoReady, router);
+      continue;
+    }
+    app.use(fullPath, router);
   }
 }
 
@@ -310,6 +316,11 @@ function createApp() {
     res.json({
       status: readyState === 1 ? 'OK' : 'DEGRADED',
       timestamp: new Date(),
+      uptime: process.uptime(),
+      environment: {
+        nodeEnv: process.env.NODE_ENV || 'development',
+        railwayEnvironment: process.env.RAILWAY_ENVIRONMENT_NAME || null
+      },
       mongodb: mongoStatus,
       mongodbDetails: {
         readyState,
