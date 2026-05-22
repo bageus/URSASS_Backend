@@ -1,32 +1,13 @@
-/**
- * middleware/requireAuth.js
- *
- * Auth middleware for API routes.
- * Resolves primaryId from request using:
- *   1. X-Primary-Id header → findOne({ primaryId }) with fallback to findOne({ wallet })
- *   2. X-Wallet header → findOne({ wallet }) with fallback to findOne({ primaryId })
- *   3. Authorization: Bearer <primaryId|wallet> → same cross-field lookup as above
- *   4. X-Telegram-Init-Data header → validate and look up AccountLink by telegramId
- *
- * Sets req.primaryId and req.authLink on success.
- * Returns 401 on failure.
- */
-
 const AccountLink = require('../models/AccountLink');
 const { validateTelegramInitData } = require('../utils/telegramAuth');
+const { verifySessionToken } = require('../utils/sessionToken');
 const logger = require('../utils/logger');
 
-/**
- * Look up an AccountLink using all available identifiers, with cross-field fallbacks
- * for robustness when the frontend sends a telegram primaryId in X-Wallet or vice-versa.
- *
- * @param {string} rawPrimaryId - Value from X-Primary-Id header (trimmed, lowercased)
- * @param {string} rawWallet    - Value from X-Wallet header (trimmed, lowercased)
- * @param {string} rawBearerId  - Parsed Bearer token (trimmed, lowercased)
- * @param {string} initData     - Raw X-Telegram-Init-Data header value
- * @returns {object|null} AccountLink document, { __invalid: 'initdata' } on bad initData, or null
- */
-async function findLink(rawPrimaryId, rawWallet, rawBearerId, initData) {
+function isLegacyAuthAllowed() {
+  return String(process.env.ALLOW_LEGACY_HEADER_AUTH || 'false').trim().toLowerCase() === 'true';
+}
+
+async function findLegacyLink(rawPrimaryId, rawWallet, rawBearerId) {
   if (rawPrimaryId) {
     const byPrimary = await AccountLink.findOne({ primaryId: rawPrimaryId });
     if (byPrimary) return byPrimary;
@@ -48,50 +29,73 @@ async function findLink(rawPrimaryId, rawWallet, rawBearerId, initData) {
     if (byWallet) return byWallet;
   }
 
-  if (initData) {
-    if (!process.env.TELEGRAM_BOT_TOKEN) {
-      logger.warn({}, 'requireAuth: TELEGRAM_BOT_TOKEN is not configured; cannot validate Telegram initData');
-      return { __invalid: 'initdata' };
-    }
-    const validation = validateTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN);
-    if (!validation.valid) return { __invalid: 'initdata' };
-    const tgId = String(validation.user.id);
-    return await AccountLink.findOne({ telegramId: tgId });
-  }
-
   return null;
 }
 
-/**
- * Express middleware. Calls findLink() and either sets req.primaryId + req.authLink,
- * or returns 401 JSON.
- */
 async function requireAuth(req, res, next) {
   try {
-    const rawPrimaryId = (req.get('x-primary-id') || '').trim().toLowerCase();
-    const rawWallet = (req.get('x-wallet') || '').trim().toLowerCase();
     const authorization = req.get('authorization') || '';
     const bearerMatch = authorization.match(/^Bearer\s+(.+)$/i);
-    const rawBearerId = bearerMatch ? bearerMatch[1].trim().toLowerCase() : '';
-    const initData = req.get('x-telegram-init-data') || req.get('X-Telegram-Init-Data') || '';
+    const token = bearerMatch ? bearerMatch[1].trim() : '';
 
-    const link = await findLink(rawPrimaryId, rawWallet, rawBearerId, initData);
-
-    if (!link) {
-      logger.warn({ rawWallet, rawPrimaryId, rawBearerId, hasInitData: !!initData }, 'requireAuth: no AccountLink found');
-      return res.status(401).json({ error: 'Unauthorized: no valid auth credentials' });
+    if (token) {
+      try {
+        const decoded = verifySessionToken(token);
+        const primaryId = String(decoded?.primaryId || '').trim().toLowerCase();
+        if (!primaryId) {
+          return res.status(401).json({ error: 'Unauthorized: invalid token payload' });
+        }
+        const link = await AccountLink.findOne({ primaryId });
+        if (!link) {
+          return res.status(401).json({ error: 'Unauthorized: account not found' });
+        }
+        req.primaryId = link.primaryId;
+        req.authLink = link;
+        req.auth = decoded;
+        return next();
+      } catch (err) {
+        return res.status(401).json({ error: 'Unauthorized: invalid or expired session token' });
+      }
     }
 
-    if (link.__invalid === 'initdata') {
-      return res.status(401).json({ error: 'Invalid Telegram auth' });
+    const initData = req.get('x-telegram-init-data') || req.get('X-Telegram-Init-Data') || '';
+    if (initData) {
+      if (!process.env.TELEGRAM_BOT_TOKEN) {
+        return res.status(401).json({ error: 'Invalid Telegram auth' });
+      }
+      const validation = validateTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN);
+      if (!validation.valid) {
+        return res.status(401).json({ error: 'Invalid Telegram auth' });
+      }
+      const tgId = String(validation.user.id);
+      const link = await AccountLink.findOne({ telegramId: tgId });
+      if (!link) return res.status(401).json({ error: 'Unauthorized: account not found' });
+      req.primaryId = link.primaryId;
+      req.authLink = link;
+      req.auth = { primaryId: link.primaryId, telegramId: tgId, authMode: 'telegram' };
+      return next();
+    }
+
+    if (!isLegacyAuthAllowed()) {
+      return res.status(401).json({ error: 'Unauthorized: session token required' });
+    }
+
+    const rawPrimaryId = (req.get('x-primary-id') || '').trim().toLowerCase();
+    const rawWallet = (req.get('x-wallet') || '').trim().toLowerCase();
+    const rawBearerId = bearerMatch ? bearerMatch[1].trim().toLowerCase() : '';
+    const link = await findLegacyLink(rawPrimaryId, rawWallet, rawBearerId);
+    if (!link) {
+      logger.warn({ rawWallet, rawPrimaryId, rawBearerId }, 'requireAuth legacy: no AccountLink found');
+      return res.status(401).json({ error: 'Unauthorized: no valid auth credentials' });
     }
 
     req.primaryId = link.primaryId;
     req.authLink = link;
-    next();
+    req.auth = { primaryId: link.primaryId, authMode: 'legacy' };
+    return next();
   } catch (err) {
-    next(err);
+    return next(err);
   }
 }
 
-module.exports = { requireAuth, findLink };
+module.exports = { requireAuth, findLegacyLink };
