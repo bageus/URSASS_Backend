@@ -57,6 +57,17 @@ async function startServer() {
   });
 }
 
+async function buildAuthHeaders(primaryId, wallet) {
+  const normalizedPrimaryId = String(primaryId).toLowerCase();
+  const normalizedWallet = String(wallet).toLowerCase();
+  await new AccountLink({ primaryId: normalizedPrimaryId, wallet: normalizedWallet }).save();
+  const token = signSessionToken({ primaryId: normalizedPrimaryId });
+  return {
+    authorization: `Bearer ${token}`,
+    'content-type': 'application/json'
+  };
+}
+
 let originalStartSession;
 let donationPayments;
 
@@ -1054,7 +1065,8 @@ test('GET /api/store/upgrades/:wallet returns ai_mode_access=true for whiteliste
   });
 
   const { server, baseUrl } = await startServer();
-  const res = await fetch(`${baseUrl}/api/store/upgrades/${wallet}`);
+  const headers = await buildAuthHeaders(wallet, wallet);
+  const res = await fetch(`${baseUrl}/api/store/upgrades/${wallet}`, { headers });
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.activeEffects.ai_mode_access, true);
@@ -1076,7 +1088,8 @@ test('GET /api/store/upgrades/:wallet for new wallet returns zeroed gold upgrade
   };
 
   const { server, baseUrl } = await startServer();
-  const res = await fetch(`${baseUrl}/api/store/upgrades/${wallet}`);
+  const headers = await buildAuthHeaders(wallet, wallet);
+  const res = await fetch(`${baseUrl}/api/store/upgrades/${wallet}`, { headers });
   assert.equal(res.status, 200);
   const body = await res.json();
 
@@ -1142,7 +1155,8 @@ test('GET /api/store/upgrades/:wallet normalizes legacy string levels and radar 
   });
 
   const { server, baseUrl } = await startServer();
-  const res = await fetch(`${baseUrl}/api/store/upgrades/${wallet}`);
+  const headers = await buildAuthHeaders(wallet, wallet);
+  const res = await fetch(`${baseUrl}/api/store/upgrades/${wallet}`, { headers });
   assert.equal(res.status, 200);
   const body = await res.json();
 
@@ -1182,7 +1196,8 @@ test('GET /api/store/upgrades/:wallet returns ai_mode_access=false for regular w
   });
 
   const { server, baseUrl } = await startServer();
-  const res = await fetch(`${baseUrl}/api/store/upgrades/${wallet}`);
+  const headers = await buildAuthHeaders(wallet, wallet);
+  const res = await fetch(`${baseUrl}/api/store/upgrades/${wallet}`, { headers });
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.activeEffects.ai_mode_access, false);
@@ -1250,6 +1265,74 @@ test('POST /api/leaderboard/save validates aiSettings fields', async () => {
   assert.equal(res.status, 400);
   const body = await res.json();
   assert.match(body.error, /distance must be integer >= 0/i);
+  await server.close();
+});
+
+test('store ride consume endpoints require auth and rideSessionId, enforce anti-cheat', async () => {
+  const wallet = Wallet.createRandom().address.toLowerCase();
+  const headers = await buildAuthHeaders(wallet, wallet);
+  const upgradesState = {
+    wallet,
+    freeRidesRemaining: 3,
+    paidRidesRemaining: 0,
+    freeRidesResetAt: new Date(),
+    recentRideSessionIds: [],
+    refreshFreeRides() { return false; },
+    getTotalRides() { return this.freeRidesRemaining + this.paidRidesRemaining; },
+    consumeRide() { if (this.freeRidesRemaining > 0) { this.freeRidesRemaining -= 1; return true; } return false; },
+    save: async function save() { return this; }
+  };
+  PlayerUpgrades.findOneAndUpdate = async () => upgradesState;
+
+  const { server, baseUrl } = await startServer();
+
+  const unauth = await fetch(`${baseUrl}/api/store/consume-ride`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rideSessionId: 'session-001' }) });
+  assert.equal(unauth.status, 401);
+
+  const missingSession = await fetch(`${baseUrl}/api/store/consume-ride`, { method: 'POST', headers, body: JSON.stringify({}) });
+  assert.equal(missingSession.status, 400);
+  assert.equal((await missingSession.json()).error, 'invalid_ride_session_id');
+
+  const first = await fetch(`${baseUrl}/api/store/consume-ride`, { method: 'POST', headers, body: JSON.stringify({ rideSessionId: 'session-001' }) });
+  assert.equal(first.status, 200);
+  assert.equal((await first.json()).success, true);
+
+  const duplicate = await fetch(`${baseUrl}/api/store/consume-ride`, { method: 'POST', headers, body: JSON.stringify({ rideSessionId: 'session-001' }) });
+  assert.equal(duplicate.status, 409);
+  const duplicateBody = await duplicate.json();
+  assert.equal(duplicateBody.antiCheatTriggered, true);
+
+  const mismatch = await fetch(`${baseUrl}/api/store/consume-ride`, { method: 'POST', headers, body: JSON.stringify({ wallet: Wallet.createRandom().address.toLowerCase(), rideSessionId: 'session-002' }) });
+  assert.equal(mismatch.status, 403);
+  assert.equal((await mismatch.json()).error, 'account_mismatch');
+
+  const legacy = await fetch(`${baseUrl}/api/store/use-ride`, { method: 'POST', headers, body: JSON.stringify({ rideSessionId: 'session-003' }) });
+  assert.equal(legacy.status, 410);
+  assert.equal((await legacy.json()).error, 'legacy_use_ride_disabled');
+
+  await server.close();
+});
+
+test('GET /api/store/rides/:wallet requires auth and blocks mismatched wallet', async () => {
+  const wallet = Wallet.createRandom().address.toLowerCase();
+  const anotherWallet = Wallet.createRandom().address.toLowerCase();
+  const headers = await buildAuthHeaders(wallet, wallet);
+  PlayerUpgrades.findOneAndUpdate = async () => ({
+    freeRidesRemaining: 3,
+    paidRidesRemaining: 0,
+    freeRidesResetAt: new Date(),
+    refreshFreeRides() { return false; },
+    getTotalRides() { return 3; },
+    save: async function save() { return this; }
+  });
+  const { server, baseUrl } = await startServer();
+
+  const unauth = await fetch(`${baseUrl}/api/store/rides/${wallet}`);
+  assert.equal(unauth.status, 401);
+
+  const forbidden = await fetch(`${baseUrl}/api/store/rides/${anotherWallet}`, { headers });
+  assert.equal(forbidden.status, 403);
+
   await server.close();
 });
 
