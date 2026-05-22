@@ -92,7 +92,7 @@ Versioned aliases are also available under `/api/v1/*` (backward-compatible with
 | `GET` | `/health` | Health check |
 | `GET` | `/metrics` | Prometheus metrics endpoint |
 | `GET` | `/api/leaderboard/top?wallet=` | Get top 10 players with `displayName` per entry (optional: include requesting player's position) |
-| `POST` | `/api/leaderboard/save` | Save game result (requires EIP-191 signature) |
+| `POST` | `/api/leaderboard/save` | Save game result (wallet mode: EIP-191 signature; telegram mode: Bearer sessionToken or validated Telegram initData) |
 | `GET` | `/api/leaderboard/player/:wallet` | Get player info and history |
 | `GET` | `/api/leaderboard/verified-results/:wallet` | Get verified game results for a wallet |
 | `GET` | `/api/store/upgrades/:wallet` | Get player upgrades, rides, and balance |
@@ -308,6 +308,7 @@ The store now contains **two parallel product systems**:
 - **EIP-191 signatures** are required for all write operations that modify player state. The server reconstructs the signed message and verifies it matches the submitted wallet address using `ethers.js`.
 - **Rate limiting is differentiated**: strict for `POST /api/leaderboard/save`, moderate for other write endpoints, and softer for read endpoints.
 - **Anti-cheat validation** on `POST /api/leaderboard/save` rejects results with implausible values (score > 999,999; distance > 99,999 m; gold or silver coins > 999 per game).
+- **Telegram leaderboard auth is server-verified**: `telegramId` in request body is payload data only and is never trusted as authentication proof. Use `Authorization: Bearer <sessionToken>` or valid `X-Telegram-Init-Data`.
 - **Score anomaly metric** is tracked per player: `averageScore`, `scoreToAverageRatio` (`bestScore / averageScore`), and `suspiciousScorePattern` for extreme outliers.
 - **Timestamp validation** accepts both unix seconds and milliseconds, allows stale results up to 2 hours old (`MAX_RESULT_TIMESTAMP_AGE_MS`), and allows up to 3 minutes future skew (`MAX_RESULT_FUTURE_SKEW_MS`).
 - **Replay protection** – each game result signature can only be submitted once.

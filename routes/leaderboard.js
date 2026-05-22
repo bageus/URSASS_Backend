@@ -12,6 +12,8 @@ const { verifySignature, createMessageToVerify } = require('../utils/verifySigna
 const { saveResultLimiter, readLimiter } = require('../middleware/rateLimiter');
 const logger = require('../utils/logger');
 const { markSuspicious } = require('../middleware/requestMetrics');
+const { validateTelegramInitData } = require('../utils/telegramAuth');
+const { verifySessionToken } = require('../utils/sessionToken');
 const {
   logSecurityEvent,
   normalizeWallet,
@@ -168,6 +170,78 @@ function buildSharePostText(score, referralLink = '') {
   return parts.join('\n');
 }
 
+
+
+async function resolveVerifiedTelegramLeaderboardAuth(req, { walletLower, telegramId }) {
+  const authorization = req.get('authorization') || '';
+  const bearerMatch = authorization.match(/^Bearer\s+(.+)$/i);
+  const token = bearerMatch ? bearerMatch[1].trim() : '';
+  const telegramIdFromBody = telegramId == null ? '' : String(telegramId).trim();
+
+  if (token) {
+    try {
+      const decoded = verifySessionToken(token);
+      const tokenPrimaryId = String(decoded?.primaryId || '').trim().toLowerCase();
+      const tokenTelegramId = decoded?.telegramId == null ? '' : String(decoded.telegramId).trim();
+      if (!tokenPrimaryId || tokenPrimaryId !== walletLower) {
+        return { ok: false, status: 401, error: 'Telegram identity verification failed' };
+      }
+      if (telegramIdFromBody && tokenTelegramId && tokenTelegramId !== telegramIdFromBody) {
+        return { ok: false, status: 401, error: 'Telegram identity verification failed' };
+      }
+      if (!tokenTelegramId) {
+        return { ok: false, status: 401, error: 'Telegram identity verification failed' };
+      }
+
+      const link = await AccountLink.findOne({ primaryId: tokenPrimaryId, telegramId: tokenTelegramId });
+      if (!link) {
+        return { ok: false, status: 401, error: 'Telegram identity verification failed' };
+      }
+
+      return {
+        ok: true,
+        link,
+        primaryId: tokenPrimaryId,
+        telegramId: tokenTelegramId,
+        telegramUsername: link.telegramUsername || null
+      };
+    } catch (error) {
+      return { ok: false, status: 401, error: 'Telegram identity verification failed' };
+    }
+  }
+
+  const initData = String(req.get('x-telegram-init-data') || req.body?.telegramInitData || req.body?.initData || '').trim();
+  if (!initData) {
+    return { ok: false, status: 401, error: 'Telegram auth proof required' };
+  }
+
+  if (!process.env.TELEGRAM_BOT_TOKEN) {
+    return { ok: false, status: 503, error: 'Telegram auth is not configured' };
+  }
+
+  const validation = validateTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN);
+  if (!validation.valid) {
+    return { ok: false, status: 401, error: 'Telegram identity verification failed' };
+  }
+
+  const verifiedTelegramId = String(validation.user.id);
+  if (telegramIdFromBody && telegramIdFromBody !== verifiedTelegramId) {
+    return { ok: false, status: 401, error: 'Telegram identity verification failed' };
+  }
+
+  const link = await AccountLink.findOne({ primaryId: walletLower, telegramId: verifiedTelegramId });
+  if (!link) {
+    return { ok: false, status: 401, error: 'Telegram identity verification failed' };
+  }
+
+  return {
+    ok: true,
+    link,
+    primaryId: walletLower,
+    telegramId: verifiedTelegramId,
+    telegramUsername: link.telegramUsername || null
+  };
+}
 function buildLeaderboardEntry(player, displayName, position) {
   return {
     position,
@@ -357,10 +431,18 @@ router.post('/save', saveResultLimiter, async (req, res) => {
     }
 
     const aiConfig = aiValidation.sanitized;
+    let verifiedTelegramAuth = null;
+    if (isTelegramAuth) {
+      verifiedTelegramAuth = await resolveVerifiedTelegramLeaderboardAuth(req, { walletLower, telegramId });
+      if (!verifiedTelegramAuth.ok) {
+        return res.status(verifiedTelegramAuth.status).json({ error: verifiedTelegramAuth.error });
+      }
+      logger.info({ wallet: walletLower }, 'Telegram identity verified');
+    }
+
     let hasAiAccess = hasAiModeAccess(walletLower);
-    if (!hasAiAccess && isTelegramAuth && telegramId) {
-      const tgLink = await AccountLink.findOne({ telegramId: String(telegramId) });
-      hasAiAccess = hasAiModeAccessByTelegramUsername(tgLink?.telegramUsername);
+    if (!hasAiAccess && isTelegramAuth) {
+      hasAiAccess = hasAiModeAccessByTelegramUsername(verifiedTelegramAuth?.telegramUsername);
     }
 
     if (aiConfig?.enabled && !hasAiAccess) {
@@ -429,15 +511,7 @@ router.post('/save', saveResultLimiter, async (req, res) => {
 
     logger.info({ serverTime: now, clientTimestamp: ts, ageMs }, 'Result timestamp check');
 
-    if (isTelegramAuth) {
-      // Verify that the telegramId matches the claimed primaryId (wallet) via AccountLink
-      const link = await AccountLink.findOne({ telegramId: String(telegramId) });
-      if (!link || link.primaryId !== walletLower) {
-        return res.status(401).json({ error: 'Telegram identity verification failed' });
-      }
-
-      logger.info({ wallet: walletLower }, 'Telegram identity verified');
-    } else {
+    if (!isTelegramAuth) {
       // Signature verification
       // Keep the exact wallet string provided by client in signed payload.
       // EIP-191 signatures are case-sensitive for message contents,
