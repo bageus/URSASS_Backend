@@ -559,7 +559,7 @@ router.get('/upgrades/:wallet', readLimiter, requireAuth, async (req, res) => {
       wallet: linkedWallet,
       accountKey,
       foundPlayer: Boolean(player),
-      balance: { gold, silver },
+      balance: { gold, silver, spendableGold: gold, spendableSilver: silver },
       telegramUsername,
       aiByWallet,
       aiByTelegramUsername,
@@ -605,7 +605,7 @@ router.get('/upgrades/:wallet', readLimiter, requireAuth, async (req, res) => {
     res.json({
       wallet: accountKey,
       accountKey,
-      balance: { gold, silver },
+      balance: { gold, silver, spendableGold: gold, spendableSilver: silver },
       upgrades: upgradesData,
       rides: buildRidesData(upgrades),
       activeEffects: effects
@@ -840,7 +840,9 @@ router.post('/buy', writeLimiter, async (req, res) => {
           resolvedUpgradeKey,
           balance: {
             gold: player?.totalGoldCoins || 0,
-            silver: player?.totalSilverCoins || 0
+            silver: player?.totalSilverCoins || 0,
+            spendableGold: player?.totalGoldCoins || 0,
+            spendableSilver: player?.totalSilverCoins || 0
           },
           rides: buildRidesData(upgrades),
           activeEffects: calculateEffects(upgrades)
@@ -1007,7 +1009,9 @@ router.post('/buy', writeLimiter, async (req, res) => {
       resolvedUpgradeKey,
       balance: {
         gold: player.totalGoldCoins,
-        silver: player.totalSilverCoins
+        silver: player.totalSilverCoins,
+        spendableGold: player.totalGoldCoins,
+        spendableSilver: player.totalSilverCoins
       },
       rides: buildRidesData(upgrades),
       activeEffects: effects

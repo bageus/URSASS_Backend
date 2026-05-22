@@ -1044,6 +1044,8 @@ test('GET /api/v1/game/config?mode=unauth is public and CORS-enabled for product
   assert.equal(body.eligibleForLeaderboard, false);
   assert.ok(body.rides);
   assert.ok(body.balance);
+  assert.equal(body.balance.spendableGold, body.balance.gold);
+  assert.equal(body.balance.spendableSilver, body.balance.silver);
   assert.ok(body.activeEffects);
 
   await server.close();
